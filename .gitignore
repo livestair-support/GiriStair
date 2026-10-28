@@ -1,0 +1,32 @@
+# Dart / Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+coverage/
+.pub-cache/
+.pub/
+
+# Editors / system
+.idea/
+*.iml
+.vscode/
+.DS_Store
+__pycache__/
+
+# Native local state and credentials
+android/.gradle/
+android/local.properties
+android/key.properties
+**/*.jks
+**/*.keystore
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/ephemeral/
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Runner/GeneratedPluginRegistrant.*
+**/xcuserdata/
+*.p8
+*.p12
+*.mobileprovision

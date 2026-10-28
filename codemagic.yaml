@@ -1,0 +1,95 @@
+# GitHubの変更後、Codemagicから手動で実行します。
+# Appleのアカウント設定は docs/SETUP.md を参照してください。
+workflows:
+  check:
+    name: 1. 確認（解析・テスト・iOSビルド）
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      flutter: 3.44.0
+      xcode: 26.6
+      cocoapods: default
+      vars:
+        BUNDLE_ID: com.livestair.giristair
+    scripts:
+      - name: プロジェクト生成の保護を確認
+        script: python3 -m unittest discover -s .ci -p 'test_*.py'
+      - name: iOS・Androidプロジェクトを準備
+        script: python3 .ci/prepare_project.py
+      - name: Flutterの依存関係を取得
+        script: flutter pub get
+      - name: フォーマットと解析
+        script: |
+          set -euo pipefail
+          dart format --output=none --set-exit-if-changed lib test
+          flutter analyze --fatal-infos
+      - name: モデル・保存・画面のテスト
+        script: flutter test --coverage
+      - name: iOS確認ビルド（署名・アップロードなし）
+        script: flutter build ios --release --no-codesign
+    artifacts:
+      - coverage/lcov.info
+      - /tmp/xcodebuild_logs/*.log
+
+  android-check:
+    name: 2. Android確認（デバッグAPK）
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      flutter: 3.44.0
+      java: 17
+      vars:
+        BUNDLE_ID: com.livestair.giristair
+    scripts:
+      - name: iOS・Androidプロジェクトを準備
+        script: python3 .ci/prepare_project.py
+      - name: Flutterの依存関係を取得
+        script: flutter pub get
+      - name: Android確認ビルド
+        script: flutter build apk --debug
+    artifacts:
+      - build/app/outputs/flutter-apk/app-debug.apk
+
+  testflight:
+    name: 3. iPhone確認用（TestFlightへアップロード）
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    integrations:
+      app_store_connect: LiveStair ASC
+    environment:
+      flutter: 3.44.0
+      xcode: 26.6
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.livestair.giristair
+      vars:
+        BUNDLE_ID: com.livestair.giristair
+    scripts:
+      - name: iOS・Androidプロジェクトを準備
+        script: python3 .ci/prepare_project.py
+      - name: Flutterの依存関係を取得
+        script: flutter pub get
+      - name: コードの解析とテスト
+        script: |
+          set -euo pipefail
+          flutter analyze --fatal-infos
+          flutter test
+      - name: GiriStairの署名プロファイルを適用
+        script: xcode-project use-profiles
+      - name: iPhone用アプリを作成
+        script: |
+          set -euo pipefail
+          : "${PROJECT_BUILD_NUMBER:?CodemagicのPROJECT_BUILD_NUMBERが必要です}"
+          flutter build ipa --release \
+            --build-number="$PROJECT_BUILD_NUMBER" \
+            --export-options-plist="$HOME/export_options.plist"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/*.xcarchive
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: false
+        submit_to_app_store: false
