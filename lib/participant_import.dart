@@ -49,7 +49,7 @@ List<String> parseParticipantNames(String source) {
     if (name.isEmpty ||
         RegExp(r'^(?:https?://|www\.)', caseSensitive: false).hasMatch(name) ||
         RegExp(
-          r'^(?:参加者(?:一覧)?|参加予定(?:者)?|参加(?:する)?人|参加者名|名前|参加者リスト|キャンセル待ち)(?:\s*[（(]?[0-9０-９]+\s*人?[)）]?)?\s*[:：]?$',
+          r'^(?:参加者(?:一覧)?|参加予定(?:者)?|参加(?:する)?人|参加者名|名前|参加者リスト|キャンセル待ち)(?:\s*(?:[（(]\s*[0-9０-９]+\s*人?[)）]|[0-9０-９]+\s*人))?\s*[:：]?$',
         ).hasMatch(name)) {
       continue;
     }

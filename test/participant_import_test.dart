@@ -15,6 +15,7 @@ void main() {
     final names = List.generate(75, (i) => 'Player $i');
     expect(parseParticipantNames(names.join('\n')), names);
     expect(parseParticipantNames('A-B / C\nC++'), ['A-B / C', 'C++']);
+    expect(parseParticipantNames('参加者1\n参加者2\n参加者 20人'), ['参加者1', '参加者2']);
   });
 
   test('検索はかな・英字の大小・全半角を吸収する', () {
