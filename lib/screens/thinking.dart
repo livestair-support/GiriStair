@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../ui/stair_theme.dart';
 
 /// The writing desk: current online submissions and an enduring note library.
 class ThinkingScreen extends StatefulWidget {
@@ -56,15 +57,15 @@ class _ThinkingScreenState extends State<ThinkingScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('思考'),
-        actions: [
-          IconButton(
-            tooltip: 'メモを作る',
-            onPressed: () => _create(NoteKind.free),
-            icon: const Icon(Icons.note_add_outlined),
-          ),
-        ],
+      appBar: StairPageHeader(
+        title: '思考',
+        icon: Icons.lightbulb_outline,
+        accent: StairColors.memo,
+        trailing: OutlinedButton.icon(
+          onPressed: () => _create(NoteKind.free),
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('メモ'),
+        ),
       ),
       body: AnimatedBuilder(
         animation: widget.store,
@@ -82,48 +83,79 @@ class _ThinkingScreenState extends State<ThinkingScreen>
                 ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
           return ListView(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 32),
             children: [
-              Text(
-                '回答も、お題も。思いついたところから。',
-                style: Theme.of(context).textTheme.bodyLarge,
+              StairCard(
+                accent: StairColors.memo,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '回答やお題の下書きを残せます。',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: () => _create(NoteKind.answers),
+                          icon: const Icon(Icons.edit_note_outlined, size: 18),
+                          label: const Text('回答メモ'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => _create(NoteKind.prompts),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: StairColors.memo,
+                            side: BorderSide(
+                              color: StairColors.memo.withValues(alpha: 0.4),
+                            ),
+                          ),
+                          icon: const Icon(Icons.lightbulb_outline, size: 18),
+                          label: const Text('お題を作る'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  FilledButton.tonalIcon(
-                    onPressed: () => _create(NoteKind.answers),
-                    icon: const Icon(Icons.edit_note_outlined),
-                    label: const Text('回答メモ'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => _create(NoteKind.prompts),
-                    icon: const Icon(Icons.lightbulb_outline),
-                    label: const Text('お題を作る'),
-                  ),
-                ],
+              const SizedBox(height: 20),
+              StairSectionTitle(
+                title: '投稿期間中',
+                icon: Icons.language_outlined,
+                accent: StairColors.online,
+                trailing: Text(
+                  '${activeEvents.length}件',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ),
-              const SizedBox(height: 28),
-              _SectionHeading(title: '投稿期間中', count: activeEvents.length),
               const SizedBox(height: 8),
               if (activeEvents.isEmpty)
                 const _EmptyCard(
                   icon: Icons.event_note_outlined,
+                  accent: StairColors.online,
                   message: '投稿期間中のネット大喜利はありません',
                   detail: '登録で投稿の開始・締切を設定すると、ここに表示されます。',
                 ),
               for (final event in activeEvents)
-                Card(
-                  clipBehavior: Clip.antiAlias,
+                StairCard(
+                  accent: StairColors.online,
+                  padding: EdgeInsets.zero,
                   child: ListTile(
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16,
                       vertical: 8,
                     ),
-                    leading: const Icon(Icons.language_outlined),
-                    title: Text(event.title),
+                    leading: const StairIconBadge(
+                      icon: Icons.language_outlined,
+                      accent: StairColors.online,
+                    ),
+                    title: Text(
+                      event.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     subtitle: Text(
                       '締切 ${_dateTime(event.submissionEnd!)}\n'
                       'メモ ${widget.store.notes.where((note) => note.eventId == event.id).length}件',
@@ -142,8 +174,16 @@ class _ThinkingScreenState extends State<ThinkingScreen>
                     },
                   ),
                 ),
-              const SizedBox(height: 28),
-              _SectionHeading(title: 'メモ', count: widget.store.notes.length),
+              const SizedBox(height: 20),
+              StairSectionTitle(
+                title: 'メモ',
+                icon: Icons.edit_note_outlined,
+                accent: StairColors.memo,
+                trailing: Text(
+                  '${widget.store.notes.length}件',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
@@ -201,7 +241,13 @@ class _EventThoughtsScreen extends StatelessWidget {
             store.notes.where((note) => note.eventId == eventId).toList()
               ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
         return Scaffold(
-          appBar: AppBar(title: Text(event?.title ?? '会のメモ')),
+          appBar: AppBar(
+            title: Text(
+              event?.title ?? '会のメモ',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           floatingActionButton: event == null
               ? null
               : FloatingActionButton.extended(
@@ -220,7 +266,7 @@ class _EventThoughtsScreen extends StatelessWidget {
                   },
                 ),
           body: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 104),
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 104),
             children: [
               if (event == null)
                 const _EmptyCard(
@@ -231,14 +277,27 @@ class _EventThoughtsScreen extends StatelessWidget {
               else ...[
                 if (event.submissionStart != null &&
                     event.submissionEnd != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
+                  StairSection(
+                    title: '投稿期間',
+                    icon: Icons.date_range_outlined,
+                    accent: StairColors.online,
                     child: Text(
-                      '投稿期間\n${_dateTime(event.submissionStart!)} 〜\n'
+                      '${_dateTime(event.submissionStart!)} 〜\n'
                       '${_dateTime(event.submissionEnd!)}',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                   ),
+                const SizedBox(height: 12),
+                StairSectionTitle(
+                  title: '回答メモ',
+                  icon: Icons.edit_note_outlined,
+                  accent: StairColors.memo,
+                  trailing: Text(
+                    '${notes.length}件',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                const SizedBox(height: 8),
                 if (notes.isEmpty)
                   const _EmptyCard(
                     icon: Icons.edit_note_outlined,
@@ -308,11 +367,15 @@ class _NoteCardState extends State<_NoteCard> {
     final note = widget.note;
     final event = _eventById(widget.store, note.eventId);
     final lines = note.body.split('\n').where((line) => line.trim().isNotEmpty);
-    return Card(
-      clipBehavior: Clip.antiAlias,
+    return StairCard(
+      accent: StairColors.memo,
+      padding: EdgeInsets.zero,
       child: ListTile(
         contentPadding: const EdgeInsets.fromLTRB(16, 8, 6, 8),
-        leading: Icon(_kindIcon(note.kind)),
+        leading: StairIconBadge(
+          icon: _kindIcon(note.kind),
+          accent: StairColors.memo,
+        ),
         title: Text(note.title, maxLines: 2, overflow: TextOverflow.ellipsis),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -321,6 +384,9 @@ class _NoteCardState extends State<_NoteCard> {
               '${_kindLabel(note.kind)}${event == null ? '' : ' · ${event.title}'}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.labelMedium?.copyWith(color: StairColors.memo),
             ),
             if (lines.isNotEmpty)
               Text(
@@ -456,25 +522,48 @@ class _ThoughtEditorState extends State<_ThoughtEditor> {
         child: SizedBox(
           height: MediaQuery.sizeOf(context).height * 0.65,
           child: ListView(
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
             children: [
-              ListTile(
-                title: const Text('関連づけなし'),
-                leading: const Icon(Icons.link_off),
-                onTap: () => Navigator.pop(context, ''),
+              const StairSectionTitle(
+                title: '関連する会',
+                icon: Icons.link,
+                accent: StairColors.memo,
+              ),
+              const SizedBox(height: 8),
+              StairCard(
+                accent: StairColors.memo,
+                padding: EdgeInsets.zero,
+                child: ListTile(
+                  title: const Text('関連づけなし'),
+                  leading: const StairIconBadge(
+                    icon: Icons.link_off,
+                    accent: StairColors.memo,
+                  ),
+                  onTap: () => Navigator.pop(context, ''),
+                ),
               ),
               for (final event in events)
-                ListTile(
-                  title: Text(event.title),
-                  subtitle: Text(
-                    event.kind == EventKind.online ? 'ネット大喜利' : '生大喜利',
+                StairCard(
+                  accent: event.kind == EventKind.online
+                      ? StairColors.online
+                      : StairColors.live,
+                  padding: EdgeInsets.zero,
+                  child: ListTile(
+                    title: Text(event.title),
+                    subtitle: Text(
+                      event.kind == EventKind.online ? 'ネット大喜利' : '生大喜利',
+                    ),
+                    leading: StairIconBadge(
+                      icon: event.kind == EventKind.online
+                          ? Icons.language_outlined
+                          : Icons.groups_outlined,
+                      accent: event.kind == EventKind.online
+                          ? StairColors.online
+                          : StairColors.live,
+                    ),
+                    selected: event.id == _eventId,
+                    onTap: () => Navigator.pop(context, event.id),
                   ),
-                  leading: Icon(
-                    event.kind == EventKind.online
-                        ? Icons.language_outlined
-                        : Icons.groups_outlined,
-                  ),
-                  selected: event.id == _eventId,
-                  onTap: () => Navigator.pop(context, event.id),
                 ),
             ],
           ),
@@ -540,81 +629,111 @@ class _ThoughtEditorState extends State<_ThoughtEditor> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(widget.note == null ? 'メモを作る' : 'メモを編集'),
+          title: Text(
+            widget.note == null ? 'メモを作る' : 'メモを編集',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           actions: [
             Padding(
               padding: const EdgeInsets.only(right: 12),
-              child: TextButton(
-                onPressed: _saving ? null : _save,
-                child: _saving
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('保存'),
-              ),
+              child: StairSaveButton(onPressed: _save, saving: _saving),
             ),
           ],
         ),
         body: AbsorbPointer(
           absorbing: _saving,
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 36),
             children: [
-              SegmentedButton<NoteKind>(
-                segments: [
-                  for (final kind in NoteKind.values)
-                    ButtonSegment(
-                      value: kind,
-                      label: Text(_kindLabel(kind)),
-                      icon: Icon(_kindIcon(kind)),
+              StairSection(
+                title: 'メモの種類',
+                icon: Icons.category_outlined,
+                accent: StairColors.memo,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    for (final kind in NoteKind.values)
+                      ChoiceChip(
+                        label: Text(_kindLabel(kind)),
+                        avatar: Icon(_kindIcon(kind), size: 18),
+                        selected: _kind == kind,
+                        onSelected: (_) => setState(() => _kind = kind),
+                      ),
+                  ],
+                ),
+              ),
+              StairSection(
+                title: '基本情報',
+                icon: Icons.notes_outlined,
+                accent: StairColors.memo,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    StairFieldRow(
+                      label: 'タイトル',
+                      multiline: true,
+                      child: Semantics(
+                        label: 'タイトル',
+                        child: TextField(
+                          controller: _title,
+                          maxLength: 120,
+                          textInputAction: TextInputAction.next,
+                          decoration: const InputDecoration(
+                            hintText: '省略すると本文の1行目を使います',
+                          ),
+                        ),
+                      ),
                     ),
-                ],
-                selected: {_kind},
-                showSelectedIcon: false,
-                onSelectionChanged: (values) {
-                  setState(() => _kind = values.single);
-                },
-              ),
-              const SizedBox(height: 20),
-              TextField(
-                controller: _title,
-                maxLength: 120,
-                textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(
-                  labelText: 'タイトル',
-                  hintText: '省略すると本文の1行目を使います',
-                  border: OutlineInputBorder(),
+                    const Divider(height: 1),
+                    StairFieldRow(
+                      label: '関連する会',
+                      multiline: true,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: _chooseEvent,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Row(
+                            children: [
+                              Expanded(child: Text(event?.title ?? '関連づけなし')),
+                              const SizedBox(width: 8),
+                              Icon(
+                                Icons.expand_more,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 8),
-              Card(
-                clipBehavior: Clip.antiAlias,
-                child: ListTile(
-                  leading: const Icon(Icons.link),
-                  title: const Text('関連する会'),
-                  subtitle: Text(event?.title ?? '関連づけなし'),
-                  trailing: const Icon(Icons.expand_more),
-                  onTap: _chooseEvent,
-                ),
-              ),
-              const SizedBox(height: 20),
-              TextField(
-                controller: _body,
-                minLines: 12,
-                maxLines: null,
-                keyboardType: TextInputType.multiline,
-                textCapitalization: TextCapitalization.sentences,
-                decoration: InputDecoration(
-                  labelText: _kind == NoteKind.prompts ? 'お題の候補' : 'メモ',
-                  hintText: switch (_kind) {
-                    NoteKind.answers => '回答の候補を1行ずつ。\n思いつくままに書いてみましょう。',
-                    NoteKind.prompts => '主催会で使いたいお題や、そのアイデアを1行ずつ。',
-                    NoteKind.free => '気づきや振り返り、あとで考えたいこと。',
-                  },
-                  alignLabelWithHint: true,
-                  border: const OutlineInputBorder(),
+              StairSection(
+                title: _kind == NoteKind.prompts ? 'お題の候補' : 'メモ',
+                icon: _kindIcon(_kind),
+                accent: StairColors.memo,
+                child: Semantics(
+                  label: _kind == NoteKind.prompts ? 'お題の候補' : 'メモ',
+                  child: TextField(
+                    controller: _body,
+                    minLines: 12,
+                    maxLines: null,
+                    keyboardType: TextInputType.multiline,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: InputDecoration(
+                      hintText: switch (_kind) {
+                        NoteKind.answers => '回答の候補を1行ずつ。\n思いつくままに書いてみましょう。',
+                        NoteKind.prompts => '主催会で使いたいお題や、そのアイデアを1行ずつ。',
+                        NoteKind.free => '気づきや振り返り、あとで考えたいこと。',
+                      },
+                      alignLabelWithHint: true,
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -631,50 +750,30 @@ class _ThoughtEditorState extends State<_ThoughtEditor> {
   }
 }
 
-class _SectionHeading extends StatelessWidget {
-  const _SectionHeading({required this.title, required this.count});
-
-  final String title;
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Text(title, style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(width: 8),
-        Text('$count', style: Theme.of(context).textTheme.labelLarge),
-      ],
-    );
-  }
-}
-
 class _EmptyCard extends StatelessWidget {
   const _EmptyCard({
     required this.icon,
     required this.message,
     required this.detail,
+    this.accent = StairColors.memo,
   });
 
   final IconData icon;
   final String message;
   final String detail;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(height: 12),
-            Text(message, style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 6),
-            Text(detail, style: Theme.of(context).textTheme.bodyMedium),
-          ],
-        ),
+    return StairCard(
+      accent: accent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          StairSectionTitle(title: message, icon: icon, accent: accent),
+          const SizedBox(height: 10),
+          Text(detail, style: Theme.of(context).textTheme.bodySmall),
+        ],
       ),
     );
   }

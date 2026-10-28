@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../ui/stair_theme.dart';
 
 /// Registration form shared by the registration tab and event editing routes.
 class EventEditor extends StatefulWidget {
@@ -203,16 +204,57 @@ class _EventEditorState extends State<EventEditor> {
     }
   }
 
-  Widget _section(String title, List<Widget> children) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(20),
+  Widget _section(String title, List<Widget> children) {
+    final (icon, accent) = switch (title) {
+      '形式' => (Icons.category_outlined, StairColors.live),
+      '基本情報' => (Icons.edit_calendar_outlined, StairColors.live),
+      '会場・日時' => (Icons.place_outlined, StairColors.venue),
+      'サイト・スケジュール' => (Icons.language, StairColors.online),
+      '大会の結果' => (Icons.emoji_events_outlined, StairColors.result),
+      _ => (Icons.notes_outlined, StairColors.memo),
+    };
+    return StairSection(
+      title: title,
+      icon: icon,
+      accent: accent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 16),
-          ...children,
-        ],
+        children: children,
+      ),
+    );
+  }
+
+  Widget _textField({
+    required String label,
+    required TextEditingController controller,
+    String? hintText,
+    String? helperText,
+    bool multiline = false,
+    int? minLines,
+    int? maxLines = 1,
+    TextInputType? keyboardType,
+    TextInputAction? textInputAction,
+    String? suffixText,
+    FormFieldValidator<String>? validator,
+  }) => StairFieldRow(
+    label: label,
+    multiline: multiline,
+    child: Semantics(
+      label: label,
+      child: TextFormField(
+        controller: controller,
+        enabled: !_saving,
+        minLines: minLines,
+        maxLines: maxLines,
+        keyboardType: keyboardType,
+        textInputAction: textInputAction,
+        decoration: InputDecoration(
+          hintText: hintText,
+          helperText: helperText,
+          helperMaxLines: 2,
+          suffixText: suffixText,
+        ),
+        validator: validator,
       ),
     ),
   );
@@ -221,20 +263,24 @@ class _EventEditorState extends State<EventEditor> {
     String label,
     DateTime? value,
     ValueChanged<DateTime?> onChanged,
-  ) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
+  ) => StairFieldRow(
+    label: label,
     child: Row(
       children: [
         Expanded(
-          child: OutlinedButton.icon(
+          child: TextButton(
             onPressed: _saving ? null : () => _pickDate(value, onChanged),
-            icon: const Icon(Icons.calendar_today_outlined, size: 18),
-            label: Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                child: Text('$label\n${formatEventDate(value)}'),
-              ),
+            style: TextButton.styleFrom(
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              minimumSize: const Size(44, 44),
+              foregroundColor: value == null
+                  ? Theme.of(context).colorScheme.onSurfaceVariant
+                  : Theme.of(context).colorScheme.onSurface,
+            ),
+            child: Semantics(
+              label: label,
+              child: Text(formatEventDate(value), textAlign: TextAlign.right),
             ),
           ),
         ),
@@ -247,7 +293,8 @@ class _EventEditorState extends State<EventEditor> {
                     onChanged(null);
                     _scheduleError = null;
                   }),
-            icon: const Icon(Icons.close, size: 20),
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.close, size: 16),
           ),
       ],
     ),
@@ -258,17 +305,17 @@ class _EventEditorState extends State<EventEditor> {
     key: _formKey,
     child: SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            widget.event == null ? '次の一席を、記録しよう。' : '参加記録を編集',
-            style: Theme.of(context).textTheme.headlineSmall,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(2, 2, 2, 8),
+            child: Text(
+              '予定や参加記録を登録。結果・参加者は後から追加できます。',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
           ),
-          const SizedBox(height: 8),
-          const Text('予定だけでも、終わってからでも。結果や参加者は後から追加できます。'),
-          const SizedBox(height: 20),
           _section('形式', [
             SegmentedButton<EventKind>(
               segments: const [
@@ -291,7 +338,7 @@ class _EventEditorState extends State<EventEditor> {
                       _scheduleError = null;
                     }),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
             SegmentedButton<MeetingType>(
               segments: const [
                 ButtonSegment(value: MeetingType.casual, label: Text('通常会')),
@@ -304,88 +351,92 @@ class _EventEditorState extends State<EventEditor> {
             ),
           ]),
           _section('基本情報', [
-            TextFormField(
+            _textField(
+              label: 'タイトル *',
               controller: _title,
-              enabled: !_saving,
-              decoration: const InputDecoration(labelText: 'タイトル *'),
+              hintText: '会・大会の名前',
               textInputAction: TextInputAction.next,
               validator: (value) => value == null || value.trim().isEmpty
                   ? 'タイトルを入力してください'
                   : null,
             ),
-            const SizedBox(height: 14),
-            TextFormField(
+            const Divider(height: 1),
+            _textField(
+              label: '主催者',
               controller: _organizer,
-              enabled: !_saving,
-              decoration: const InputDecoration(labelText: '主催者'),
+              hintText: '未入力',
               textInputAction: TextInputAction.next,
             ),
-            const SizedBox(height: 14),
-            DropdownButtonFormField<EventStatus>(
-              initialValue: _status,
-              decoration: const InputDecoration(labelText: '参加状態'),
-              items: EventStatus.values
-                  .map(
-                    (status) => DropdownMenuItem(
-                      value: status,
-                      child: Text(eventStatusLabel(status)),
-                    ),
-                  )
-                  .toList(),
-              onChanged: _saving
-                  ? null
-                  : (value) {
-                      if (value != null) setState(() => _status = value);
-                    },
+            const Divider(height: 1),
+            StairFieldRow(
+              label: '参加状態',
+              child: DropdownButtonFormField<EventStatus>(
+                initialValue: _status,
+                isExpanded: true,
+                decoration: const InputDecoration(),
+                items: EventStatus.values
+                    .map(
+                      (status) => DropdownMenuItem(
+                        value: status,
+                        child: Text(eventStatusLabel(status)),
+                      ),
+                    )
+                    .toList(),
+                onChanged: _saving
+                    ? null
+                    : (value) {
+                        if (value != null) setState(() => _status = value);
+                      },
+              ),
             ),
           ]),
           if (_kind == EventKind.live)
             _section('会場・日時', [
-              TextFormField(
-                controller: _venue,
-                enabled: !_saving,
-                decoration: const InputDecoration(labelText: '会場'),
-              ),
-              const SizedBox(height: 14),
+              _textField(label: '会場', controller: _venue, hintText: '未入力'),
+              const Divider(height: 1),
               _dateField('開始日時', _startsAt, (value) => _startsAt = value),
+              const Divider(height: 1),
               _dateField('終了日時', _endsAt, (value) => _endsAt = value),
-              TextFormField(
+              const Divider(height: 1),
+              _textField(
+                label: '参加者',
                 controller: _participants,
-                enabled: !_saving,
+                multiline: true,
                 minLines: 2,
                 maxLines: 5,
-                decoration: const InputDecoration(
-                  labelText: '参加者',
-                  helperText: '「、」または改行で区切って入力。後から追加できます。',
-                  helperMaxLines: 2,
-                ),
+                hintText: '名前を「、」または改行で区切って入力',
+                helperText: '後から追加できます。',
               ),
             ])
           else
             _section('サイト・スケジュール', [
-              TextFormField(
+              _textField(
+                label: 'サイトURL',
                 controller: _siteUrl,
-                enabled: !_saving,
+                hintText: 'https://',
                 keyboardType: TextInputType.url,
-                decoration: const InputDecoration(labelText: 'サイトURL'),
               ),
-              const SizedBox(height: 14),
-              const Text('投稿期間を設定すると、期間中に「思考」タブへ表示されます。'),
-              const SizedBox(height: 14),
+              const Divider(height: 1),
               _dateField(
                 '投稿開始',
                 _submissionStart,
                 (value) => _submissionStart = value,
               ),
+              const Divider(height: 1),
               _dateField(
                 '投稿締切',
                 _submissionEnd,
                 (value) => _submissionEnd = value,
               ),
-              const SizedBox(height: 6),
+              const Divider(height: 1),
               _dateField('投票開始', _votingStart, (value) => _votingStart = value),
+              const Divider(height: 1),
               _dateField('投票締切', _votingEnd, (value) => _votingEnd = value),
-              const Text('投稿期間と投票期間は、それぞれ独立して設定できます。'),
+              const SizedBox(height: 8),
+              Text(
+                '投稿期間中の会は「思考」に表示されます。',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ]),
           if (_scheduleError != null)
             Padding(
@@ -397,25 +448,18 @@ class _EventEditorState extends State<EventEditor> {
             ),
           if (_meetingType == MeetingType.tournament)
             _section('大会の結果', [
-              const Text('大会が終わったら追記できます。分かる範囲の入力で大丈夫です。'),
-              const SizedBox(height: 14),
-              TextFormField(
+              _textField(
+                label: '結果',
                 controller: _result,
-                enabled: !_saving,
-                decoration: const InputDecoration(
-                  labelText: '結果',
-                  hintText: '優勝、準決勝敗退、予選敗退など',
-                ),
+                hintText: '優勝・予選敗退など',
               ),
-              const SizedBox(height: 14),
-              TextFormField(
+              const Divider(height: 1),
+              _textField(
+                label: '順位（任意）',
                 controller: _placement,
-                enabled: !_saving,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: '順位（任意）',
-                  suffixText: '位',
-                ),
+                hintText: '未入力',
+                suffixText: '位',
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) return null;
                   final number = int.tryParse(value.trim());
@@ -426,28 +470,20 @@ class _EventEditorState extends State<EventEditor> {
               ),
             ]),
           _section('振り返り', [
-            TextFormField(
+            _textField(
+              label: 'メモ',
               controller: _memo,
-              enabled: !_saving,
+              multiline: true,
               minLines: 3,
               maxLines: 8,
-              decoration: const InputDecoration(labelText: 'メモ'),
+              hintText: '気づいたことや振り返りを残す',
             ),
           ]),
           const SizedBox(height: 14),
-          FilledButton.icon(
+          StairSaveButton(
             onPressed: _saving ? null : _save,
-            icon: _saving
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.check),
-            label: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              child: Text(_saving ? '保存中…' : '記録を保存'),
-            ),
+            label: '記録を保存',
+            saving: _saving,
           ),
         ],
       ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../ui/stair_theme.dart';
 import 'event_editor.dart';
 
 class EventListScreen extends StatefulWidget {
@@ -65,98 +66,119 @@ class _EventListScreenState extends State<EventListScreen> {
                 : bDate.compareTo(aDate);
           });
       return ListView(
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
         children: [
-          Text('あなたの大喜利記録', style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 8),
-          Text('${widget.store.events.length}件の予定と記録'),
-          const SizedBox(height: 20),
-          SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment(value: false, label: Text('すべての記録')),
-              ButtonSegment(value: true, label: Text('予定・締切')),
-            ],
-            selected: {_upcomingOnly},
-            onSelectionChanged: (value) =>
-                setState(() => _upcomingOnly = value.first),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            decoration: const InputDecoration(
-              hintText: 'タイトル・会場・主催者・参加者で検索',
-              prefixIcon: Icon(Icons.search),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(2, 2, 2, 8),
+            child: Text(
+              '${widget.store.events.length}件の予定と記録',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
-            onChanged: (value) => setState(() => _query = value.trim()),
           ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            children: [
-              ChoiceChip(
-                label: const Text('すべて'),
-                selected: _kind == null,
-                onSelected: (_) => setState(() => _kind = null),
-              ),
-              ChoiceChip(
-                label: const Text('生大喜利'),
-                selected: _kind == EventKind.live,
-                onSelected: (_) => setState(() => _kind = EventKind.live),
-              ),
-              ChoiceChip(
-                label: const Text('ネット大喜利'),
-                selected: _kind == EventKind.online,
-                onSelected: (_) => setState(() => _kind = EventKind.online),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            children: [
-              ChoiceChip(
-                label: const Text('全ての状態'),
-                selected: _status == null,
-                onSelected: (_) => setState(() => _status = null),
-              ),
-              for (final status in EventStatus.values)
-                ChoiceChip(
-                  label: Text(eventStatusLabel(status)),
-                  selected: _status == status,
-                  onSelected: (_) => setState(() => _status = status),
+          StairSection(
+            title: '表示・検索',
+            icon: Icons.tune,
+            accent: StairColors.online,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment(value: false, label: Text('すべての記録')),
+                    ButtonSegment(value: true, label: Text('予定・締切')),
+                  ],
+                  selected: {_upcomingOnly},
+                  onSelectionChanged: (value) =>
+                      setState(() => _upcomingOnly = value.first),
                 ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          if (events.isEmpty)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(28),
-                child: Column(
+                const SizedBox(height: 10),
+                TextField(
+                  decoration: const InputDecoration(
+                    hintText: 'タイトル・会場・主催者・参加者で検索',
+                    prefixIcon: Icon(Icons.search),
+                  ),
+                  onChanged: (value) => setState(() => _query = value.trim()),
+                ),
+                const Divider(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
-                    const Icon(Icons.event_note_outlined, size: 40),
-                    const SizedBox(height: 14),
-                    Text(
-                      widget.store.events.isEmpty
-                          ? '最初の一席を残しましょう'
-                          : '該当する記録がありません',
-                      style: Theme.of(context).textTheme.titleMedium,
+                    ChoiceChip(
+                      label: const Text('すべて'),
+                      selected: _kind == null,
+                      onSelected: (_) => setState(() => _kind = null),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      widget.store.events.isEmpty
-                          ? '「登録」タブから参加予定や過去の記録を追加できます。'
-                          : '検索条件や絞り込みを変えてみてください。',
-                      textAlign: TextAlign.center,
+                    ChoiceChip(
+                      label: const Text('生大喜利'),
+                      selected: _kind == EventKind.live,
+                      onSelected: (_) => setState(() => _kind = EventKind.live),
+                    ),
+                    ChoiceChip(
+                      label: const Text('ネット大喜利'),
+                      selected: _kind == EventKind.online,
+                      onSelected: (_) =>
+                          setState(() => _kind = EventKind.online),
                     ),
                   ],
                 ),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('全ての状態'),
+                      selected: _status == null,
+                      onSelected: (_) => setState(() => _status = null),
+                    ),
+                    for (final status in EventStatus.values)
+                      ChoiceChip(
+                        label: Text(eventStatusLabel(status)),
+                        selected: _status == status,
+                        onSelected: (_) => setState(() => _status = status),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          if (events.isEmpty)
+            StairCard(
+              accent: StairColors.online,
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  const StairIconBadge(
+                    icon: Icons.event_note_outlined,
+                    accent: StairColors.online,
+                    size: 38,
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    widget.store.events.isEmpty
+                        ? '最初の一席を残しましょう'
+                        : '該当する記録がありません',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    widget.store.events.isEmpty
+                        ? '「登録」タブから参加予定や過去の記録を追加できます。'
+                        : '検索条件や絞り込みを変えてみてください。',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
               ),
             ),
           for (final event in events)
-            Card(
-              clipBehavior: Clip.antiAlias,
+            StairCard(
+              accent: event.kind == EventKind.live
+                  ? StairColors.live
+                  : StairColors.online,
+              padding: EdgeInsets.zero,
               child: InkWell(
                 onTap: () => Navigator.of(context).push<void>(
                   MaterialPageRoute(
@@ -171,34 +193,28 @@ class _EventListScreenState extends State<EventListScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Icon(
-                            event.kind == EventKind.live
-                                ? Icons.groups_outlined
-                                : Icons.language,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              '${event.kind == EventKind.live ? '生大喜利' : 'ネット大喜利'}'
-                              ' · ${event.meetingType == MeetingType.tournament ? '大会' : '通常会'}',
-                              style: Theme.of(context).textTheme.labelMedium,
-                            ),
-                          ),
-                          Text(
-                            eventStatusLabel(event.status),
-                            style: Theme.of(context).textTheme.labelMedium,
-                          ),
-                        ],
+                      StairSectionTitle(
+                        title: event.title,
+                        icon: event.kind == EventKind.live
+                            ? Icons.groups_outlined
+                            : Icons.language,
+                        accent: event.kind == EventKind.live
+                            ? StairColors.live
+                            : StairColors.online,
+                        trailing: Icon(
+                          Icons.chevron_right,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          size: 20,
+                        ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 10),
                       Text(
-                        event.title,
-                        style: Theme.of(context).textTheme.titleLarge,
+                        '${event.kind == EventKind.live ? '生大喜利' : 'ネット大喜利'}'
+                        ' · ${event.meetingType == MeetingType.tournament ? '大会' : '通常会'}'
+                        ' · ${eventStatusLabel(event.status)}',
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
-                      const SizedBox(height: 8),
+                      const Divider(height: 22),
                       if (event.kind == EventKind.live) ...[
                         Text(formatEventDate(event.startsAt)),
                         if (event.venue.isNotEmpty) Text(event.venue),
@@ -220,7 +236,7 @@ class _EventListScreenState extends State<EventListScreen> {
                             if (event.resultText.isNotEmpty) event.resultText,
                           ].join(' · '),
                           style: TextStyle(
-                            color: Theme.of(context).colorScheme.primary,
+                            color: StairColors.result,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -287,17 +303,23 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
-  Widget _line(String label, String value) => Padding(
-    padding: const EdgeInsets.only(bottom: 18),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: Theme.of(context).textTheme.labelLarge),
-        const SizedBox(height: 4),
-        SelectableText(value.isEmpty ? '未入力' : value),
-      ],
-    ),
-  );
+  Widget _line(String label, String value, {bool multiline = false}) =>
+      StairFieldRow(
+        label: label,
+        multiline: multiline,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: SelectableText(
+            value.isEmpty ? '未入力' : value,
+            textAlign: multiline ? TextAlign.left : TextAlign.right,
+            style: TextStyle(
+              color: value.isEmpty
+                  ? Theme.of(context).colorScheme.onSurfaceVariant
+                  : Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -335,40 +357,90 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         body: event == null
             ? const Center(child: Text('この記録は削除されています。'))
             : ListView(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
                 children: [
-                  Text(
-                    event.title,
-                    style: Theme.of(context).textTheme.headlineMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    '${event.kind == EventKind.live ? '生大喜利' : 'ネット大喜利'} · '
-                    '${event.meetingType == MeetingType.tournament ? '大会' : '通常会'} · '
-                    '${eventStatusLabel(event.status)}',
-                  ),
-                  const SizedBox(height: 28),
-                  _line('主催者', event.organizer),
-                  if (event.kind == EventKind.live) ...[
-                    _line('会場', event.venue),
-                    _line('開始', formatEventDate(event.startsAt)),
-                    _line('終了', formatEventDate(event.endsAt)),
-                    _line('参加者', event.participants.join('、')),
-                  ] else ...[
-                    _line('サイトURL', event.siteUrl),
-                    _line('投稿開始', formatEventDate(event.submissionStart)),
-                    _line('投稿締切', formatEventDate(event.submissionEnd)),
-                    _line('投票開始', formatEventDate(event.votingStart)),
-                    _line('投票締切', formatEventDate(event.votingEnd)),
-                  ],
-                  if (event.meetingType == MeetingType.tournament) ...[
-                    _line('結果', event.resultText),
-                    _line(
-                      '順位',
-                      event.placement == null ? '' : '${event.placement}位',
+                  StairSection(
+                    title: event.title,
+                    icon: event.kind == EventKind.live
+                        ? Icons.groups_outlined
+                        : Icons.language,
+                    accent: event.kind == EventKind.live
+                        ? StairColors.live
+                        : StairColors.online,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          '${event.kind == EventKind.live ? '生大喜利' : 'ネット大喜利'} · '
+                          '${event.meetingType == MeetingType.tournament ? '大会' : '通常会'} · '
+                          '${eventStatusLabel(event.status)}',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const Divider(height: 20),
+                        _line('主催者', event.organizer),
+                      ],
                     ),
-                  ],
-                  _line('振り返り・メモ', event.memo),
+                  ),
+                  if (event.kind == EventKind.live)
+                    StairSection(
+                      title: '会場・日時',
+                      icon: Icons.place_outlined,
+                      accent: StairColors.venue,
+                      child: Column(
+                        children: [
+                          _line('会場', event.venue),
+                          const Divider(height: 1),
+                          _line('開始', formatEventDate(event.startsAt)),
+                          const Divider(height: 1),
+                          _line('終了', formatEventDate(event.endsAt)),
+                          const Divider(height: 1),
+                          _line('参加者', event.participants.join('、')),
+                        ],
+                      ),
+                    )
+                  else
+                    StairSection(
+                      title: 'サイト・スケジュール',
+                      icon: Icons.language,
+                      accent: StairColors.online,
+                      child: Column(
+                        children: [
+                          _line('サイトURL', event.siteUrl),
+                          const Divider(height: 1),
+                          _line('投稿開始', formatEventDate(event.submissionStart)),
+                          const Divider(height: 1),
+                          _line('投稿締切', formatEventDate(event.submissionEnd)),
+                          const Divider(height: 1),
+                          _line('投票開始', formatEventDate(event.votingStart)),
+                          const Divider(height: 1),
+                          _line('投票締切', formatEventDate(event.votingEnd)),
+                        ],
+                      ),
+                    ),
+                  if (event.meetingType == MeetingType.tournament)
+                    StairSection(
+                      title: '大会の結果',
+                      icon: Icons.emoji_events_outlined,
+                      accent: StairColors.result,
+                      child: Column(
+                        children: [
+                          _line('結果', event.resultText),
+                          const Divider(height: 1),
+                          _line(
+                            '順位',
+                            event.placement == null
+                                ? ''
+                                : '${event.placement}位',
+                          ),
+                        ],
+                      ),
+                    ),
+                  StairSection(
+                    title: '振り返り',
+                    icon: Icons.notes_outlined,
+                    accent: StairColors.memo,
+                    child: _line('メモ', event.memo, multiline: true),
+                  ),
                   const SizedBox(height: 16),
                   OutlinedButton.icon(
                     onPressed: _deleting ? null : _delete,
