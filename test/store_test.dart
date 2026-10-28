@@ -164,4 +164,59 @@ void main() {
     await File('${directory.path}/giristair.json').delete();
     expect(await storage.read(), 'first document');
   });
+
+  test('日程削除でもお題と回答案と元のラウンド識別子を保持する', () async {
+    final storage = MemoryGiriStorage();
+    final store = GiriStore(storage: storage);
+    await store.load();
+    final event = _event('event-1').copyWith(
+      kind: EventKind.online,
+      rounds: [
+        const EventRound(id: 'qualifier', name: '予選'),
+        const EventRound(id: 'final', name: '決勝'),
+      ],
+    );
+    await store.saveEvent(event);
+    final note = _note('topic', eventId: event.id).copyWith(
+      roundId: 'qualifier',
+      prompt: 'お題の本文',
+      answers: ['回答案'],
+      used: true,
+    );
+    await store.saveNote(note);
+    await store.saveEvent(event.copyWith(rounds: [event.rounds.last]));
+    final reopened = GiriStore(storage: storage);
+    await reopened.load();
+    final saved = reopened.notes.single;
+    expect(saved.eventId, event.id);
+    expect(saved.roundId, 'qualifier');
+    expect(saved.prompt, 'お題の本文');
+    expect(saved.answers, ['回答案']);
+    expect(saved.used, isTrue);
+    await reopened.deleteEvent(event.id);
+    expect(reopened.notes.single.eventId, isNull);
+    expect(reopened.notes.single.roundId, isNull);
+    expect(reopened.notes.single.answers, ['回答案']);
+  });
+
+  test('不正なラウンドを含むバックアップの復元では元データを保持する', () async {
+    final storage = MemoryGiriStorage();
+    final store = GiriStore(storage: storage);
+    await store.load();
+    await store.saveEvent(_event('current'));
+    final previous = storage.contents;
+    final malformed = _event('bad').toJson()..['rounds'] = ['invalid'];
+    await expectLater(
+      store.restoreBackup(
+        jsonEncode({
+          'schemaVersion': 1,
+          'events': [malformed],
+          'notes': [],
+        }),
+      ),
+      throwsFormatException,
+    );
+    expect(storage.contents, previous);
+    expect(store.events.single.id, 'current');
+  });
 }

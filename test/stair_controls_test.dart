@@ -19,9 +19,9 @@ Future<void> openDatePicker(WidgetTester tester) async {
 }
 
 void selectPickerDate(WidgetTester tester, DateTime date) {
-  if (find.byType(CalendarDatePicker).evaluate().isNotEmpty) {
+  if (find.byType(StairCalendar).evaluate().isNotEmpty) {
     tester
-        .widget<CalendarDatePicker>(find.byType(CalendarDatePicker))
+        .widget<StairCalendar>(find.byType(StairCalendar))
         .onDateChanged(date);
     return;
   }
@@ -33,6 +33,31 @@ void selectPickerDate(WidgetTester tester, DateTime date) {
 }
 
 void main() {
+  testWidgets('Japanese calendar selects a day and pages months', (
+    tester,
+  ) async {
+    DateTime? selected;
+    await tester.pumpWidget(
+      controlApp(
+        StairCalendar(
+          value: DateTime(2026, 10, 28),
+          firstDate: DateTime(2026, 10),
+          lastDate: DateTime(2026, 11, 30),
+          onDateChanged: (date) => selected = date,
+        ),
+      ),
+    );
+    expect(find.byType(CalendarDatePicker), findsNothing);
+    expect(find.text('2026年10月'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('calendar-next-month')));
+    await tester.pumpAndSettle();
+    expect(find.text('2026年11月'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('calendar-2026-11-4')));
+    await tester.pumpAndSettle();
+    expect(selected, DateTime(2026, 11, 4));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'date changes stay draft until Done; cancel and dismissal discard them',
     (tester) async {
@@ -68,7 +93,7 @@ void main() {
       selectPickerDate(tester, DateTime(2026, 11, 3));
       await tester.tapAt(const Offset(20, 20));
       await tester.pumpAndSettle();
-      expect(find.byType(CalendarDatePicker), findsNothing);
+      expect(find.byType(StairCalendar), findsNothing);
       expect(value, original);
       expect(changes, isEmpty);
 

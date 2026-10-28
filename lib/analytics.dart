@@ -24,18 +24,17 @@ class GiriAnalytics {
       .where((event) => event.meetingType == MeetingType.tournament)
       .toList(growable: false);
   List<GiriEvent> get ranked => tournaments
-      .where((event) => event.placement != null && event.placement! > 0)
-      .toList(growable: false);
-  int get firstPlaceCount =>
-      ranked.where((event) => event.placement == 1).length;
-  int get podiumCount => ranked.where((event) => event.placement! <= 3).length;
-  int get resultCount => tournaments
       .where(
         (event) =>
-            event.resultText.trim().isNotEmpty ||
-            (event.placement != null && event.placement! > 0),
+            event.effectivePlacement != null && event.effectivePlacement! > 0,
       )
-      .length;
+      .toList(growable: false);
+  int get firstPlaceCount =>
+      ranked.where((event) => event.effectivePlacement == 1).length;
+  int get podiumCount =>
+      ranked.where((event) => event.effectivePlacement! <= 3).length;
+  int get resultCount =>
+      tournaments.where((event) => event.hasRecordedResult).length;
 
   List<MapEntry<String, int>> get venues =>
       _counts(live.map((event) => event.venue));
@@ -51,13 +50,20 @@ class GiriAnalytics {
   );
 
   /// A live event's calendar date stays distinct from a notification deadline.
-  static DateTime? dateOf(GiriEvent event) => event.kind == EventKind.live
-      ? event.eventDate ?? event.startsAt?.toLocal()
-      : (event.votingEnd ??
-                event.submissionEnd ??
-                event.votingStart ??
-                event.submissionStart)
-            ?.toLocal();
+  static DateTime? dateOf(GiriEvent event) {
+    if (event.kind == EventKind.live) {
+      return event.eventDate ?? event.startsAt?.toLocal();
+    }
+    final dates = [
+      for (final round in event.effectiveRounds) ...[
+        round.submissionStart,
+        round.submissionEnd,
+        round.votingStart,
+        round.votingEnd,
+      ],
+    ].whereType<DateTime>().toList()..sort();
+    return dates.isEmpty ? null : dates.last.toLocal();
+  }
 
   static List<int> yearsOf(Iterable<GiriEvent> events) =>
       events

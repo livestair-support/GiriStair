@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../analytics.dart';
+import '../tournament_presentation.dart';
 import '../ui/stair_theme.dart';
 import '../ui/stair_controls.dart';
-import 'event_editor.dart';
 import 'event_list.dart';
+import 'event_editor.dart';
 
 enum _ResultFilter { all, recorded, unrecorded }
 
@@ -23,15 +25,10 @@ class _ResultsScreenState extends State<ResultsScreen> {
   EventKind? _kind;
   _ResultFilter _filter = _ResultFilter.all;
 
-  bool _hasResult(GiriEvent event) =>
-      event.resultText.trim().isNotEmpty || event.placement != null;
+  bool _hasResult(GiriEvent event) => event.hasRecordedResult;
 
   DateTime _eventDate(GiriEvent event) =>
-      event.startsAt ??
-      (event.kind == EventKind.live ? event.eventDate : null) ??
-      event.votingEnd ??
-      event.submissionEnd ??
-      event.createdAt;
+      GiriAnalytics.dateOf(event) ?? event.createdAt;
 
   Widget _count(String label, int value) => Expanded(
     child: Column(
@@ -48,7 +45,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
   Widget build(BuildContext context) => Scaffold(
     appBar: const StairPageHeader(
       title: '戦績',
-      icon: Icons.emoji_events_outlined,
+      icon: CupertinoIcons.rosette,
       accent: StairColors.result,
     ),
     body: ListenableBuilder(
@@ -115,7 +112,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
             const SizedBox(height: 18),
             StairSectionTitle(
               title: '大会の記録',
-              icon: Icons.emoji_events_outlined,
+              icon: CupertinoIcons.rosette,
               accent: StairColors.result,
               trailing: Text(
                 '${events.length}件',
@@ -127,116 +124,138 @@ class _ResultsScreenState extends State<ResultsScreen> {
               StairCard(
                 accent: StairColors.result,
                 padding: const EdgeInsets.all(24),
-                child: Column(
-                  children: [
-                    const StairIconBadge(
-                      icon: Icons.emoji_events_outlined,
-                      accent: StairColors.result,
-                      size: 38,
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      tournaments.isEmpty ? '大会の記録がありません' : '該当する結果がありません',
-                      style: Theme.of(context).textTheme.titleMedium,
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+                child: SizedBox(
+                  width: double.infinity,
+                  child: Column(
+                    children: [
+                      const StairIconBadge(
+                        icon: CupertinoIcons.rosette,
+                        accent: StairColors.result,
+                        size: 38,
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        tournaments.isEmpty ? '大会の記録がありません' : '該当する結果がありません',
+                        style: Theme.of(context).textTheme.titleMedium,
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             for (final event in events)
               StairCard(
                 accent: StairColors.result,
                 padding: EdgeInsets.zero,
-                child: InkWell(
-                  onTap: () => Navigator.of(context).push<void>(
-                    MaterialPageRoute(
+                child: CupertinoButton(
+                  padding: EdgeInsets.zero,
+                  onPressed: () => Navigator.of(context).push<void>(
+                    CupertinoPageRoute(
                       builder: (_) => EventDetailScreen(
                         store: widget.store,
                         eventId: event.id,
                       ),
                     ),
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            StairIconBadge(
-                              icon: event.kind == EventKind.live
-                                  ? Icons.groups_outlined
-                                  : Icons.language,
-                              accent: event.kind == EventKind.live
-                                  ? StairColors.live
-                                  : StairColors.online,
-                            ),
-                            const SizedBox(width: 9),
-                            Expanded(
-                              child: Text(
-                                event.kind == EventKind.live
-                                    ? '生大喜利'
-                                    : 'ネット大喜利',
-                                style: Theme.of(context).textTheme.bodySmall,
+                  child: DefaultTextStyle(
+                    style: Theme.of(context).textTheme.bodyLarge!,
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              StairIconBadge(
+                                icon: event.kind == EventKind.live
+                                    ? CupertinoIcons.person_2
+                                    : CupertinoIcons.globe,
+                                accent: event.kind == EventKind.live
+                                    ? StairColors.live
+                                    : StairColors.online,
                               ),
-                            ),
-                            Flexible(
-                              child: Text(
-                                eventStatusLabel(event.status),
-                                style: Theme.of(context).textTheme.bodySmall,
-                                textAlign: TextAlign.end,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          event.title,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          event.kind == EventKind.live
-                              ? formatLiveEventDate(event)
-                              : formatEventDate(
-                                  event.startsAt ??
-                                      event.votingEnd ??
-                                      event.submissionEnd,
-                                ),
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                        const Divider(height: 24),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                _hasResult(event)
-                                    ? [
-                                        if (event.placement != null)
-                                          '${event.placement}位',
-                                        if (event.resultText.trim().isNotEmpty)
-                                          event.resultText,
-                                      ].join(' · ')
-                                    : '結果を入力する',
-                                style: TextStyle(
-                                  color: _hasResult(event)
-                                      ? Theme.of(context).colorScheme.onSurface
-                                      : StairColors.action,
-                                  fontWeight: FontWeight.w600,
+                              const SizedBox(width: 9),
+                              Expanded(
+                                child: Text(
+                                  event.kind == EventKind.live
+                                      ? '生大喜利'
+                                      : 'ネット大喜利',
+                                  style: Theme.of(context).textTheme.bodySmall,
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Icon(
-                              Icons.chevron_right,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                              size: 20,
-                            ),
+                              Flexible(
+                                child: Text(
+                                  eventStatusLabel(event.status),
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                  textAlign: TextAlign.end,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            event.title,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            event.kind == EventKind.live
+                                ? formatLiveEventDate(event)
+                                : formatEventDate(GiriAnalytics.dateOf(event)),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          if (event.tournamentResult case final result?) ...[
+                            if (result.format != TournamentFormat.individual ||
+                                result.teamName.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                [
+                                  tournamentFormatLabel(result.format),
+                                  if (result.teamName.isNotEmpty)
+                                    result.teamName,
+                                ].join(' · '),
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                            if (result.stages.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                '${result.stages.last.name} · '
+                                '${resultStageSummary(result.stages.last)}',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ],
                           ],
-                        ),
-                      ],
+                          const Divider(height: 24),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _hasResult(event)
+                                      ? tournamentResultSummary(event)
+                                      : '結果を入力する',
+                                  style: TextStyle(
+                                    color: _hasResult(event)
+                                        ? Theme.of(
+                                            context,
+                                          ).colorScheme.onSurface
+                                        : StairColors.action,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Icon(
+                                CupertinoIcons.chevron_right,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                                size: 20,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

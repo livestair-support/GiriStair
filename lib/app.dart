@@ -57,6 +57,7 @@ class _GiriStairAppState extends State<GiriStairApp>
       builder: (context, _) => MaterialApp(
         title: 'GiriStair',
         debugShowCheckedModeBanner: false,
+        scrollBehavior: const CupertinoScrollBehavior(),
         locale: StairTypography.locale,
         supportedLocales: const [StairTypography.locale],
         localizationsDelegates: GlobalMaterialLocalizations.delegates,
@@ -75,7 +76,7 @@ class _GiriStairAppState extends State<GiriStairApp>
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
               return const Scaffold(
-                body: Center(child: CircularProgressIndicator()),
+                body: Center(child: CupertinoActivityIndicator()),
               );
             }
             if (snapshot.hasError) {

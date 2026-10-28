@@ -75,9 +75,11 @@ class StairTabBar extends StatelessWidget {
                           child: ExcludeSemantics(
                             child: Material(
                               color: Colors.transparent,
-                              child: InkWell(
+                              child: CupertinoButton(
+                                padding: EdgeInsets.zero,
+                                minimumSize: Size.zero,
                                 borderRadius: BorderRadius.circular(36),
-                                onTap: () {
+                                onPressed: () {
                                   if (index != currentIndex) {
                                     HapticFeedback.selectionClick();
                                   }

@@ -74,4 +74,83 @@ void main() {
     expect(analytics.podiumCount, 2);
     expect(analytics.resultCount, 3);
   });
+
+  test(
+    'final outcome counts once and stage wins never become tournament wins',
+    () {
+      final analytics = GiriAnalytics([
+        event('champion').copyWith(
+          tournamentResult: TournamentResult(
+            format: TournamentFormat.team,
+            outcome: TournamentOutcome.champion,
+            teamName: 'チーム',
+            stages: [
+              const ResultStage(
+                id: 'q',
+                name: '予選',
+                outcome: TournamentOutcome.champion,
+              ),
+              const ResultStage(
+                id: 'f',
+                name: '決勝',
+                outcome: TournamentOutcome.champion,
+              ),
+            ],
+          ),
+        ),
+        event('runnerUp').copyWith(
+          tournamentResult: TournamentResult(
+            outcome: TournamentOutcome.runnerUp,
+          ),
+        ),
+        event('stageWin', placement: 1).copyWith(
+          tournamentResult: TournamentResult(
+            outcome: TournamentOutcome.eliminated,
+            stages: [
+              const ResultStage(
+                id: 'q',
+                name: '予選',
+                outcome: TournamentOutcome.champion,
+              ),
+              const ResultStage(
+                id: 'f',
+                name: '本戦',
+                outcome: TournamentOutcome.eliminated,
+              ),
+            ],
+          ),
+        ),
+        event('prose', result: '予選優勝、決勝敗退'),
+        event('missing'),
+      ]);
+      expect(analytics.firstPlaceCount, 1);
+      expect(analytics.podiumCount, 2);
+      expect(analytics.ranked.length, 2);
+      expect(analytics.resultCount, 4);
+    },
+  );
+
+  test(
+    'online year follows the final scheduled round rather than stale legacy dates',
+    () {
+      final online =
+          event(
+            'rounds',
+            kind: EventKind.online,
+            date: DateTime(2025),
+          ).copyWith(
+            rounds: [
+              EventRound(
+                id: 'q',
+                name: '予選',
+                submissionEnd: DateTime(2026, 12, 30),
+              ),
+              EventRound(id: 'f', name: '決勝', votingEnd: DateTime(2027, 1, 3)),
+            ],
+          );
+      expect(GiriAnalytics.dateOf(online), DateTime(2027, 1, 3));
+      expect(GiriAnalytics([online], year: 2027).attended.length, 1);
+      expect(GiriAnalytics([online], year: 2025).attended, isEmpty);
+    },
+  );
 }

@@ -34,6 +34,53 @@ Future<void> choose(WidgetTester tester, String key, String option) async {
 }
 
 void main() {
+  testWidgets('online card previews the nearest round and detail keeps all', (
+    tester,
+  ) async {
+    final store = GiriStore(storage: MemoryGiriStorage());
+    await store.load();
+    final now = DateTime.now();
+    await store.saveEvent(
+      GiriEvent(
+        id: 'long-tournament',
+        title: '長い大会',
+        kind: EventKind.online,
+        meetingType: MeetingType.tournament,
+        createdAt: now,
+        rounds: [
+          EventRound(
+            id: 'past',
+            name: '終了した予選',
+            submissionEnd: now.subtract(const Duration(days: 7)),
+          ),
+          EventRound(
+            id: 'current',
+            name: '本戦1回戦',
+            submissionEnd: now.add(const Duration(days: 1)),
+          ),
+          EventRound(
+            id: 'future',
+            name: '決勝',
+            submissionEnd: now.add(const Duration(days: 14)),
+          ),
+        ],
+      ),
+    );
+    await showList(tester, store);
+    expect(find.text('3日程'), findsOneWidget);
+    expect(find.text('本戦1回戦'), findsOneWidget);
+    expect(find.text('決勝'), findsNothing);
+    expect(find.text('終了した予選'), findsNothing);
+    await tester.tap(find.text('長い大会'));
+    await tester.pumpAndSettle();
+    expect(find.text('終了した予選'), findsOneWidget);
+    expect(find.text('本戦1回戦'), findsOneWidget);
+    expect(find.text('決勝'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    store.dispose();
+  });
+
   testWidgets(
     'dropdown filters combine with search and can return to all records',
     (tester) async {
@@ -84,8 +131,8 @@ void main() {
       await choose(tester, 'list-status-filter', '参加予定');
       expect(find.text('参加済みの会'), findsNothing);
       expect(find.text('中止した会'), findsNothing);
-      await choose(tester, 'list-display-filter', '予定・締切');
-      expect(find.text('過去の予定'), findsNothing);
+      expect(find.byKey(const ValueKey('list-display-filter')), findsNothing);
+      expect(find.text('過去の予定'), findsOneWidget);
       expect(find.text('南の予定'), findsOneWidget);
 
       await tester.enterText(find.byKey(const ValueKey('list-search')), '北会場');
@@ -108,7 +155,6 @@ void main() {
       );
       expect(find.text('北の予定'), findsOneWidget);
 
-      await choose(tester, 'list-display-filter', 'すべての記録');
       await choose(tester, 'list-kind-filter', 'すべて');
       await choose(tester, 'list-status-filter', 'すべて');
       await tester.enterText(find.byKey(const ValueKey('list-search')), '');
@@ -128,6 +174,10 @@ void main() {
     await store.load();
     await showList(tester, store);
     expect(find.text('記録がありません'), findsOneWidget);
+    expect(find.byKey(const ValueKey('list-display-filter')), findsNothing);
+    final emptyText = tester.getRect(find.text('記録がありません'));
+    final screen = tester.getRect(find.byType(EventListScreen));
+    expect(emptyText.center.dx, closeTo(screen.center.dx, 1));
     expect(find.text('0件の予定と記録'), findsNothing);
     expect(find.text('最初の一席を残しましょう'), findsNothing);
     expect(find.text('「登録」タブから参加予定や過去の記録を追加できます。'), findsNothing);

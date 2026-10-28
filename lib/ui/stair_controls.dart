@@ -57,7 +57,16 @@ class StairMenuRow<T> extends StatelessWidget {
       barrierColor: Colors.transparent,
       transitionDuration: const Duration(milliseconds: 180),
       transitionBuilder: (context, animation, secondaryAnimation, child) =>
-          FadeTransition(opacity: animation, child: child),
+          FadeTransition(
+            opacity: animation,
+            child: ScaleTransition(
+              alignment: Alignment.topRight,
+              scale: Tween(begin: .97, end: 1.0).animate(
+                CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+              ),
+              child: child,
+            ),
+          ),
       pageBuilder: (context, animation, secondaryAnimation) => Stack(
         children: [
           Positioned(
@@ -154,8 +163,10 @@ class StairMenuRow<T> extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
     button: true,
     enabled: onChanged != null,
-    child: InkWell(
-      onTap: onChanged == null ? null : () => _choose(context),
+    child: CupertinoButton(
+      padding: EdgeInsets.zero,
+      minimumSize: Size.zero,
+      onPressed: onChanged == null ? null : () => _choose(context),
       child: StairFormRow(
         label: label,
         info: info == null
@@ -170,9 +181,7 @@ class StairMenuRow<T> extends StatelessWidget {
                 textAlign: TextAlign.right,
                 style: TextStyle(
                   fontSize: 17,
-                  fontWeight: accent == null
-                      ? FontWeight.w400
-                      : FontWeight.w500,
+                  fontWeight: FontWeight.w500,
                   color: onChanged == null
                       ? Theme.of(context).disabledColor
                       : Theme.of(context).colorScheme.onSurface,
@@ -215,8 +224,9 @@ class StairDateRow extends StatelessWidget {
     final current = value ?? DateTime.now();
     final local = dateOnly ? current : current.toLocal();
     final selected = dateOnly
-        ? await showDialog<_DateSelection>(
+        ? await showCupertinoDialog<_DateSelection>(
             context: context,
+            barrierDismissible: true,
             builder: (context) => _CalendarDialog(label: label, initial: local),
           )
         : await _showPicker(
@@ -239,8 +249,10 @@ class StairDateRow extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
     button: true,
     enabled: onChanged != null,
-    child: InkWell(
-      onTap: onChanged == null ? null : () => _choose(context),
+    child: CupertinoButton(
+      padding: EdgeInsets.zero,
+      minimumSize: Size.zero,
+      onPressed: onChanged == null ? null : () => _choose(context),
       child: StairFormRow(
         label: label,
         info: info == null
@@ -255,7 +267,7 @@ class StairDateRow extends StatelessWidget {
                 textAlign: TextAlign.right,
                 style: TextStyle(
                   fontSize: 17,
-                  fontWeight: value == null ? FontWeight.w400 : FontWeight.w600,
+                  fontWeight: value == null ? FontWeight.w500 : FontWeight.w600,
                   color: value == null || onChanged == null
                       ? Theme.of(context).colorScheme.onSurfaceVariant
                       : Theme.of(context).colorScheme.onSurface,
@@ -264,8 +276,8 @@ class StairDateRow extends StatelessWidget {
             ),
             const SizedBox(width: 9),
             Icon(
-              Icons.chevron_right_rounded,
-              size: 20,
+              CupertinoIcons.chevron_right,
+              size: 14,
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ],
@@ -392,29 +404,31 @@ class StairInfoButton extends StatelessWidget {
   final String message;
 
   @override
-  Widget build(BuildContext context) => IconButton(
-    tooltip: '$labelの説明',
-    padding: EdgeInsets.zero,
-    constraints: const BoxConstraints(minWidth: 30, minHeight: 32),
-    icon: const Icon(
-      Icons.info_outline_rounded,
-      size: 15,
-      color: StairColors.action,
-    ),
-    onPressed: () => showCupertinoDialog<void>(
-      context: context,
-      builder: (context) => _cupertinoTheme(
-        context,
-        StairCupertinoAlertDialog(
-          title: Text(label),
-          content: Text(message),
-          actions: [
-            StairCupertinoDialogAction(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('閉じる'),
-            ),
-          ],
+  Widget build(BuildContext context) => Tooltip(
+    message: '$labelの説明',
+    child: CupertinoButton(
+      padding: EdgeInsets.zero,
+      minimumSize: const Size(30, 32),
+      onPressed: () => showCupertinoDialog<void>(
+        context: context,
+        builder: (context) => _cupertinoTheme(
+          context,
+          StairCupertinoAlertDialog(
+            title: Text(label),
+            content: Text(message),
+            actions: [
+              StairCupertinoDialogAction(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('閉じる'),
+              ),
+            ],
+          ),
         ),
+      ),
+      child: const Icon(
+        CupertinoIcons.info_circle,
+        size: 15,
+        color: StairColors.action,
       ),
     ),
   );
@@ -461,8 +475,8 @@ class _CalendarDialogState extends State<_CalendarDialog> {
                 ],
               ),
             ),
-            CalendarDatePicker(
-              initialDate: _selection,
+            StairCalendar(
+              value: _selection,
               firstDate: DateTime(math.min(1900, _selection.year)),
               lastDate: DateTime(math.max(2200, _selection.year), 12, 31),
               onDateChanged: (date) => setState(() => _selection = date),
@@ -491,6 +505,167 @@ class _CalendarDialogState extends State<_CalendarDialog> {
       ),
     ),
   );
+}
+
+/// Compact Japanese calendar using Cupertino controls rather than the
+/// Material date picker's year header, ink effects and Android typography.
+class StairCalendar extends StatefulWidget {
+  const StairCalendar({
+    super.key,
+    required this.value,
+    required this.firstDate,
+    required this.lastDate,
+    required this.onDateChanged,
+  });
+
+  final DateTime value;
+  final DateTime firstDate;
+  final DateTime lastDate;
+  final ValueChanged<DateTime> onDateChanged;
+
+  @override
+  State<StairCalendar> createState() => _StairCalendarState();
+}
+
+class _StairCalendarState extends State<StairCalendar> {
+  late DateTime _month = DateTime(widget.value.year, widget.value.month);
+
+  @override
+  void didUpdateWidget(covariant StairCalendar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value.year != widget.value.year ||
+        oldWidget.value.month != widget.value.month) {
+      _month = DateTime(widget.value.year, widget.value.month);
+    }
+  }
+
+  void _move(int months) {
+    HapticFeedback.selectionClick();
+    setState(() => _month = DateTime(_month.year, _month.month + months));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final firstMonth = DateTime(widget.firstDate.year, widget.firstDate.month);
+    final lastMonth = DateTime(widget.lastDate.year, widget.lastDate.month);
+    final days = DateTime(_month.year, _month.month + 1, 0).day;
+    final offset = _month.weekday % 7;
+    final rows = ((days + offset) / 7).ceil();
+    final now = DateTime.now();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${_month.year}年${_month.month}月',
+                  style: theme.textTheme.bodyLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              CupertinoButton(
+                key: const ValueKey('calendar-previous-month'),
+                padding: EdgeInsets.zero,
+                onPressed: _month.isAfter(firstMonth) ? () => _move(-1) : null,
+                child: Semantics(
+                  label: '前の月',
+                  child: const Icon(CupertinoIcons.chevron_left, size: 18),
+                ),
+              ),
+              CupertinoButton(
+                key: const ValueKey('calendar-next-month'),
+                padding: EdgeInsets.zero,
+                onPressed: _month.isBefore(lastMonth) ? () => _move(1) : null,
+                child: Semantics(
+                  label: '次の月',
+                  child: const Icon(CupertinoIcons.chevron_right, size: 18),
+                ),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              for (final weekday in const ['日', '月', '火', '水', '木', '金', '土'])
+                Expanded(
+                  child: ExcludeSemantics(
+                    child: Text(
+                      weekday,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          for (var row = 0; row < rows; row++)
+            Row(
+              children: [
+                for (var column = 0; column < 7; column++)
+                  Expanded(
+                    child: _day(row * 7 + column - offset + 1, days, now),
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _day(int day, int days, DateTime now) {
+    if (day < 1 || day > days) return const SizedBox(height: 42);
+    final date = DateTime(_month.year, _month.month, day);
+    final selected = DateUtils.isSameDay(date, widget.value);
+    final today = DateUtils.isSameDay(date, now);
+    final enabled =
+        !date.isBefore(DateUtils.dateOnly(widget.firstDate)) &&
+        !date.isAfter(DateUtils.dateOnly(widget.lastDate));
+    return Semantics(
+      label: _dateLabel(date, dateOnly: true),
+      selected: selected,
+      button: true,
+      enabled: enabled,
+      child: ExcludeSemantics(
+        child: CupertinoButton(
+          key: ValueKey('calendar-${date.year}-${date.month}-$day'),
+          minimumSize: const Size(0, 42),
+          padding: EdgeInsets.zero,
+          onPressed: enabled
+              ? () {
+                  HapticFeedback.selectionClick();
+                  widget.onDateChanged(date);
+                }
+              : null,
+          child: Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: selected ? StairColors.action : null,
+            ),
+            child: Text(
+              '$day',
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: !enabled
+                    ? Theme.of(context).disabledColor
+                    : selected
+                    ? Colors.white
+                    : today
+                    ? StairColors.action
+                    : Theme.of(context).colorScheme.onSurface,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _DateSelection {

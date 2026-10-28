@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import '../analytics.dart';
 import '../models.dart';
 import '../store.dart';
+import '../tournament_presentation.dart';
 import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
 
@@ -72,9 +73,7 @@ class _ShareRecordsScreenState extends State<ShareRecordsScreen> {
       );
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('共有画像を作成できませんでした。もう一度お試しください。')),
-      );
+      showStairMessage(context, '共有画像を作成できませんでした。もう一度お試しください。', error: true);
     } finally {
       if (mounted) setState(() => _sharing = false);
     }
@@ -327,11 +326,6 @@ class _ShareImage extends StatelessWidget {
                     _stat('結果を残した大会', '${analytics.resultCount} 回'),
                     _stat('1位', '${analytics.firstPlaceCount} 回'),
                     _stat('3位以内', '${analytics.podiumCount} 回'),
-                    const SizedBox(height: 6),
-                    const Text(
-                      '順位を入力した大会を集計',
-                      style: TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
-                    ),
                   ],
                 ),
               ),
@@ -437,14 +431,10 @@ class _ShareImage extends StatelessWidget {
           ],
           if (showResults &&
               event.meetingType == MeetingType.tournament &&
-              (event.placement != null ||
-                  event.resultText.trim().isNotEmpty)) ...[
+              event.hasRecordedResult) ...[
             const SizedBox(height: 3),
             Text(
-              [
-                if (event.placement != null) '${event.placement}位',
-                if (event.resultText.trim().isNotEmpty) event.resultText.trim(),
-              ].join('  ·  '),
+              tournamentResultSummary(event),
               style: const TextStyle(fontSize: 12, color: StairColors.result),
             ),
           ],

@@ -20,7 +20,7 @@ class _PlayerDirectoryScreenState extends State<PlayerDirectoryScreen> {
   String _query = '';
 
   void _edit([GiriPlayer? player]) => Navigator.of(context).push<void>(
-    MaterialPageRoute(
+    CupertinoPageRoute(
       builder: (_) => _PlayerEditor(store: widget.store, player: player),
     ),
   );
