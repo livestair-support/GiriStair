@@ -24,12 +24,17 @@ class GiriAnalytics {
       .where((event) => event.meetingType == MeetingType.tournament)
       .toList(growable: false);
   List<GiriEvent> get ranked => tournaments
-      .where((event) => event.effectivePlacement != null && event.effectivePlacement! > 0)
+      .where(
+        (event) =>
+            event.effectivePlacement != null && event.effectivePlacement! > 0,
+      )
       .toList(growable: false);
   int get firstPlaceCount =>
       ranked.where((event) => event.effectivePlacement == 1).length;
-  int get podiumCount => ranked.where((event) => event.effectivePlacement! <= 3).length;
-  int get resultCount => tournaments.where((event) => event.hasRecordedResult).length;
+  int get podiumCount =>
+      ranked.where((event) => event.effectivePlacement! <= 3).length;
+  int get resultCount =>
+      tournaments.where((event) => event.hasRecordedResult).length;
 
   List<MapEntry<String, int>> get venues =>
       _counts(live.map((event) => event.venue));

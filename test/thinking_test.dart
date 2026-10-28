@@ -14,7 +14,14 @@ Future<void> _selectMenu(WidgetTester tester, String key, String label) async {
   await tester.ensureVisible(menu);
   await tester.tap(menu);
   await tester.pumpAndSettle();
-  await tester.tap(find.descendant(of: find.byType(CupertinoButton), matching: find.text(label)).last);
+  await tester.tap(
+    find
+        .descendant(
+          of: find.byType(CupertinoButton),
+          matching: find.text(label),
+        )
+        .last,
+  );
   await tester.pumpAndSettle();
 }
 
@@ -287,23 +294,52 @@ void main() {
     final store = GiriStore(storage: storage);
     await store.load();
     final now = DateTime.now();
-    await store.saveEvent(GiriEvent(
-      id: 'round-event', title: '長期ネット大会', kind: EventKind.online,
-      meetingType: MeetingType.tournament, createdAt: now,
-      rounds: [
-        EventRound(id: 'preliminary-1', name: '予選1回戦', submissionStart: now.subtract(const Duration(days: 1)), submissionEnd: now.add(const Duration(days: 1))),
-        EventRound(id: 'final', name: '決勝', submissionStart: now.add(const Duration(days: 8)), submissionEnd: now.add(const Duration(days: 15))),
-      ],
-    ));
+    await store.saveEvent(
+      GiriEvent(
+        id: 'round-event',
+        title: '長期ネット大会',
+        kind: EventKind.online,
+        meetingType: MeetingType.tournament,
+        createdAt: now,
+        rounds: [
+          EventRound(
+            id: 'preliminary-1',
+            name: '予選1回戦',
+            submissionStart: now.subtract(const Duration(days: 1)),
+            submissionEnd: now.add(const Duration(days: 1)),
+          ),
+          EventRound(
+            id: 'final',
+            name: '決勝',
+            submissionStart: now.add(const Duration(days: 8)),
+            submissionEnd: now.add(const Duration(days: 15)),
+          ),
+        ],
+      ),
+    );
     await _showThinking(tester, store);
-    expect(find.byKey(const ValueKey('active-round-round-event-preliminary-1')), findsOneWidget);
-    expect(find.byKey(const ValueKey('active-round-round-event-final')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('active-round-round-event-preliminary-1')));
+    expect(
+      find.byKey(const ValueKey('active-round-round-event-preliminary-1')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('active-round-round-event-final')),
+      findsNothing,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('active-round-round-event-preliminary-1')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('round-add-topic')));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const ValueKey('thought-editor-prompt')), '未来の学校にある変な授業');
-    await tester.enterText(find.byKey(const ValueKey('thought-editor-body')), '一つ目の回答案\n\n二つ目の回答案');
+    await tester.enterText(
+      find.byKey(const ValueKey('thought-editor-prompt')),
+      '未来の学校にある変な授業',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('thought-editor-body')),
+      '一つ目の回答案\n\n二つ目の回答案',
+    );
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
     final note = store.notes.single;
@@ -325,7 +361,10 @@ void main() {
     await _showThinking(tester, store);
     await tester.tap(find.text('お題を作る'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const ValueKey('thought-editor-prompt')), '一件のお題');
+    await tester.enterText(
+      find.byKey(const ValueKey('thought-editor-prompt')),
+      '一件のお題',
+    );
     await tester.tap(find.byKey(const ValueKey('thought-editor-used')));
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
@@ -335,8 +374,12 @@ void main() {
     expect(find.text('一件のお題'), findsNothing);
     await _selectMenu(tester, 'thinking-used-filter', '使用済み');
     expect(find.text('一件のお題'), findsOneWidget);
-    await tester.ensureVisible(find.byKey(ValueKey('note-actions-${store.notes.single.id}')));
-    await tester.tap(find.byKey(ValueKey('note-actions-${store.notes.single.id}')));
+    await tester.ensureVisible(
+      find.byKey(ValueKey('note-actions-${store.notes.single.id}')),
+    );
+    await tester.tap(
+      find.byKey(ValueKey('note-actions-${store.notes.single.id}')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('未使用に戻す'));
     await tester.pumpAndSettle();
@@ -350,18 +393,36 @@ void main() {
     final store = GiriStore(storage: MemoryGiriStorage());
     await store.load();
     final now = DateTime.now();
-    await store.saveEvent(GiriEvent(
-      id: 'ended', title: '終了した大会', kind: EventKind.online,
-      meetingType: MeetingType.tournament, createdAt: now,
-      rounds: [EventRound(id: 'past', name: '予選2回戦', submissionStart: now.subtract(const Duration(days: 10)), submissionEnd: now.subtract(const Duration(days: 3)))],
-    ));
+    await store.saveEvent(
+      GiriEvent(
+        id: 'ended',
+        title: '終了した大会',
+        kind: EventKind.online,
+        meetingType: MeetingType.tournament,
+        createdAt: now,
+        rounds: [
+          EventRound(
+            id: 'past',
+            name: '予選2回戦',
+            submissionStart: now.subtract(const Duration(days: 10)),
+            submissionEnd: now.subtract(const Duration(days: 3)),
+          ),
+        ],
+      ),
+    );
     await _showThinking(tester, store);
     await tester.tap(find.text('回答メモ'));
     await tester.pumpAndSettle();
     await _selectMenu(tester, 'thought-editor-event', '終了した大会');
     await _selectMenu(tester, 'thought-editor-round', '予選2回戦');
-    await tester.enterText(find.byKey(const ValueKey('thought-editor-prompt')), '振り返るお題');
-    await tester.enterText(find.byKey(const ValueKey('thought-editor-body')), '投稿した回答');
+    await tester.enterText(
+      find.byKey(const ValueKey('thought-editor-prompt')),
+      '振り返るお題',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('thought-editor-body')),
+      '投稿した回答',
+    );
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
     expect(store.notes.single.roundId, 'past');
@@ -373,16 +434,28 @@ void main() {
     await store.load();
     final now = DateTime.now();
     final event = GiriEvent(
-      id: 'orphan', title: '日程を編集した大会', kind: EventKind.online,
-      meetingType: MeetingType.tournament, createdAt: now,
+      id: 'orphan',
+      title: '日程を編集した大会',
+      kind: EventKind.online,
+      meetingType: MeetingType.tournament,
+      createdAt: now,
       rounds: [EventRound(id: 'remaining', name: '決勝')],
     );
     await store.saveEvent(event);
-    await store.saveNote(ThoughtNote(
-      id: 'orphan-note', title: '削除日程のお題', prompt: '削除日程のお題',
-      kind: NoteKind.answers, eventId: event.id, roundId: 'deleted-round',
-      answers: ['保存した回答'], body: '保存した回答', createdAt: now, updatedAt: now,
-    ));
+    await store.saveNote(
+      ThoughtNote(
+        id: 'orphan-note',
+        title: '削除日程のお題',
+        prompt: '削除日程のお題',
+        kind: NoteKind.answers,
+        eventId: event.id,
+        roundId: 'deleted-round',
+        answers: ['保存した回答'],
+        body: '保存した回答',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
     await _showThinking(tester, store);
     expect(find.textContaining('削除された日程'), findsOneWidget);
     await tester.ensureVisible(find.text('削除日程のお題'));
@@ -394,5 +467,4 @@ void main() {
     expect(store.notes.single.roundId, 'deleted-round');
     expect(store.notes.single.answers, ['保存した回答']);
   });
-
 }

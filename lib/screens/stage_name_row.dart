@@ -1,5 +1,4 @@
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
 
 import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
@@ -98,10 +97,7 @@ class _StageNameDialogState extends State<_StageNameDialog> {
         onPressed: () => Navigator.pop(context),
         child: const Text('キャンセル'),
       ),
-      StairCupertinoDialogAction(
-        onPressed: _accept,
-        child: const Text('決定'),
-      ),
+      StairCupertinoDialogAction(onPressed: _accept, child: const Text('決定')),
     ],
   );
 }

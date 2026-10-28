@@ -1,5 +1,4 @@
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../ui/stair_controls.dart';
@@ -75,7 +74,8 @@ class EventRoundEditor extends StatelessWidget {
             StageNameRow(
               value: rounds[index].name,
               onChanged: enabled
-                  ? (name) => _replace(index, rounds[index].copyWith(name: name))
+                  ? (name) =>
+                        _replace(index, rounds[index].copyWith(name: name))
                   : null,
             ),
             StairDateRow(
@@ -83,9 +83,9 @@ class EventRoundEditor extends StatelessWidget {
               value: rounds[index].submissionStart,
               onChanged: enabled
                   ? (date) => _replace(
-                        index,
-                        rounds[index].copyWith(submissionStart: date),
-                      )
+                      index,
+                      rounds[index].copyWith(submissionStart: date),
+                    )
                   : null,
             ),
             StairDateRow(
@@ -93,9 +93,9 @@ class EventRoundEditor extends StatelessWidget {
               value: rounds[index].submissionEnd,
               onChanged: enabled
                   ? (date) => _replace(
-                        index,
-                        rounds[index].copyWith(submissionEnd: date),
-                      )
+                      index,
+                      rounds[index].copyWith(submissionEnd: date),
+                    )
                   : null,
             ),
             StairDateRow(
@@ -103,19 +103,17 @@ class EventRoundEditor extends StatelessWidget {
               value: rounds[index].votingStart,
               onChanged: enabled
                   ? (date) => _replace(
-                        index,
-                        rounds[index].copyWith(votingStart: date),
-                      )
+                      index,
+                      rounds[index].copyWith(votingStart: date),
+                    )
                   : null,
             ),
             StairDateRow(
               label: '投票締切',
               value: rounds[index].votingEnd,
               onChanged: enabled
-                  ? (date) => _replace(
-                        index,
-                        rounds[index].copyWith(votingEnd: date),
-                      )
+                  ? (date) =>
+                        _replace(index, rounds[index].copyWith(votingEnd: date))
                   : null,
             ),
           ],
@@ -125,12 +123,9 @@ class EventRoundEditor extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 12),
         onPressed: enabled
             ? () => onChanged([
-                  ...rounds,
-                  EventRound(
-                    id: newId(),
-                    name: '予選${rounds.length + 1}回戦',
-                  ),
-                ])
+                ...rounds,
+                EventRound(id: newId(), name: '予選${rounds.length + 1}回戦'),
+              ])
             : null,
         child: const Row(
           mainAxisAlignment: MainAxisAlignment.center,

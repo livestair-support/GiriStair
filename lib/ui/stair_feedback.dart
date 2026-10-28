@@ -59,10 +59,7 @@ class _StairMessageState extends State<_StairMessage>
   @override
   void initState() {
     super.initState();
-    _dismissTimer = Timer(
-      Duration(seconds: widget.error ? 5 : 2),
-      _dismiss,
-    );
+    _dismissTimer = Timer(Duration(seconds: widget.error ? 5 : 2), _dismiss);
   }
 
   Future<void> _dismiss() async {
@@ -88,8 +85,10 @@ class _StairMessageState extends State<_StairMessage>
       child: FadeTransition(
         opacity: _animation,
         child: SlideTransition(
-          position: Tween(begin: const Offset(0, .12), end: Offset.zero)
-              .animate(_animation),
+          position: Tween(
+            begin: const Offset(0, .12),
+            end: Offset.zero,
+          ).animate(_animation),
           child: Semantics(
             liveRegion: true,
             child: ClipRRect(

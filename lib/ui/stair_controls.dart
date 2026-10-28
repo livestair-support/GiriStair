@@ -61,10 +61,9 @@ class StairMenuRow<T> extends StatelessWidget {
             opacity: animation,
             child: ScaleTransition(
               alignment: Alignment.topRight,
-              scale: Tween(begin: .97, end: 1.0).animate(CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeOutCubic,
-              )),
+              scale: Tween(begin: .97, end: 1.0).animate(
+                CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+              ),
               child: child,
             ),
           ),
@@ -411,20 +410,20 @@ class StairInfoButton extends StatelessWidget {
       padding: EdgeInsets.zero,
       minimumSize: const Size(30, 32),
       onPressed: () => showCupertinoDialog<void>(
-      context: context,
-      builder: (context) => _cupertinoTheme(
-        context,
-        StairCupertinoAlertDialog(
-          title: Text(label),
-          content: Text(message),
-          actions: [
-            StairCupertinoDialogAction(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('閉じる'),
-            ),
-          ],
+        context: context,
+        builder: (context) => _cupertinoTheme(
+          context,
+          StairCupertinoAlertDialog(
+            title: Text(label),
+            content: Text(message),
+            actions: [
+              StairCupertinoDialogAction(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('閉じる'),
+              ),
+            ],
+          ),
         ),
-      ),
       ),
       child: const Icon(
         CupertinoIcons.info_circle,
@@ -622,7 +621,8 @@ class _StairCalendarState extends State<StairCalendar> {
     final date = DateTime(_month.year, _month.month, day);
     final selected = DateUtils.isSameDay(date, widget.value);
     final today = DateUtils.isSameDay(date, now);
-    final enabled = !date.isBefore(DateUtils.dateOnly(widget.firstDate)) &&
+    final enabled =
+        !date.isBefore(DateUtils.dateOnly(widget.firstDate)) &&
         !date.isAfter(DateUtils.dateOnly(widget.lastDate));
     return Semantics(
       label: _dateLabel(date, dateOnly: true),

@@ -152,7 +152,9 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
         children: [
           StairFormSection(
             title: widget.startWithImages ? '読み取った文章' : '参加者名を貼り付け',
-            icon: widget.startWithImages ? CupertinoIcons.doc_text_viewfinder : CupertinoIcons.doc_text,
+            icon: widget.startWithImages
+                ? CupertinoIcons.doc_text_viewfinder
+                : CupertinoIcons.doc_text,
             accent: StairColors.online,
             children: [
               Padding(
@@ -184,12 +186,16 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
                 child: Wrap(
                   alignment: WrapAlignment.spaceBetween,
                   children: [
-                    if (widget.startWithImages) TextButton.icon(
-                      key: const ValueKey('participant-import-images'),
-                      onPressed: _reading ? null : _readImages,
-                      icon: const Icon(CupertinoIcons.photo_on_rectangle, size: 20),
-                      label: Text(_reading ? '読み取り中…' : '画像を選び直す'),
-                    ),
+                    if (widget.startWithImages)
+                      TextButton.icon(
+                        key: const ValueKey('participant-import-images'),
+                        onPressed: _reading ? null : _readImages,
+                        icon: const Icon(
+                          CupertinoIcons.photo_on_rectangle,
+                          size: 20,
+                        ),
+                        label: Text(_reading ? '読み取り中…' : '画像を選び直す'),
+                      ),
                     TextButton(
                       key: const ValueKey('participant-import-preview'),
                       onPressed: _reading ? null : _preview,
@@ -198,10 +204,11 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
                   ],
                 ),
               ),
-              if (_reading) const Padding(
-                padding: EdgeInsets.all(12),
-                child: CupertinoActivityIndicator(),
-              ),
+              if (_reading)
+                const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: CupertinoActivityIndicator(),
+                ),
             ],
           ),
           if (_message != null)
@@ -239,11 +246,17 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
                             minimumSize: const Size(44, 44),
                             onPressed: _reading
                                 ? null
-                                : () => setState(() => _selected[i] = !_selected[i]),
+                                : () => setState(
+                                    () => _selected[i] = !_selected[i],
+                                  ),
                             child: Icon(
-                              _selected[i] ? CupertinoIcons.check_mark_circled_solid : CupertinoIcons.circle,
+                              _selected[i]
+                                  ? CupertinoIcons.check_mark_circled_solid
+                                  : CupertinoIcons.circle,
                               size: 22,
-                              color: _selected[i] ? StairColors.action : Theme.of(context).colorScheme.outline,
+                              color: _selected[i]
+                                  ? StairColors.action
+                                  : Theme.of(context).colorScheme.outline,
                             ),
                           ),
                         ),
@@ -253,7 +266,10 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
                             controller: _names[i],
                             enabled: !_reading,
                             onChanged: (_) => setState(() {}),
-                            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w500),
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w500,
+                            ),
                             decoration: const InputDecoration(
                               isDense: true,
                               contentPadding: EdgeInsets.symmetric(

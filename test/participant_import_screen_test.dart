@@ -68,24 +68,35 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('1人を追加'), findsOneWidget);
   });
-  testWidgets('text bulk import opens directly without invoking image picker', (tester) async {
+  testWidgets('text bulk import opens directly without invoking image picker', (
+    tester,
+  ) async {
     var imageReads = 0;
-    await tester.pumpWidget(MaterialApp(
-      theme: stairTheme(Brightness.light),
-      home: ParticipantImportScreen(readImages: () async {
-        imageReads++;
-        return '画像の人';
-      }),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: stairTheme(Brightness.light),
+        home: ParticipantImportScreen(
+          readImages: () async {
+            imageReads++;
+            return '画像の人';
+          },
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(imageReads, 0);
     expect(find.text('文字から一括追加'), findsOneWidget);
-    expect(find.byKey(const ValueKey('participant-import-images')), findsNothing);
-    await tester.enterText(find.byKey(const ValueKey('participant-import-source')), '一人目、二人目');
+    expect(
+      find.byKey(const ValueKey('participant-import-images')),
+      findsNothing,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('participant-import-source')),
+      '一人目、二人目',
+    );
     await tester.tap(find.byKey(const ValueKey('participant-import-preview')));
     await tester.pumpAndSettle();
     expect(find.text('2人を追加'), findsOneWidget);
     expect(imageReads, 0);
   });
-
 }

@@ -50,6 +50,15 @@ class _EventListScreenState extends State<EventListScreen> {
     return deadlines.isEmpty ? null : deadlines.last;
   }
 
+  EventRound? _previewRound(GiriEvent event, DateTime now) {
+    final date = _relevantDate(event, now);
+    final rounds = event.effectiveRounds;
+    final matching = rounds.where(
+      (round) => round.submissionEnd == date || round.votingEnd == date,
+    );
+    return matching.firstOrNull ?? rounds.firstOrNull;
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: widget.store,
@@ -135,18 +144,18 @@ class _EventListScreenState extends State<EventListScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                  const StairIconBadge(
-                    icon: CupertinoIcons.calendar,
-                    accent: StairColors.online,
-                    size: 38,
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    widget.store.events.isEmpty ? '記録がありません' : '該当する記録がありません',
-                    style: Theme.of(context).textTheme.titleMedium,
-                    textAlign: TextAlign.center,
-                  ),
-                ],
+                    const StairIconBadge(
+                      icon: CupertinoIcons.calendar,
+                      accent: StairColors.online,
+                      size: 38,
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      widget.store.events.isEmpty ? '記録がありません' : '該当する記録がありません',
+                      style: Theme.of(context).textTheme.titleMedium,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -169,59 +178,65 @@ class _EventListScreenState extends State<EventListScreen> {
                 child: DefaultTextStyle(
                   style: Theme.of(context).textTheme.bodyLarge!,
                   child: Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      StairSectionTitle(
-                        title: event.title,
-                        icon: event.kind == EventKind.live
-                            ? CupertinoIcons.person_2
-                            : CupertinoIcons.globe,
-                        accent: event.kind == EventKind.live
-                            ? StairColors.live
-                            : StairColors.online,
-                        trailing: Icon(
-                          CupertinoIcons.chevron_right,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        '${event.kind == EventKind.live ? '生大喜利' : 'ネット大喜利'}'
-                        ' · ${event.meetingType == MeetingType.tournament ? '大会' : '通常会'}'
-                        ' · ${eventStatusLabel(event.status)}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                      const Divider(height: 22),
-                      if (event.kind == EventKind.live) ...[
-                        Text(formatLiveEventDate(event)),
-                        if (event.venue.isNotEmpty) Text(event.venue),
-                      ] else ...[
-                        if (event.effectiveRounds.isEmpty)
-                          const Text('スケジュール未設定'),
-                        for (final round in event.effectiveRounds) ...[
-                          if (round.name.isNotEmpty) Text(round.name),
-                          if (round.submissionEnd != null)
-                            Text('投稿締切 ${formatEventDate(round.submissionEnd)}'),
-                          if (round.votingEnd != null)
-                            Text('投票締切 ${formatEventDate(round.votingEnd)}'),
-                        ],
-                      ],
-                      if (event.hasRecordedResult) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          tournamentResultSummary(event),
-                          style: TextStyle(
-                            color: StairColors.result,
-                            fontWeight: FontWeight.w600,
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        StairSectionTitle(
+                          title: event.title,
+                          icon: event.kind == EventKind.live
+                              ? CupertinoIcons.person_2
+                              : CupertinoIcons.globe,
+                          accent: event.kind == EventKind.live
+                              ? StairColors.live
+                              : StairColors.online,
+                          trailing: Icon(
+                            CupertinoIcons.chevron_right,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                            size: 20,
                           ),
                         ),
+                        const SizedBox(height: 10),
+                        Text(
+                          '${event.kind == EventKind.live ? '生大喜利' : 'ネット大喜利'}'
+                          ' · ${event.meetingType == MeetingType.tournament ? '大会' : '通常会'}'
+                          ' · ${eventStatusLabel(event.status)}',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const Divider(height: 22),
+                        if (event.kind == EventKind.live) ...[
+                          Text(formatLiveEventDate(event)),
+                          if (event.venue.isNotEmpty) Text(event.venue),
+                        ] else ...[
+                          if (event.effectiveRounds.isEmpty)
+                            const Text('スケジュール未設定'),
+                          if (event.effectiveRounds.length > 1)
+                            Text('${event.effectiveRounds.length}日程'),
+                          if (_previewRound(event, now) case final round?) ...[
+                            if (round.name.isNotEmpty) Text(round.name),
+                            if (round.submissionEnd != null)
+                              Text(
+                                '投稿締切 ${formatEventDate(round.submissionEnd)}',
+                              ),
+                            if (round.votingEnd != null)
+                              Text('投票締切 ${formatEventDate(round.votingEnd)}'),
+                          ],
+                        ],
+                        if (event.hasRecordedResult) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            tournamentResultSummary(event),
+                            style: TextStyle(
+                              color: StairColors.result,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
                 ),
               ),
             ),
@@ -389,7 +404,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                           for (final round in event.effectiveRounds) ...[
                             _line('段階', round.name),
                             const Divider(height: 1),
-                            _line('投稿開始', formatEventDate(round.submissionStart)),
+                            _line(
+                              '投稿開始',
+                              formatEventDate(round.submissionStart),
+                            ),
                             const Divider(height: 1),
                             _line('投稿締切', formatEventDate(round.submissionEnd)),
                             const Divider(height: 1),
@@ -418,11 +436,19 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                             ],
                             if (result.members.isNotEmpty) ...[
                               const Divider(height: 1),
-                              _line('メンバー', result.members.join('、'), multiline: true),
+                              _line(
+                                'メンバー',
+                                result.members.join('、'),
+                                multiline: true,
+                              ),
                             ],
                             for (final stage in result.stages) ...[
                               const Divider(height: 1),
-                              _line(stage.name, resultStageSummary(stage), multiline: true),
+                              _line(
+                                stage.name,
+                                resultStageSummary(stage),
+                                multiline: true,
+                              ),
                             ],
                             if (result.memo.isNotEmpty) ...[
                               const Divider(height: 1),

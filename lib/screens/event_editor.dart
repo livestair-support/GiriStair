@@ -217,10 +217,18 @@ class _EventEditorState extends State<EventEditor> {
       eventDate: _kind == EventKind.live ? _eventDate : null,
       startsAt: _kind == EventKind.live ? _startsAt : null,
       endsAt: _kind == EventKind.live ? _endsAt : null,
-      submissionStart: _kind == EventKind.online ? _rounds.firstOrNull?.submissionStart : null,
-      submissionEnd: _kind == EventKind.online ? _rounds.firstOrNull?.submissionEnd : null,
-      votingStart: _kind == EventKind.online ? _rounds.firstOrNull?.votingStart : null,
-      votingEnd: _kind == EventKind.online ? _rounds.firstOrNull?.votingEnd : null,
+      submissionStart: _kind == EventKind.online
+          ? _rounds.firstOrNull?.submissionStart
+          : null,
+      submissionEnd: _kind == EventKind.online
+          ? _rounds.firstOrNull?.submissionEnd
+          : null,
+      votingStart: _kind == EventKind.online
+          ? _rounds.firstOrNull?.votingStart
+          : null,
+      votingEnd: _kind == EventKind.online
+          ? _rounds.firstOrNull?.votingEnd
+          : null,
       rounds: _kind == EventKind.online ? _rounds : const [],
       siteUrl: _kind == EventKind.online ? _siteUrl.text.trim() : '',
       status: _status,
@@ -233,7 +241,8 @@ class _EventEditorState extends State<EventEditor> {
           : switch (_tournamentResult.outcome) {
               TournamentOutcome.champion => 1,
               TournamentOutcome.runnerUp => 2,
-              TournamentOutcome.placed || TournamentOutcome.unrecorded => int.tryParse(_placement.text.trim()),
+              TournamentOutcome.placed || TournamentOutcome.unrecorded =>
+                int.tryParse(_placement.text.trim()),
               _ => null,
             },
       tournamentResult: _meetingType == MeetingType.tournament
@@ -386,114 +395,113 @@ class _EventEditorState extends State<EventEditor> {
       return;
     }
     final selected = <String>{};
-    final result = await showModalBottomSheet<List<String>>(
+    final result = await showCupertinoSheet<List<String>>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => StatefulBuilder(
-        builder: (context, setSheetState) => SafeArea(
-          child: SizedBox(
-            height: MediaQuery.sizeOf(context).height * 0.65,
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                  child: Row(
-                    children: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('キャンセル'),
-                      ),
-                      const Expanded(
-                        child: Text(
-                          'プレイヤーを選ぶ',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w600,
+      topGap: 0.2,
+      scrollableBuilder: (context, scrollController) => Material(
+        color: Theme.of(context).colorScheme.surface,
+        child: StatefulBuilder(
+          builder: (context, setSheetState) => SafeArea(
+            top: false,
+            child: SizedBox.expand(
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                    child: Row(
+                      children: [
+                        CupertinoButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('キャンセル'),
+                        ),
+                        const Expanded(
+                          child: Text(
+                            'プレイヤーを選ぶ',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
-                      ),
-                      TextButton(
-                        onPressed: selected.isEmpty
-                            ? null
-                            : () => Navigator.pop(
-                                context,
-                                history
-                                    .map((player) => player.name)
-                                    .where(selected.contains)
-                                    .toList(),
-                              ),
-                        child: const Text('追加'),
-                      ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      hintText: '名前・フリガナで検索',
-                      prefixIcon: Icon(CupertinoIcons.search, size: 20),
+                        CupertinoButton(
+                          onPressed: selected.isEmpty
+                              ? null
+                              : () => Navigator.pop(
+                                  context,
+                                  history
+                                      .map((player) => player.name)
+                                      .where(selected.contains)
+                                      .toList(),
+                                ),
+                          child: const Text('追加'),
+                        ),
+                      ],
                     ),
-                    onChanged: (value) =>
-                        setSheetState(() => query = playerSearchKey(value)),
                   ),
-                ),
-                const Divider(height: 1),
-                Expanded(
-                  child: Builder(
-                    builder: (context) {
-                      final visible = history
-                          .where(
-                            (player) => playerSearchKey(
-                              '${player.name} ${player.furigana}',
-                            ).contains(query),
-                          )
-                          .toList();
-                      return ListView.separated(
-                        itemCount: visible.length,
-                        separatorBuilder: (context, index) =>
-                            const Divider(height: 1, indent: 16),
-                        itemBuilder: (context, index) {
-                          final player = visible[index];
-                          final name = player.name;
-                          final checked = selected.contains(name);
-                          return ListTile(
-                            title: Text(
-                              name,
-                              style: const TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w500,
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: TextField(
+                      decoration: const InputDecoration(
+                        hintText: '名前・フリガナで検索',
+                        prefixIcon: Icon(CupertinoIcons.search, size: 20),
+                      ),
+                      onChanged: (value) =>
+                          setSheetState(() => query = playerSearchKey(value)),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: Builder(
+                      builder: (context) {
+                        final visible = history
+                            .where(
+                              (player) => playerSearchKey(
+                                '${player.name} ${player.furigana}',
+                              ).contains(query),
+                            )
+                            .toList();
+                        return ListView.separated(
+                          controller: scrollController,
+                          itemCount: visible.length,
+                          separatorBuilder: (context, index) =>
+                              const Divider(height: 1, indent: 16),
+                          itemBuilder: (context, index) {
+                            final player = visible[index];
+                            final name = player.name;
+                            final checked = selected.contains(name);
+                            return ListTile(
+                              title: Text(
+                                name,
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
-                            ),
-                            subtitle: player.furigana.isEmpty
-                                ? null
-                                : Text(player.furigana),
-                            dense: true,
-                            trailing: Icon(
-                              checked
-                                  ? Icons.check_circle
-                                  : Icons.circle_outlined,
-                              color: checked
-                                  ? StairColors.action
-                                  : Theme.of(context).colorScheme.outline,
-                            ),
-                            selected: checked,
-                            onTap: () => setSheetState(() {
-                              if (!selected.add(name)) selected.remove(name);
-                            }),
-                          );
-                        },
-                      );
-                    },
+                              subtitle: player.furigana.isEmpty
+                                  ? null
+                                  : Text(player.furigana),
+                              dense: true,
+                              trailing: Icon(
+                                checked
+                                    ? CupertinoIcons.check_mark_circled_solid
+                                    : CupertinoIcons.circle,
+                                color: checked
+                                    ? StairColors.action
+                                    : Theme.of(context).colorScheme.outline,
+                              ),
+                              selected: checked,
+                              onTap: () => setSheetState(() {
+                                if (!selected.add(name)) selected.remove(name);
+                              }),
+                            );
+                          },
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -574,7 +582,9 @@ class _EventEditorState extends State<EventEditor> {
               child: CupertinoButton(
                 key: const ValueKey('event-import-participant-images'),
                 padding: const EdgeInsets.symmetric(vertical: 10),
-                onPressed: _saving ? null : () => _importParticipants(images: true),
+                onPressed: _saving
+                    ? null
+                    : () => _importParticipants(images: true),
                 child: const Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -758,7 +768,12 @@ class _EventEditorState extends State<EventEditor> {
                       : (value) => setState(() {
                           _kind = value;
                           if (value == EventKind.online && _rounds.isEmpty) {
-                            _rounds.add(EventRound(id: widget.store.newId(), name: '予選1回戦'));
+                            _rounds.add(
+                              EventRound(
+                                id: widget.store.newId(),
+                                name: '予選1回戦',
+                              ),
+                            );
                           }
                           _scheduleError = null;
                         }),
@@ -872,7 +887,8 @@ class _EventEditorState extends State<EventEditor> {
                 memo: _result,
                 enabled: !_saving,
                 newId: widget.store.newId,
-                onChanged: (result) => setState(() => _tournamentResult = result),
+                onChanged: (result) =>
+                    setState(() => _tournamentResult = result),
               ),
             StairFormSection(
               title: '振り返り',

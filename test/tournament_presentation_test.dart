@@ -39,15 +39,21 @@ void main() {
     );
   });
 
-  test('championship has a single clear label and keeps old free-form notes', () {
-    expect(
-      tournamentResultSummary(event(
-        result: TournamentResult(outcome: TournamentOutcome.champion),
-      )),
-      '優勝',
-    );
-    expect(tournamentResultSummary(event(rank: 3, legacy: '決勝3位')), '3位 · 決勝3位');
-    expect(tournamentFormatLabel(TournamentFormat.pair), 'タッグ戦');
-    expect(tournamentFormatLabel(TournamentFormat.team), 'チーム戦');
-  });
+  test(
+    'championship has a single clear label and keeps old free-form notes',
+    () {
+      expect(
+        tournamentResultSummary(
+          event(result: TournamentResult(outcome: TournamentOutcome.champion)),
+        ),
+        '優勝',
+      );
+      expect(
+        tournamentResultSummary(event(rank: 3, legacy: '決勝3位')),
+        '3位 · 決勝3位',
+      );
+      expect(tournamentFormatLabel(TournamentFormat.pair), 'タッグ戦');
+      expect(tournamentFormatLabel(TournamentFormat.team), 'チーム戦');
+    },
+  );
 }

@@ -169,13 +169,20 @@ void main() {
     final storage = MemoryGiriStorage();
     final store = GiriStore(storage: storage);
     await store.load();
-    final event = _event('event-1').copyWith(kind: EventKind.online, rounds: [
-      const EventRound(id: 'qualifier', name: '予選'),
-      const EventRound(id: 'final', name: '決勝'),
-    ]);
+    final event = _event('event-1').copyWith(
+      kind: EventKind.online,
+      rounds: [
+        const EventRound(id: 'qualifier', name: '予選'),
+        const EventRound(id: 'final', name: '決勝'),
+      ],
+    );
     await store.saveEvent(event);
-    final note = _note('topic', eventId: event.id).copyWith(roundId: 'qualifier',
-      prompt: 'お題の本文', answers: ['回答案'], used: true);
+    final note = _note('topic', eventId: event.id).copyWith(
+      roundId: 'qualifier',
+      prompt: 'お題の本文',
+      answers: ['回答案'],
+      used: true,
+    );
     await store.saveNote(note);
     await store.saveEvent(event.copyWith(rounds: [event.rounds.last]));
     final reopened = GiriStore(storage: storage);
@@ -199,11 +206,17 @@ void main() {
     await store.saveEvent(_event('current'));
     final previous = storage.contents;
     final malformed = _event('bad').toJson()..['rounds'] = ['invalid'];
-    await expectLater(store.restoreBackup(jsonEncode({
-      'schemaVersion': 1, 'events': [malformed], 'notes': [],
-    })), throwsFormatException);
+    await expectLater(
+      store.restoreBackup(
+        jsonEncode({
+          'schemaVersion': 1,
+          'events': [malformed],
+          'notes': [],
+        }),
+      ),
+      throwsFormatException,
+    );
     expect(storage.contents, previous);
     expect(store.events.single.id, 'current');
   });
-
 }

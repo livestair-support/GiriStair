@@ -161,12 +161,20 @@ void main() {
 
   test('複数ラウンドの投稿期間を個別に判定し古い期間と二重にしない', () {
     final rounds = [
-      EventRound(id: 'prelim', name: '予選1回戦',
-        submissionStart: start, submissionEnd: end,
-        votingStart: end, votingEnd: end.add(const Duration(days: 7))),
-      EventRound(id: 'final', name: '決勝',
+      EventRound(
+        id: 'prelim',
+        name: '予選1回戦',
+        submissionStart: start,
+        submissionEnd: end,
+        votingStart: end,
+        votingEnd: end.add(const Duration(days: 7)),
+      ),
+      EventRound(
+        id: 'final',
+        name: '決勝',
         submissionStart: end.add(const Duration(days: 7)),
-        submissionEnd: end.add(const Duration(days: 14))),
+        submissionEnd: end.add(const Duration(days: 14)),
+      ),
     ];
     final event = onlineEvent().copyWith(rounds: rounds);
     rounds.clear();
@@ -176,11 +184,22 @@ void main() {
     expect(event.isSubmissionOpen(end.add(const Duration(days: 7))), isTrue);
     expect(event.nextSubmissionEnd(start), end);
     expect(event.nextSubmissionEnd(end), isNull);
-    expect(event.copyWith(status: EventStatus.canceled).isSubmissionOpen(start), isFalse);
-    expect(event.copyWith(kind: EventKind.live).isSubmissionOpen(start), isFalse);
+    expect(
+      event.copyWith(status: EventStatus.canceled).isSubmissionOpen(start),
+      isFalse,
+    );
+    expect(
+      event.copyWith(kind: EventKind.live).isSubmissionOpen(start),
+      isFalse,
+    );
     final restored = GiriEvent.fromJson(event.toJson());
     expect(restored.rounds.map((round) => round.id), ['prelim', 'final']);
-    expect(restored.rounds.last.submissionStart!.isAtSameMomentAs(end.add(const Duration(days: 7))), isTrue);
+    expect(
+      restored.rounds.last.submissionStart!.isAtSameMomentAs(
+        end.add(const Duration(days: 7)),
+      ),
+      isTrue,
+    );
     expect(() => event.rounds.clear(), throwsUnsupportedError);
     expect(onlineEvent().effectiveRounds.single.id, 'legacy');
     final futureOnly = event.copyWith(rounds: [event.rounds.last]);
@@ -188,7 +207,12 @@ void main() {
   });
 
   test('ラウンドの改名や日時削除で識別子を保持する', () {
-    final round = EventRound(id: 'round-1', name: '予選', submissionStart: start, submissionEnd: end);
+    final round = EventRound(
+      id: 'round-1',
+      name: '予選',
+      submissionStart: start,
+      submissionEnd: end,
+    );
     final changed = round.copyWith(name: '予選2回戦', submissionStart: null);
     expect(changed.id, round.id);
     expect(changed.submissionStart, isNull);
@@ -201,19 +225,58 @@ void main() {
       teamName: 'チームA',
       members: ['A', 'B'],
       outcome: TournamentOutcome.eliminated,
-      stages: [const ResultStage(id: 'qualifier', name: '予選', outcome: TournamentOutcome.champion, placement: 1, memo: '予選優勝')],
+      stages: [
+        const ResultStage(
+          id: 'qualifier',
+          name: '予選',
+          outcome: TournamentOutcome.champion,
+          placement: 1,
+          memo: '予選優勝',
+        ),
+      ],
       memo: '本戦で敗退',
     );
-    final event = onlineEvent().copyWith(resultText: '予選優勝', placement: 1, tournamentResult: result);
+    final event = onlineEvent().copyWith(
+      resultText: '予選優勝',
+      placement: 1,
+      tournamentResult: result,
+    );
     final restored = GiriEvent.fromJson(event.toJson());
     expect(restored.hasRecordedResult, isTrue);
     expect(restored.effectivePlacement, isNull);
     expect(restored.tournamentResult!.teamName, 'チームA');
     expect(restored.tournamentResult!.members, ['A', 'B']);
     expect(restored.tournamentResult!.stages.single.placement, 1);
-    expect(event.copyWith(tournamentResult: result.copyWith(outcome: TournamentOutcome.champion)).effectivePlacement, 1);
-    expect(event.copyWith(tournamentResult: result.copyWith(outcome: TournamentOutcome.runnerUp)).effectivePlacement, 2);
-    expect(event.copyWith(tournamentResult: result.copyWith(outcome: TournamentOutcome.advanced)).effectivePlacement, isNull);
+    expect(
+      event
+          .copyWith(
+            tournamentResult: result.copyWith(
+              outcome: TournamentOutcome.champion,
+            ),
+          )
+          .effectivePlacement,
+      1,
+    );
+    expect(
+      event
+          .copyWith(
+            tournamentResult: result.copyWith(
+              outcome: TournamentOutcome.runnerUp,
+            ),
+          )
+          .effectivePlacement,
+      2,
+    );
+    expect(
+      event
+          .copyWith(
+            tournamentResult: result.copyWith(
+              outcome: TournamentOutcome.advanced,
+            ),
+          )
+          .effectivePlacement,
+      isNull,
+    );
     expect(event.copyWith(tournamentResult: null).resultText, '予選優勝');
     expect(() => result.members.add('C'), throwsUnsupportedError);
     expect(() => result.stages.clear(), throwsUnsupportedError);
@@ -221,9 +284,19 @@ void main() {
 
   test('お題・回答案・使用済み状態とラウンドの関連を保存する', () {
     final answers = ['回答1', '回答2'];
-    final note = ThoughtNote(id: 'topic', title: '', kind: NoteKind.answers,
-      createdAt: start, updatedAt: end, eventId: 'online-1', roundId: 'qualifier',
-      prompt: 'こんな大会はいやだ', answers: answers, used: true, body: '古い本文');
+    final note = ThoughtNote(
+      id: 'topic',
+      title: '',
+      kind: NoteKind.answers,
+      createdAt: start,
+      updatedAt: end,
+      eventId: 'online-1',
+      roundId: 'qualifier',
+      prompt: 'こんな大会はいやだ',
+      answers: answers,
+      used: true,
+      body: '古い本文',
+    );
     answers.clear();
     final restored = ThoughtNote.fromJson(note.toJson());
     expect(restored.prompt, note.prompt);
@@ -237,7 +310,10 @@ void main() {
     expect(unlinked.body, '古い本文');
     expect(() => restored.answers.clear(), throwsUnsupportedError);
     final oldJson = Map<String, dynamic>.of(note.toJson())
-      ..remove('prompt')..remove('answers')..remove('roundId')..remove('used');
+      ..remove('prompt')
+      ..remove('answers')
+      ..remove('roundId')
+      ..remove('used');
     final old = ThoughtNote.fromJson(oldJson);
     expect(old.prompt, isEmpty);
     expect(old.answers, isEmpty);
@@ -249,18 +325,51 @@ void main() {
   test('追加された構造化項目の不正値を空データへ変換しない', () {
     final event = onlineEvent().toJson();
     final round = const EventRound(id: 'round', name: '予選').toJson();
-    for (final invalid in [42, ['broken'], [round, round]]) {
-      expect(() => GiriEvent.fromJson({...event, 'rounds': invalid}), throwsFormatException);
+    for (final invalid in [
+      42,
+      ['broken'],
+      [round, round],
+    ]) {
+      expect(
+        () => GiriEvent.fromJson({...event, 'rounds': invalid}),
+        throwsFormatException,
+      );
     }
-    expect(() => GiriEvent.fromJson({...event, 'tournamentResult': 'broken'}), throwsFormatException);
-    expect(() => TournamentResult.fromJson({'outcome': 'future-outcome'}), throwsFormatException);
-    expect(() => ResultStage.fromJson({'id': 'stage', 'name': '予選', 'placement': 0}), throwsFormatException);
-    final note = ThoughtNote(id: 'note', title: '', kind: NoteKind.prompts, createdAt: start, updatedAt: end).toJson();
+    expect(
+      () => GiriEvent.fromJson({...event, 'tournamentResult': 'broken'}),
+      throwsFormatException,
+    );
+    expect(
+      () => TournamentResult.fromJson({'outcome': 'future-outcome'}),
+      throwsFormatException,
+    );
+    expect(
+      () => ResultStage.fromJson({'id': 'stage', 'name': '予選', 'placement': 0}),
+      throwsFormatException,
+    );
+    final note = ThoughtNote(
+      id: 'note',
+      title: '',
+      kind: NoteKind.prompts,
+      createdAt: start,
+      updatedAt: end,
+    ).toJson();
     for (final value in [1, 'true']) {
-      expect(() => ThoughtNote.fromJson({...note, 'used': value}), throwsFormatException);
+      expect(
+        () => ThoughtNote.fromJson({...note, 'used': value}),
+        throwsFormatException,
+      );
     }
-    expect(() => ThoughtNote.fromJson({...note, 'answers': [1]}), throwsFormatException);
-    expect(() => ThoughtNote.fromJson({...note, 'roundId': 1}), throwsFormatException);
+    expect(
+      () => ThoughtNote.fromJson({
+        ...note,
+        'answers': [1],
+      }),
+      throwsFormatException,
+    );
+    expect(
+      () => ThoughtNote.fromJson({...note, 'roundId': 1}),
+      throwsFormatException,
+    );
   });
-
 }

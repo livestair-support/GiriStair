@@ -33,14 +33,20 @@ void selectPickerDate(WidgetTester tester, DateTime date) {
 }
 
 void main() {
-  testWidgets('Japanese calendar selects a day and pages months', (tester) async {
+  testWidgets('Japanese calendar selects a day and pages months', (
+    tester,
+  ) async {
     DateTime? selected;
-    await tester.pumpWidget(controlApp(StairCalendar(
-      value: DateTime(2026, 10, 28),
-      firstDate: DateTime(2026, 10),
-      lastDate: DateTime(2026, 11, 30),
-      onDateChanged: (date) => selected = date,
-    )));
+    await tester.pumpWidget(
+      controlApp(
+        StairCalendar(
+          value: DateTime(2026, 10, 28),
+          firstDate: DateTime(2026, 10),
+          lastDate: DateTime(2026, 11, 30),
+          onDateChanged: (date) => selected = date,
+        ),
+      ),
+    );
     expect(find.byType(CalendarDatePicker), findsNothing);
     expect(find.text('2026年10月'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('calendar-next-month')));

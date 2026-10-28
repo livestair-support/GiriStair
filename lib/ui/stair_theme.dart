@@ -447,7 +447,10 @@ class StairFormSection extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: StairSectionTitle(
-            title: title, icon: icon, accent: accent, trailing: trailing,
+            title: title,
+            icon: icon,
+            accent: accent,
+            trailing: trailing,
           ),
         ),
         for (final child in children) ...[

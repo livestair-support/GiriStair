@@ -200,10 +200,7 @@ void main() {
       preferences: enabled.copyWith(reminderMinutes: 30),
       now: now,
     );
-    expect(
-      renamedPlan.map((item) => item.key),
-      plan.map((item) => item.key),
-    );
+    expect(renamedPlan.map((item) => item.key), plan.map((item) => item.key));
     expect(renamedPlan.last.body, '決勝戦・投稿締切の30分前です');
   });
 

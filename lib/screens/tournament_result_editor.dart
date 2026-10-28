@@ -100,12 +100,15 @@ class TournamentResultEditor extends StatelessWidget {
               hint: 'メンバー（1行に1人）',
               initialValue: value.members.join('\n'),
               maxLines: 4,
-              onChanged: (text) => onChanged(value.copyWith(
-                members: text.split(RegExp(r'[\n、,]'))
-                    .map((name) => name.trim())
-                    .where((name) => name.isNotEmpty)
-                    .toList(),
-              )),
+              onChanged: (text) => onChanged(
+                value.copyWith(
+                  members: text
+                      .split(RegExp(r'[\n、,]'))
+                      .map((name) => name.trim())
+                      .where((name) => name.isNotEmpty)
+                      .toList(),
+                ),
+              ),
             ),
           ],
           StairMenuRow<TournamentOutcome>(
@@ -131,7 +134,8 @@ class TournamentResultEditor extends StatelessWidget {
                 : null,
           ),
           if (value.outcome == TournamentOutcome.placed ||
-              (value.outcome == TournamentOutcome.unrecorded && placement.text.isNotEmpty))
+              (value.outcome == TournamentOutcome.unrecorded &&
+                  placement.text.isNotEmpty))
             _field(
               key: const ValueKey('event-placement'),
               hint: '最終順位（任意）',
@@ -153,13 +157,17 @@ class TournamentResultEditor extends StatelessWidget {
           icon: CupertinoIcons.list_number,
           accent: StairColors.result,
           trailing: CupertinoButton(
-            key: ValueKey('event-result-stage-remove-${value.stages[index].id}'),
+            key: ValueKey(
+              'event-result-stage-remove-${value.stages[index].id}',
+            ),
             minimumSize: const Size(32, 32),
             padding: EdgeInsets.zero,
             onPressed: enabled
-                ? () => onChanged(value.copyWith(
+                ? () => onChanged(
+                    value.copyWith(
                       stages: List.of(value.stages)..removeAt(index),
-                    ))
+                    ),
+                  )
                 : null,
             child: const Icon(CupertinoIcons.minus_circle, size: 20),
           ),
@@ -169,7 +177,8 @@ class TournamentResultEditor extends StatelessWidget {
               accent: StairColors.result,
               value: value.stages[index].name,
               onChanged: enabled
-                  ? (name) => _stage(index, value.stages[index].copyWith(name: name))
+                  ? (name) =>
+                        _stage(index, value.stages[index].copyWith(name: name))
                   : null,
             ),
             StairMenuRow<TournamentOutcome>(
@@ -182,7 +191,10 @@ class TournamentResultEditor extends StatelessWidget {
                   outcome: tournamentOutcomeLabel(outcome),
               },
               onChanged: enabled
-                  ? (outcome) => _stage(index, value.stages[index].copyWith(outcome: outcome))
+                  ? (outcome) => _stage(
+                      index,
+                      value.stages[index].copyWith(outcome: outcome),
+                    )
                   : null,
             ),
             _field(
@@ -190,16 +202,20 @@ class TournamentResultEditor extends StatelessWidget {
               hint: 'この段階の順位（任意）',
               initialValue: value.stages[index].placement?.toString() ?? '',
               number: true,
-              onChanged: (text) => _stage(index, value.stages[index].copyWith(
-                placement: int.tryParse(text.trim()),
-              )),
+              onChanged: (text) => _stage(
+                index,
+                value.stages[index].copyWith(
+                  placement: int.tryParse(text.trim()),
+                ),
+              ),
             ),
             _field(
               key: ValueKey('event-stage-memo-${value.stages[index].id}'),
               hint: '対戦・得点・回答など',
               initialValue: value.stages[index].memo,
               maxLines: 4,
-              onChanged: (memo) => _stage(index, value.stages[index].copyWith(memo: memo)),
+              onChanged: (memo) =>
+                  _stage(index, value.stages[index].copyWith(memo: memo)),
             ),
           ],
         ),
@@ -207,10 +223,17 @@ class TournamentResultEditor extends StatelessWidget {
         key: const ValueKey('event-result-stage-add'),
         padding: const EdgeInsets.symmetric(vertical: 12),
         onPressed: enabled
-            ? () => onChanged(value.copyWith(stages: [
-                  ...value.stages,
-                  ResultStage(id: newId(), name: '予選${value.stages.length + 1}回戦'),
-                ]))
+            ? () => onChanged(
+                value.copyWith(
+                  stages: [
+                    ...value.stages,
+                    ResultStage(
+                      id: newId(),
+                      name: '予選${value.stages.length + 1}回戦',
+                    ),
+                  ],
+                ),
+              )
             : null,
         child: const Row(
           mainAxisAlignment: MainAxisAlignment.center,
