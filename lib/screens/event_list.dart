@@ -5,6 +5,19 @@ import '../store.dart';
 import '../ui/stair_theme.dart';
 import 'event_editor.dart';
 
+String formatCalendarDate(DateTime? value) {
+  if (value == null) return '未設定';
+  const weekdays = ['月', '火', '水', '木', '金', '土', '日'];
+  return '${value.year}年${value.month}月${value.day}日'
+      '(${weekdays[value.weekday - 1]})';
+}
+
+String formatLiveEventDate(GiriEvent event) => event.startsAt != null
+    ? formatEventDate(event.startsAt)
+    : event.eventDate != null
+    ? '${formatCalendarDate(event.eventDate)} · 時刻未定'
+    : '日付未設定';
+
 class EventListScreen extends StatefulWidget {
   const EventListScreen({required this.store, super.key});
 
@@ -21,7 +34,9 @@ class _EventListScreenState extends State<EventListScreen> {
   bool _upcomingOnly = false;
 
   DateTime? _relevantDate(GiriEvent event, DateTime now) {
-    if (event.kind == EventKind.live) return event.endsAt ?? event.startsAt;
+    if (event.kind == EventKind.live) {
+      return event.endsAt ?? event.startsAt ?? event.eventDate;
+    }
     final deadlines = [
       event.submissionEnd,
       event.votingEnd,
@@ -43,7 +58,15 @@ class _EventListScreenState extends State<EventListScreen> {
             if (_upcomingOnly) {
               if (event.status != EventStatus.planned) return false;
               final date = _relevantDate(event, now);
-              if (date != null && date.isBefore(now)) return false;
+              final dateOnly =
+                  event.kind == EventKind.live &&
+                  event.startsAt == null &&
+                  event.endsAt == null &&
+                  event.eventDate != null;
+              final cutoff = dateOnly
+                  ? DateTime(now.year, now.month, now.day)
+                  : now;
+              if (date != null && date.isBefore(cutoff)) return false;
             }
             final searchable = [
               event.title,
@@ -66,7 +89,7 @@ class _EventListScreenState extends State<EventListScreen> {
                 : bDate.compareTo(aDate);
           });
       return ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(2, 2, 2, 8),
@@ -216,7 +239,7 @@ class _EventListScreenState extends State<EventListScreen> {
                       ),
                       const Divider(height: 22),
                       if (event.kind == EventKind.live) ...[
-                        Text(formatEventDate(event.startsAt)),
+                        Text(formatLiveEventDate(event)),
                         if (event.venue.isNotEmpty) Text(event.venue),
                       ] else ...[
                         if (event.submissionEnd != null)
@@ -340,13 +363,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     ? null
                     : () => Navigator.of(context).push<void>(
                         MaterialPageRoute(
-                          builder: (context) => Scaffold(
-                            appBar: AppBar(title: const Text('記録を編集')),
-                            body: EventEditor(
-                              store: widget.store,
-                              event: event,
-                              onSaved: () => Navigator.of(context).pop(),
-                            ),
+                          builder: (context) => EventEditor(
+                            store: widget.store,
+                            event: event,
+                            onSaved: () => Navigator.of(context).pop(),
                           ),
                         ),
                       ),
@@ -390,6 +410,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                         children: [
                           _line('会場', event.venue),
                           const Divider(height: 1),
+                          if (event.eventDate != null) ...[
+                            _line('日付', formatCalendarDate(event.eventDate)),
+                            const Divider(height: 1),
+                          ],
                           _line('開始', formatEventDate(event.startsAt)),
                           const Divider(height: 1),
                           _line('終了', formatEventDate(event.endsAt)),

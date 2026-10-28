@@ -1,7 +1,9 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
 
 /// Registration form shared by the registration tab and event editing routes.
@@ -21,7 +23,7 @@ class _EventEditorState extends State<EventEditor> {
   final _title = TextEditingController();
   final _organizer = TextEditingController();
   final _venue = TextEditingController();
-  final _participants = TextEditingController();
+  final _participants = <TextEditingController>[];
   final _siteUrl = TextEditingController();
   final _memo = TextEditingController();
   final _result = TextEditingController();
@@ -30,6 +32,7 @@ class _EventEditorState extends State<EventEditor> {
   EventKind _kind = EventKind.live;
   MeetingType _meetingType = MeetingType.casual;
   EventStatus _status = EventStatus.planned;
+  DateTime? _eventDate;
   DateTime? _startsAt;
   DateTime? _endsAt;
   DateTime? _submissionStart;
@@ -51,12 +54,25 @@ class _EventEditorState extends State<EventEditor> {
     if (oldWidget.event?.id != widget.event?.id) _loadEvent();
   }
 
+  DateTime _dateOnly(DateTime value) =>
+      DateTime(value.year, value.month, value.day);
+
   void _loadEvent() {
     final event = widget.event;
     _title.text = event?.title ?? '';
     _organizer.text = event?.organizer ?? '';
     _venue.text = event?.venue ?? '';
-    _participants.text = event?.participants.join('、') ?? '';
+    for (final controller in _participants) {
+      controller.dispose();
+    }
+    _participants
+      ..clear()
+      ..addAll(
+        (event?.participants.isNotEmpty == true
+                ? event!.participants
+                : const [''])
+            .map((name) => TextEditingController(text: name)),
+      );
     _siteUrl.text = event?.siteUrl ?? '';
     _memo.text = event?.memo ?? '';
     _result.text = event?.resultText ?? '';
@@ -64,6 +80,12 @@ class _EventEditorState extends State<EventEditor> {
     _kind = event?.kind ?? EventKind.live;
     _meetingType = event?.meetingType ?? MeetingType.casual;
     _status = event?.status ?? EventStatus.planned;
+    final existingDate = event?.eventDate ?? event?.startsAt ?? event?.endsAt;
+    _eventDate = existingDate != null
+        ? _dateOnly(existingDate)
+        : event == null
+        ? _dateOnly(DateTime.now())
+        : null;
     _startsAt = event?.startsAt;
     _endsAt = event?.endsAt;
     _submissionStart = event?.submissionStart;
@@ -79,7 +101,7 @@ class _EventEditorState extends State<EventEditor> {
       _title,
       _organizer,
       _venue,
-      _participants,
+      ..._participants,
       _siteUrl,
       _memo,
       _result,
@@ -90,36 +112,46 @@ class _EventEditorState extends State<EventEditor> {
     super.dispose();
   }
 
-  Future<void> _pickDate(
-    DateTime? current,
-    ValueChanged<DateTime?> onChanged,
-  ) async {
-    final initial = (current ?? DateTime.now()).toLocal();
-    final date = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100, 12, 31),
-      helpText: '日付を選択',
-    );
-    if (date == null || !mounted) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(initial),
-      helpText: '時刻を選択',
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
-        child: child!,
-      ),
-    );
-    if (time == null || !mounted) return;
-    setState(() {
-      onChanged(
-        DateTime(date.year, date.month, date.day, time.hour, time.minute),
+  void _changeDate(DateTime? value) {
+    final previous = _eventDate;
+    DateTime? moveTime(DateTime? time) {
+      if (time == null || value == null) return null;
+      // Preserve an existing overnight end date when changing the meeting day.
+      final offset = previous == null
+          ? 0
+          : DateTime.utc(time.year, time.month, time.day)
+                .difference(
+                  DateTime.utc(previous.year, previous.month, previous.day),
+                )
+                .inDays;
+      return DateTime(
+        value.year,
+        value.month,
+        value.day + offset,
+        time.hour,
+        time.minute,
       );
+    }
+
+    setState(() {
+      _startsAt = moveTime(_startsAt);
+      _endsAt = moveTime(_endsAt);
+      _eventDate = value == null ? null : _dateOnly(value);
       _scheduleError = null;
     });
   }
+
+  void _changeStart(DateTime? value) => setState(() {
+    _startsAt = value;
+    if (value != null) _eventDate ??= _dateOnly(value);
+    _scheduleError = null;
+  });
+
+  void _changeEnd(DateTime? value) => setState(() {
+    _endsAt = value;
+    if (value != null) _eventDate ??= _dateOnly(value);
+    _scheduleError = null;
+  });
 
   String? _validateSchedule() {
     if (_kind == EventKind.live) {
@@ -146,13 +178,13 @@ class _EventEditorState extends State<EventEditor> {
 
   Future<void> _save() async {
     if (_saving) return;
+    FocusManager.instance.primaryFocus?.unfocus();
     final formValid = _formKey.currentState!.validate();
     final scheduleError = _validateSchedule();
     setState(() => _scheduleError = scheduleError);
     if (!formValid || scheduleError != null) return;
-    final participants = _participants.text
-        .split(RegExp(r'[,、，\n]'))
-        .map((name) => name.trim())
+    final participants = _participants
+        .map((controller) => controller.text.trim())
         .where((name) => name.isNotEmpty)
         .toSet()
         .toList();
@@ -166,6 +198,7 @@ class _EventEditorState extends State<EventEditor> {
       organizer: _organizer.text.trim(),
       venue: _kind == EventKind.live ? _venue.text.trim() : '',
       participants: _kind == EventKind.live ? participants : const [],
+      eventDate: _kind == EventKind.live ? _eventDate : null,
       startsAt: _kind == EventKind.live ? _startsAt : null,
       endsAt: _kind == EventKind.live ? _endsAt : null,
       submissionStart: _kind == EventKind.online ? _submissionStart : null,
@@ -204,288 +237,564 @@ class _EventEditorState extends State<EventEditor> {
     }
   }
 
-  Widget _section(String title, List<Widget> children) {
-    final (icon, accent) = switch (title) {
-      '形式' => (Icons.category_outlined, StairColors.live),
-      '基本情報' => (Icons.edit_calendar_outlined, StairColors.live),
-      '会場・日時' => (Icons.place_outlined, StairColors.venue),
-      'サイト・スケジュール' => (Icons.language, StairColors.online),
-      '大会の結果' => (Icons.emoji_events_outlined, StairColors.result),
-      _ => (Icons.notes_outlined, StairColors.memo),
-    };
-    return StairSection(
-      title: title,
-      icon: icon,
-      accent: accent,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: children,
-      ),
-    );
-  }
-
   Widget _textField({
     required String label,
     required TextEditingController controller,
-    String? hintText,
-    String? helperText,
-    bool multiline = false,
+    Key? fieldKey,
     int? minLines,
     int? maxLines = 1,
     TextInputType? keyboardType,
     TextInputAction? textInputAction,
     String? suffixText,
     FormFieldValidator<String>? validator,
-  }) => StairFieldRow(
-    label: label,
-    multiline: multiline,
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
     child: Semantics(
       label: label,
       child: TextFormField(
+        key: fieldKey,
         controller: controller,
         enabled: !_saving,
         minLines: minLines,
         maxLines: maxLines,
         keyboardType: keyboardType,
         textInputAction: textInputAction,
+        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w400),
         decoration: InputDecoration(
-          hintText: hintText,
-          helperText: helperText,
-          helperMaxLines: 2,
+          hintText: label,
           suffixText: suffixText,
+          contentPadding: const EdgeInsets.symmetric(vertical: 12),
         ),
         validator: validator,
       ),
     ),
   );
 
-  Widget _dateField(
-    String label,
-    DateTime? value,
-    ValueChanged<DateTime?> onChanged,
-  ) => StairFieldRow(
-    label: label,
-    child: Row(
-      children: [
-        Expanded(
-          child: TextButton(
-            onPressed: _saving ? null : () => _pickDate(value, onChanged),
-            style: TextButton.styleFrom(
-              alignment: Alignment.centerRight,
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              minimumSize: const Size(44, 44),
-              foregroundColor: value == null
-                  ? Theme.of(context).colorScheme.onSurfaceVariant
-                  : Theme.of(context).colorScheme.onSurface,
-            ),
-            child: Semantics(
-              label: label,
-              child: Text(formatEventDate(value), textAlign: TextAlign.right),
-            ),
+  Widget _liveTimes() => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final buttons = [
+          StairTimeButton(
+            label: '開始',
+            value: _startsAt,
+            date: _eventDate,
+            onChanged: _saving ? null : _changeStart,
           ),
-        ),
-        if (value != null)
-          IconButton(
-            tooltip: '$labelをクリア',
-            onPressed: _saving
-                ? null
-                : () => setState(() {
-                    onChanged(null);
-                    _scheduleError = null;
-                  }),
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.close, size: 16),
+          StairTimeButton(
+            label: '終了',
+            value: _endsAt,
+            date: _endsAt == null ? _eventDate : _dateOnly(_endsAt!),
+            onChanged: _saving ? null : _changeEnd,
           ),
-      ],
+        ];
+        final reset = TextButton(
+          onPressed: _saving
+              ? null
+              : () => setState(() {
+                  _startsAt = null;
+                  _endsAt = null;
+                  _scheduleError = null;
+                }),
+          style: TextButton.styleFrom(
+            foregroundColor: StairColors.action,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            minimumSize: const Size(44, 44),
+          ),
+          child: const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.restart_alt, size: 18),
+              Text('未定', style: TextStyle(fontSize: 11)),
+            ],
+          ),
+        );
+        if (constraints.maxWidth < 300 ||
+            MediaQuery.textScalerOf(context).scale(17) > 21) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(child: buttons[0]),
+                  reset,
+                ],
+              ),
+              buttons[1],
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: buttons[0]),
+            const SizedBox(width: 8),
+            Expanded(child: buttons[1]),
+            const SizedBox(width: 8),
+            reset,
+          ],
+        );
+      },
     ),
   );
 
-  @override
-  Widget build(BuildContext context) => Form(
-    key: _formKey,
-    child: SingleChildScrollView(
-      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(2, 2, 2, 8),
-            child: Text(
-              '予定や参加記録を登録。結果・参加者は後から追加できます。',
-              style: Theme.of(context).textTheme.bodySmall,
+  Future<void> _pickPastParticipants() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final entered = _participants
+        .map((controller) => controller.text.trim())
+        .toSet();
+    final history =
+        widget.store.events
+            .expand((event) => event.participants)
+            .map((name) => name.trim())
+            .where((name) => name.isNotEmpty && !entered.contains(name))
+            .toSet()
+            .toList()
+          ..sort();
+    if (history.isEmpty) {
+      await showCupertinoDialog<void>(
+        context: context,
+        builder: (context) => CupertinoAlertDialog(
+          title: const Text('過去の参加者'),
+          content: const Text('記録に保存した参加者がここに表示されます。今回は名前を入力して追加してください。'),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('閉じる'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    final selected = <String>{};
+    final result = await showModalBottomSheet<List<String>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(context).height * 0.65,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                  child: Row(
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('キャンセル'),
+                      ),
+                      const Expanded(
+                        child: Text(
+                          '過去の参加者',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: selected.isEmpty
+                            ? null
+                            : () => Navigator.pop(
+                                context,
+                                history.where(selected.contains).toList(),
+                              ),
+                        child: const Text('追加'),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: history.length,
+                    separatorBuilder: (context, index) =>
+                        const Divider(height: 1, indent: 16),
+                    itemBuilder: (context, index) {
+                      final name = history[index];
+                      final checked = selected.contains(name);
+                      return ListTile(
+                        title: Text(
+                          name,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                        trailing: Icon(
+                          checked ? Icons.check_circle : Icons.circle_outlined,
+                          color: checked
+                              ? StairColors.action
+                              : Theme.of(context).colorScheme.outline,
+                        ),
+                        selected: checked,
+                        onTap: () => setSheetState(() {
+                          if (!selected.add(name)) selected.remove(name);
+                        }),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
           ),
-          _section('形式', [
-            SegmentedButton<EventKind>(
-              segments: const [
-                ButtonSegment(
-                  value: EventKind.live,
-                  label: Text('生大喜利'),
-                  icon: Icon(Icons.groups_outlined),
+        ),
+      ),
+    );
+    if (!mounted || result == null) return;
+    setState(() {
+      for (final name in result) {
+        final empty = _participants
+            .where((controller) => controller.text.trim().isEmpty)
+            .firstOrNull;
+        if (empty == null) {
+          _participants.add(TextEditingController(text: name));
+        } else {
+          empty.text = name;
+        }
+      }
+    });
+  }
+
+  Widget _participantsSection() => StairFormSection(
+    title: '参加者',
+    icon: Icons.people_outline,
+    accent: StairColors.online,
+    children: [
+      for (var index = 0; index < _participants.length; index++)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 3, 8, 3),
+          child: Row(
+            children: [
+              Expanded(
+                child: Semantics(
+                  label: '参加者${index + 1}',
+                  child: TextFormField(
+                    key: ValueKey('event-participant-$index'),
+                    controller: _participants[index],
+                    enabled: !_saving,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w400,
+                    ),
+                    textInputAction: TextInputAction.next,
+                    decoration: InputDecoration(
+                      hintText: index == 0 ? '参加者名' : '参加者名を入力',
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
                 ),
-                ButtonSegment(
-                  value: EventKind.online,
-                  label: Text('ネット大喜利'),
-                  icon: Icon(Icons.language),
-                ),
-              ],
-              selected: {_kind},
-              onSelectionChanged: _saving
-                  ? null
-                  : (value) => setState(() {
-                      _kind = value.first;
-                      _scheduleError = null;
-                    }),
-            ),
-            const SizedBox(height: 10),
-            SegmentedButton<MeetingType>(
-              segments: const [
-                ButtonSegment(value: MeetingType.casual, label: Text('通常会')),
-                ButtonSegment(value: MeetingType.tournament, label: Text('大会')),
-              ],
-              selected: {_meetingType},
-              onSelectionChanged: _saving
-                  ? null
-                  : (value) => setState(() => _meetingType = value.first),
-            ),
-          ]),
-          _section('基本情報', [
-            _textField(
-              label: 'タイトル *',
-              controller: _title,
-              hintText: '会・大会の名前',
-              textInputAction: TextInputAction.next,
-              validator: (value) => value == null || value.trim().isEmpty
-                  ? 'タイトルを入力してください'
-                  : null,
-            ),
-            const Divider(height: 1),
-            _textField(
-              label: '主催者',
-              controller: _organizer,
-              hintText: '未入力',
-              textInputAction: TextInputAction.next,
-            ),
-            const Divider(height: 1),
-            StairFieldRow(
-              label: '参加状態',
-              child: DropdownButtonFormField<EventStatus>(
-                initialValue: _status,
-                isExpanded: true,
-                decoration: const InputDecoration(),
-                items: EventStatus.values
-                    .map(
-                      (status) => DropdownMenuItem(
-                        value: status,
-                        child: Text(eventStatusLabel(status)),
-                      ),
-                    )
-                    .toList(),
-                onChanged: _saving
-                    ? null
-                    : (value) {
-                        if (value != null) setState(() => _status = value);
-                      },
               ),
-            ),
-          ]),
-          if (_kind == EventKind.live)
-            _section('会場・日時', [
-              _textField(label: '会場', controller: _venue, hintText: '未入力'),
-              const Divider(height: 1),
-              _dateField('開始日時', _startsAt, (value) => _startsAt = value),
-              const Divider(height: 1),
-              _dateField('終了日時', _endsAt, (value) => _endsAt = value),
-              const Divider(height: 1),
-              _textField(
-                label: '参加者',
-                controller: _participants,
-                multiline: true,
-                minLines: 2,
-                maxLines: 5,
-                hintText: '名前を「、」または改行で区切って入力',
-                helperText: '後から追加できます。',
-              ),
-            ])
-          else
-            _section('サイト・スケジュール', [
-              _textField(
-                label: 'サイトURL',
-                controller: _siteUrl,
-                hintText: 'https://',
-                keyboardType: TextInputType.url,
-              ),
-              const Divider(height: 1),
-              _dateField(
-                '投稿開始',
-                _submissionStart,
-                (value) => _submissionStart = value,
-              ),
-              const Divider(height: 1),
-              _dateField(
-                '投稿締切',
-                _submissionEnd,
-                (value) => _submissionEnd = value,
-              ),
-              const Divider(height: 1),
-              _dateField('投票開始', _votingStart, (value) => _votingStart = value),
-              const Divider(height: 1),
-              _dateField('投票締切', _votingEnd, (value) => _votingEnd = value),
-              const SizedBox(height: 8),
-              Text(
-                '投稿期間中の会は「思考」に表示されます。',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ]),
-          if (_scheduleError != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 14),
-              child: Text(
-                _scheduleError!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ),
-          if (_meetingType == MeetingType.tournament)
-            _section('大会の結果', [
-              _textField(
-                label: '結果',
-                controller: _result,
-                hintText: '優勝・予選敗退など',
-              ),
-              const Divider(height: 1),
-              _textField(
-                label: '順位（任意）',
-                controller: _placement,
-                keyboardType: TextInputType.number,
-                hintText: '未入力',
-                suffixText: '位',
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) return null;
-                  final number = int.tryParse(value.trim());
-                  return number == null || number < 1
-                      ? '1以上の整数を入力してください'
-                      : null;
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _participants[index],
+                builder: (context, value, child) {
+                  if (_participants.length == 1 && value.text.isEmpty) {
+                    return IconButton(
+                      tooltip: '過去の参加者から選ぶ',
+                      onPressed: _saving ? null : _pickPastParticipants,
+                      icon: const Icon(Icons.people_outline, size: 22),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                    );
+                  }
+                  return IconButton(
+                    tooltip: '参加者${index + 1}を削除',
+                    onPressed: _saving
+                        ? null
+                        : () => setState(() {
+                            final removed = _participants.removeAt(index);
+                            removed.dispose();
+                            if (_participants.isEmpty) {
+                              _participants.add(TextEditingController());
+                            }
+                          }),
+                    icon: const Icon(Icons.remove_circle_outline, size: 22),
+                    color: StairColors.action,
+                  );
                 },
               ),
-            ]),
-          _section('振り返り', [
-            _textField(
-              label: 'メモ',
-              controller: _memo,
-              multiline: true,
-              minLines: 3,
-              maxLines: 8,
-              hintText: '気づいたことや振り返りを残す',
-            ),
-          ]),
-          const SizedBox(height: 14),
-          StairSaveButton(
-            onPressed: _saving ? null : _save,
-            label: '記録を保存',
-            saving: _saving,
+            ],
           ),
-        ],
+        ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+        child: Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          children: [
+            TextButton.icon(
+              onPressed: _saving
+                  ? null
+                  : () => setState(
+                      () => _participants.add(TextEditingController()),
+                    ),
+              style: TextButton.styleFrom(
+                foregroundColor: StairColors.action,
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              ),
+              icon: const Icon(Icons.add_circle_outline, size: 23),
+              label: const Text(
+                '参加者を追加',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w400),
+              ),
+            ),
+            TextButton(
+              onPressed: _saving ? null : _pickPastParticipants,
+              style: TextButton.styleFrom(
+                foregroundColor: StairColors.action,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              ),
+              child: const Text('履歴から選ぶ', style: TextStyle(fontSize: 13)),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+
+  Widget _periodRow(
+    String label,
+    DateTime? value,
+    ValueChanged<DateTime?> onChanged,
+  ) => StairDateRow(
+    label: label,
+    value: value,
+    onChanged: _saving
+        ? null
+        : (value) => setState(() {
+            onChanged(value);
+            _scheduleError = null;
+          }),
+  );
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: StairPageHeader(
+      title: widget.event == null ? '大喜利登録' : '記録を編集',
+      icon: widget.event == null ? Icons.add : Icons.edit_outlined,
+      accent: StairColors.live,
+      leading: widget.event == null ? null : const BackButton(),
+      trailing: ValueListenableBuilder<TextEditingValue>(
+        valueListenable: _title,
+        builder: (context, value, child) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const StairInfoButton(
+              label: '大喜利登録',
+              message:
+                  '会の予定や参加記録を保存できます。タイトル以外は後から追加できます。参加者は1人ずつ入力し、大会の結果は会が終わってから追記できます。',
+            ),
+            StairSaveButton(
+              onPressed: value.text.trim().isEmpty || _saving ? null : _save,
+              saving: _saving,
+            ),
+          ],
+        ),
+      ),
+    ),
+    body: Form(
+      key: _formKey,
+      child: SingleChildScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 120),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            StairFormSection(
+              title: '基本情報',
+              icon: Icons.tune,
+              accent: StairColors.live,
+              children: [
+                StairMenuRow<EventKind>(
+                  label: '形式',
+                  value: _kind,
+                  items: const {
+                    EventKind.live: '生大喜利',
+                    EventKind.online: 'ネット大喜利',
+                  },
+                  info: '生大喜利は会場や参加者、ネット大喜利は投稿・投票期間を記録できます。',
+                  onChanged: _saving
+                      ? null
+                      : (value) => setState(() {
+                          _kind = value;
+                          _scheduleError = null;
+                        }),
+                ),
+                StairMenuRow<MeetingType>(
+                  label: '会の種類',
+                  value: _meetingType,
+                  items: const {
+                    MeetingType.casual: '通常会',
+                    MeetingType.tournament: '大会',
+                  },
+                  onChanged: _saving
+                      ? null
+                      : (value) => setState(() => _meetingType = value),
+                ),
+                StairMenuRow<EventStatus>(
+                  label: '参加状況',
+                  value: _status,
+                  items: {
+                    for (final status in EventStatus.values)
+                      status: eventStatusLabel(status),
+                  },
+                  onChanged: _saving
+                      ? null
+                      : (value) => setState(() => _status = value),
+                ),
+                _textField(
+                  label: '会・大会名 *',
+                  controller: _title,
+                  fieldKey: const ValueKey('event-title'),
+                  textInputAction: TextInputAction.next,
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? 'タイトルを入力してください'
+                      : null,
+                ),
+                _textField(
+                  label: '主催者',
+                  controller: _organizer,
+                  fieldKey: const ValueKey('event-organizer'),
+                  textInputAction: TextInputAction.next,
+                ),
+                if (_kind == EventKind.live) ...[
+                  StairDateRow(
+                    label: '日付',
+                    value: _eventDate,
+                    dateOnly: true,
+                    onChanged: _saving ? null : _changeDate,
+                  ),
+                  _liveTimes(),
+                  if (_endsAt != null)
+                    StairDateRow(
+                      label: '終了日',
+                      value: _dateOnly(_endsAt!),
+                      dateOnly: true,
+                      onChanged: _saving
+                          ? null
+                          : (value) {
+                              if (value == null) {
+                                _changeEnd(null);
+                                return;
+                              }
+                              _changeEnd(
+                                DateTime(
+                                  value.year,
+                                  value.month,
+                                  value.day,
+                                  _endsAt!.hour,
+                                  _endsAt!.minute,
+                                ),
+                              );
+                            },
+                    ),
+                  _textField(
+                    label: '会場名',
+                    controller: _venue,
+                    fieldKey: const ValueKey('event-venue'),
+                  ),
+                ] else
+                  _textField(
+                    label: 'サイトURL',
+                    controller: _siteUrl,
+                    fieldKey: const ValueKey('event-url'),
+                    keyboardType: TextInputType.url,
+                  ),
+              ],
+            ),
+            if (_kind == EventKind.live)
+              _participantsSection()
+            else
+              StairFormSection(
+                title: 'スケジュール',
+                icon: Icons.calendar_month_outlined,
+                accent: StairColors.online,
+                children: [
+                  _periodRow(
+                    '投稿開始',
+                    _submissionStart,
+                    (value) => _submissionStart = value,
+                  ),
+                  _periodRow(
+                    '投稿締切',
+                    _submissionEnd,
+                    (value) => _submissionEnd = value,
+                  ),
+                  _periodRow(
+                    '投票開始',
+                    _votingStart,
+                    (value) => _votingStart = value,
+                  ),
+                  _periodRow('投票締切', _votingEnd, (value) => _votingEnd = value),
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      '投稿期間中の会は「思考」に表示されます。',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            if (_scheduleError != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 14),
+                child: Text(
+                  _scheduleError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            if (_meetingType == MeetingType.tournament)
+              StairFormSection(
+                title: '大会の結果',
+                icon: Icons.emoji_events_outlined,
+                accent: StairColors.result,
+                children: [
+                  _textField(
+                    label: '結果（優勝・予選敗退など）',
+                    controller: _result,
+                    fieldKey: const ValueKey('event-result'),
+                  ),
+                  _textField(
+                    label: '順位（任意）',
+                    controller: _placement,
+                    fieldKey: const ValueKey('event-placement'),
+                    keyboardType: TextInputType.number,
+                    suffixText: '位',
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) return null;
+                      final number = int.tryParse(value.trim());
+                      return number == null || number < 1
+                          ? '1以上の整数を入力してください'
+                          : null;
+                    },
+                  ),
+                ],
+              ),
+            StairFormSection(
+              title: '振り返り',
+              icon: Icons.notes_outlined,
+              accent: StairColors.memo,
+              children: [
+                _textField(
+                  label: '気づいたことや振り返りを残す',
+                  controller: _memo,
+                  fieldKey: const ValueKey('event-memo'),
+                  minLines: 3,
+                  maxLines: 8,
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     ),
   );

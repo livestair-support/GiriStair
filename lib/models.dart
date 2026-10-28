@@ -19,6 +19,7 @@ class GiriEvent {
     this.organizer = '',
     this.venue = '',
     List<String> participants = const [],
+    this.eventDate,
     this.startsAt,
     this.endsAt,
     this.submissionStart,
@@ -40,6 +41,9 @@ class GiriEvent {
   final String organizer;
   final String venue;
   final List<String> participants;
+
+  /// The calendar date of a live meeting, even if its time is still unknown.
+  final DateTime? eventDate;
   final DateTime? startsAt;
   final DateTime? endsAt;
   final DateTime? submissionStart;
@@ -74,6 +78,7 @@ class GiriEvent {
     String? organizer,
     String? venue,
     List<String>? participants,
+    Object? eventDate = _unchanged,
     Object? startsAt = _unchanged,
     Object? endsAt = _unchanged,
     Object? submissionStart = _unchanged,
@@ -95,6 +100,9 @@ class GiriEvent {
       organizer: organizer ?? this.organizer,
       venue: venue ?? this.venue,
       participants: participants ?? this.participants,
+      eventDate: identical(eventDate, _unchanged)
+          ? this.eventDate
+          : eventDate as DateTime?,
       startsAt: identical(startsAt, _unchanged)
           ? this.startsAt
           : startsAt as DateTime?,
@@ -130,6 +138,7 @@ class GiriEvent {
     'organizer': organizer,
     'venue': venue,
     'participants': participants,
+    'eventDate': _encodeCalendarDate(eventDate),
     'startsAt': _encodeDate(startsAt),
     'endsAt': _encodeDate(endsAt),
     'submissionStart': _encodeDate(submissionStart),
@@ -156,6 +165,7 @@ class GiriEvent {
     organizer: _optionalString(json, 'organizer'),
     venue: _optionalString(json, 'venue'),
     participants: _stringList(json, 'participants'),
+    eventDate: _optionalCalendarDate(json, 'eventDate'),
     startsAt: _optionalDate(json, 'startsAt'),
     endsAt: _optionalDate(json, 'endsAt'),
     submissionStart: _optionalDate(json, 'submissionStart'),
@@ -238,6 +248,26 @@ class ThoughtNote {
 }
 
 String? _encodeDate(DateTime? value) => value?.toUtc().toIso8601String();
+
+String? _encodeCalendarDate(DateTime? value) {
+  if (value == null) return null;
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${value.year.toString().padLeft(4, '0')}-'
+      '${two(value.month)}-${two(value.day)}';
+}
+
+DateTime? _optionalCalendarDate(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value == null) return null;
+  if (value is! String || !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)) {
+    throw FormatException('$key must be a calendar date (YYYY-MM-DD).');
+  }
+  final date = DateTime.tryParse(value);
+  if (date == null || _encodeCalendarDate(date) != value) {
+    throw FormatException('$key must be a valid calendar date.');
+  }
+  return date;
+}
 
 String _requiredString(Map<String, dynamic> json, String key) {
   final value = json[key];

@@ -82,6 +82,7 @@ void main() {
     expect(event.resultText, isEmpty);
     expect(event.participants, isEmpty);
     expect(event.startsAt, isNull);
+    expect(event.eventDate, isNull);
     expect(
       () => GiriEvent.fromJson({...record, 'kind': 'future-kind'}),
       throwsFormatException,
@@ -89,6 +90,54 @@ void main() {
     expect(
       () => GiriEvent.fromJson({...record, 'startsAt': 'invalid'}),
       throwsFormatException,
+    );
+  });
+
+  test('時刻未定の開催日を時差変換せず保存し、日時と区別する', () {
+    final day = DateTime.utc(2026, 10, 28);
+    final event = GiriEvent(
+      id: 'date-only',
+      title: '時刻未定の通常会',
+      kind: EventKind.live,
+      meetingType: MeetingType.casual,
+      createdAt: start,
+      eventDate: day,
+    );
+    final json = event.toJson();
+    expect(json['eventDate'], '2026-10-28');
+    expect(json['startsAt'], isNull);
+    expect(json['endsAt'], isNull);
+    final restored = GiriEvent.fromJson(json);
+    expect(restored.eventDate, DateTime(2026, 10, 28));
+    expect(restored.startsAt, isNull);
+    expect(restored.endsAt, isNull);
+    expect(restored.copyWith(title: '改題').eventDate, restored.eventDate);
+    expect(restored.copyWith(eventDate: null).eventDate, isNull);
+
+    final timed = restored.copyWith(startsAt: end);
+    final timedRestored = GiriEvent.fromJson(timed.toJson());
+    expect(timedRestored.eventDate, DateTime(2026, 10, 28));
+    expect(timedRestored.startsAt!.isAtSameMomentAs(end), isTrue);
+  });
+
+  test('存在しない開催日や日時形式の値を開催日として読み込まない', () {
+    final json = onlineEvent().toJson();
+    for (final invalid in [
+      '2026-02-29',
+      '2026-13-01',
+      '2026-10-00',
+      '2026-10-28T09:00:00Z',
+      '2026-1-2',
+      20261028,
+    ]) {
+      expect(
+        () => GiriEvent.fromJson({...json, 'eventDate': invalid}),
+        throwsFormatException,
+      );
+    }
+    expect(
+      GiriEvent.fromJson({...json, 'eventDate': '2028-02-29'}).eventDate,
+      DateTime(2028, 2, 29),
     );
   });
 

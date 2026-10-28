@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -16,10 +17,15 @@ ThemeData stairTheme(Brightness brightness) {
   final dark = brightness == Brightness.dark;
   final background = dark ? Colors.black : const Color(0xFFF9F9FB);
   final surface = dark ? const Color(0xFF1B1B1F) : Colors.white;
-  final text = dark ? const Color(0xFFF2F2F7) : const Color(0xFF222228);
+  final text = dark ? const Color(0xFFF2F2F7) : Colors.black;
   final secondaryText = dark
       ? const Color(0xFFAAAAB3)
-      : const Color(0xFF6D6D77);
+      : const Color(0xFF8E8E93);
+  // Use the same system typefaces as SwiftUI on iPhone. Android keeps its
+  // platform font rather than downloading or bundling a different typeface.
+  final ios = defaultTargetPlatform == TargetPlatform.iOS;
+  final font = ios ? '.SF Pro Text' : null;
+  final displayFont = ios ? '.SF Pro Display' : null;
   final scheme =
       ColorScheme.fromSeed(
         seedColor: StairColors.action,
@@ -42,10 +48,13 @@ ThemeData stairTheme(Brightness brightness) {
     colorScheme: scheme,
     scaffoldBackgroundColor: background,
     visualDensity: VisualDensity.standard,
+    fontFamily: font,
+    fontFamilyFallback: ios ? const ['Hiragino Sans'] : null,
   );
   return base.copyWith(
     textTheme: base.textTheme.copyWith(
       headlineLarge: base.textTheme.headlineLarge?.copyWith(
+        fontFamily: displayFont,
         fontSize: 34,
         fontWeight: FontWeight.w700,
         letterSpacing: -0.8,
@@ -57,9 +66,21 @@ ThemeData stairTheme(Brightness brightness) {
       titleMedium: base.textTheme.titleMedium?.copyWith(
         fontSize: 18,
         fontWeight: FontWeight.w700,
+        letterSpacing: 0,
       ),
-      bodyLarge: base.textTheme.bodyLarge?.copyWith(fontSize: 16),
-      bodySmall: base.textTheme.bodySmall?.copyWith(color: secondaryText),
+      bodyLarge: base.textTheme.bodyLarge?.copyWith(
+        fontSize: 17,
+        letterSpacing: 0,
+      ),
+      bodyMedium: base.textTheme.bodyMedium?.copyWith(
+        fontSize: 17,
+        letterSpacing: 0,
+      ),
+      bodySmall: base.textTheme.bodySmall?.copyWith(
+        fontSize: 13,
+        color: secondaryText,
+        letterSpacing: 0,
+      ),
     ),
     appBarTheme: AppBarTheme(
       backgroundColor: background,
@@ -93,8 +114,12 @@ ThemeData stairTheme(Brightness brightness) {
       errorBorder: InputBorder.none,
       focusedErrorBorder: InputBorder.none,
       contentPadding: const EdgeInsets.symmetric(vertical: 10),
-      labelStyle: TextStyle(color: secondaryText, fontSize: 14),
-      hintStyle: TextStyle(color: secondaryText.withValues(alpha: 0.75)),
+      labelStyle: TextStyle(color: secondaryText, fontSize: 17),
+      hintStyle: TextStyle(
+        color: secondaryText.withValues(alpha: 0.55),
+        fontSize: 17,
+        fontWeight: FontWeight.w400,
+      ),
       errorMaxLines: 3,
     ),
     chipTheme: base.chipTheme.copyWith(
@@ -196,12 +221,14 @@ class StairPageHeader extends StatelessWidget implements PreferredSizeWidget {
     required this.icon,
     required this.accent,
     this.trailing,
+    this.leading,
   });
 
   final String title;
   final IconData icon;
   final Color accent;
   final Widget? trailing;
+  final Widget? leading;
 
   @override
   Size get preferredSize => const Size.fromHeight(76);
@@ -219,7 +246,7 @@ class StairPageHeader extends StatelessWidget implements PreferredSizeWidget {
           padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
           child: Row(
             children: [
-              StairIconBadge(icon: icon, accent: accent, size: 38),
+              leading ?? StairIconBadge(icon: icon, accent: accent, size: 38),
               const SizedBox(width: 10),
               Expanded(
                 child: Semantics(
@@ -262,7 +289,7 @@ class StairCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final tint = Color.alphaBlend(
-      accent.withValues(alpha: dark ? 0.10 : 0.075),
+      accent.withValues(alpha: dark ? 0.10 : 0.045),
       Theme.of(context).colorScheme.surface,
     );
     return Padding(
@@ -271,7 +298,10 @@ class StairCard extends StatelessWidget {
         color: tint,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
-          side: BorderSide(color: accent.withValues(alpha: dark ? 0.32 : 0.20)),
+          side: BorderSide(
+            color: accent.withValues(alpha: dark ? 0.28 : 0.18),
+            width: 0.5,
+          ),
         ),
         clipBehavior: Clip.antiAlias,
         child: Stack(
@@ -281,7 +311,7 @@ class StairCard extends StatelessWidget {
               top: 0,
               bottom: 0,
               width: 3,
-              child: ColoredBox(color: accent.withValues(alpha: 0.65)),
+              child: ColoredBox(color: accent),
             ),
             Padding(padding: padding, child: child),
           ],
@@ -338,13 +368,113 @@ class StairSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) => StairCard(
     accent: accent,
+    padding: EdgeInsets.zero,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        StairSectionTitle(title: title, icon: icon, accent: accent),
-        const SizedBox(height: 12),
-        child,
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: StairSectionTitle(title: title, icon: icon, accent: accent),
+        ),
+        Divider(height: 0.5, color: accent.withValues(alpha: 0.22)),
+        Padding(padding: const EdgeInsets.all(16), child: child),
       ],
+    ),
+  );
+}
+
+/// A grouped form with the same continuous separators as LiveStair.
+class StairFormSection extends StatelessWidget {
+  const StairFormSection({
+    super.key,
+    required this.title,
+    required this.icon,
+    required this.accent,
+    required this.children,
+  });
+
+  final String title;
+  final IconData icon;
+  final Color accent;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => StairCard(
+    accent: accent,
+    padding: EdgeInsets.zero,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: StairSectionTitle(title: title, icon: icon, accent: accent),
+        ),
+        for (final child in children) ...[
+          Divider(
+            height: 0.5,
+            thickness: 0.5,
+            color: accent.withValues(alpha: 0.24),
+          ),
+          child,
+        ],
+      ],
+    ),
+  );
+}
+
+/// Native-size labels and values; larger accessibility text gets its own line.
+class StairFormRow extends StatelessWidget {
+  const StairFormRow({
+    super.key,
+    required this.label,
+    required this.child,
+    this.info,
+  });
+
+  final String label;
+  final Widget child;
+  final Widget? info;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final labelWidget = Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w400,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            ?info,
+          ],
+        );
+        final stacked =
+            constraints.maxWidth < 270 ||
+            MediaQuery.textScalerOf(context).scale(17) > 22;
+        return ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 40),
+          child: stacked
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [labelWidget, const SizedBox(height: 4), child],
+                )
+              : Row(
+                  children: [
+                    labelWidget,
+                    const SizedBox(width: 12),
+                    Expanded(child: child),
+                  ],
+                ),
+        );
+      },
     ),
   );
 }
@@ -415,8 +545,14 @@ class StairSaveButton extends StatelessWidget {
   Widget build(BuildContext context) => OutlinedButton(
     onPressed: saving ? null : onPressed,
     style: OutlinedButton.styleFrom(
-      backgroundColor: Theme.of(context).colorScheme.surface,
+      backgroundColor: Theme.of(
+        context,
+      ).colorScheme.surface.withValues(alpha: 0.5),
+      disabledForegroundColor: Theme.of(
+        context,
+      ).colorScheme.onSurface.withValues(alpha: 0.25),
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+      textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
     ),
     child: saving
         ? const SizedBox(
@@ -424,6 +560,16 @@ class StairSaveButton extends StatelessWidget {
             height: 18,
             child: CircularProgressIndicator(strokeWidth: 2),
           )
-        : Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+        : Text(
+            label,
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: onPressed == null
+                  ? Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withValues(alpha: 0.25)
+                  : StairColors.action,
+            ),
+          ),
   );
 }
