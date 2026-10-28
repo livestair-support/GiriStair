@@ -36,10 +36,10 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
       ? const Color(0xFFFFF8F0)
       : const Color(0xFFF9F9FB);
   final surface = dark ? const Color(0xFF1B1B1F) : Colors.white;
-  final text = dark ? const Color(0xFFF2F2F7) : Colors.black;
+  final text = dark ? Colors.white : Colors.black;
   final secondaryText = dark
-      ? const Color(0xFFAAAAB3)
-      : const Color(0xFF8E8E93);
+      ? CupertinoColors.secondaryLabel.darkColor
+      : CupertinoColors.secondaryLabel.color;
   // Use the same system typefaces as SwiftUI on iPhone. Android keeps its
   // platform font rather than downloading or bundling a different typeface.
   final platform = defaultTargetPlatform;
@@ -137,7 +137,11 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
         ).copyWith(color: secondaryText),
         hintStyle: StairTypography.role(
           StairTextRole.input,
-        ).copyWith(color: secondaryText.withValues(alpha: 0.55)),
+        ).copyWith(
+          color: dark
+              ? CupertinoColors.placeholderText.darkColor
+              : CupertinoColors.placeholderText.color,
+        ),
         errorMaxLines: 3,
       ),
       chipTheme: base.chipTheme.copyWith(
@@ -236,7 +240,12 @@ class StairIconBadge extends StatelessWidget {
     width: size,
     height: size,
     decoration: ShapeDecoration(
-      color: accent.withValues(alpha: backgroundOpacity ?? 0.14),
+      color: accent.withValues(
+        alpha: backgroundOpacity ??
+            (size == 38 && Theme.of(context).brightness == Brightness.dark
+                ? 0.20
+                : 0.14),
+      ),
       shape: RoundedSuperellipseBorder(
         borderRadius: BorderRadius.circular(size == 28 ? 8 : 11),
       ),
@@ -518,7 +527,8 @@ class StairFormRow extends StatelessWidget {
             MediaQuery.textScalerOf(context).scale(17) > 22;
         return ConstrainedBox(
           constraints: const BoxConstraints(
-            minHeight: StairFormMetrics.minimumRowHeight -
+            minHeight:
+                StairFormMetrics.minimumRowHeight -
                 StairFormMetrics.rowVerticalInset * 2,
           ),
           child: stacked
@@ -602,37 +612,36 @@ class StairSaveButton extends StatelessWidget {
   final bool saving;
 
   @override
-  Widget build(BuildContext context) => OutlinedButton(
-    onPressed: saving ? null : onPressed,
-    style: OutlinedButton.styleFrom(
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      disabledForegroundColor: Theme.of(
-        context,
-      ).colorScheme.onSurface.withValues(alpha: 0.25),
-      side: BorderSide(
-        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.10),
-        width: 1,
+  Widget build(BuildContext context) => Opacity(
+    opacity: onPressed == null || saving ? 0.55 : 1,
+    child: OutlinedButton(
+      onPressed: saving ? null : onPressed,
+      style: OutlinedButton.styleFrom(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        disabledForegroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+        side: BorderSide(
+          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.10),
+          width: 1,
+        ),
+        minimumSize: const Size(0, 44),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        textStyle: StairTypography.role(StairTextRole.saveButton),
       ),
-      minimumSize: const Size(0, 44),
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      padding: const EdgeInsets.symmetric(horizontal: 18),
-      textStyle: StairTypography.role(StairTextRole.saveButton),
-    ),
-    child: saving
-        ? const SizedBox(
-            width: 18,
-            height: 18,
-            child: CupertinoActivityIndicator(radius: 9),
-          )
-        : Text(
-            label,
-            style: StairTypography.role(StairTextRole.saveButton).copyWith(
-              color: onPressed == null
-                  ? Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withValues(alpha: 0.25)
-                  : StairColors.action,
+      child: saving
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CupertinoActivityIndicator(radius: 9),
+            )
+          : Text(
+              label,
+              style: StairTypography.role(StairTextRole.saveButton).copyWith(
+                color: onPressed == null
+                    ? Theme.of(context).colorScheme.onSurfaceVariant
+                    : StairColors.action,
+              ),
             ),
-          ),
+    ),
   );
 }

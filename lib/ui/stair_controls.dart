@@ -392,40 +392,43 @@ class StairTimeButton extends StatelessWidget {
             onChanged: onChanged,
           )
         else
-        Semantics(
-          label: label,
-          value: value == null ? '未定' : _timeLabel(value!.toLocal()),
-          button: true,
-          enabled: onChanged != null,
-          child: CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size(44, 44),
-            onPressed: onChanged == null ? null : () => _choose(context),
-            child: ExcludeSemantics(
-              child: Container(
-                width: 70,
-                height: 32,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: dark
-                      ? const Color(0xFF36363C)
-                      : const Color(0xFFE8E8ED),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Text(
-                  value == null ? '--:--' : _timeLabel(value!.toLocal()),
-                  textAlign: TextAlign.center,
-                  style: StairTypography.role(
-                    StairTextRole.value,
-                    color: onChanged == null
-                        ? Theme.of(context).disabledColor
-                        : scheme.onSurface,
-                  ).copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+          Semantics(
+            label: label,
+            value: value == null ? '未定' : _timeLabel(value!.toLocal()),
+            button: true,
+            enabled: onChanged != null,
+            child: CupertinoButton(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(44, 44),
+              onPressed: onChanged == null ? null : () => _choose(context),
+              child: ExcludeSemantics(
+                child: Container(
+                  width: 70,
+                  height: 32,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: dark
+                        ? const Color(0xFF36363C)
+                        : const Color(0xFFE8E8ED),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Text(
+                    value == null ? '--:--' : _timeLabel(value!.toLocal()),
+                    textAlign: TextAlign.center,
+                    style:
+                        StairTypography.role(
+                          StairTextRole.value,
+                          color: onChanged == null
+                              ? Theme.of(context).disabledColor
+                              : scheme.onSurface,
+                        ).copyWith(
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
       ],
     );
   }
@@ -677,39 +680,38 @@ class _StairCalendarState extends State<StairCalendar> {
           if (_showingMonthPicker)
             _monthPicker()
           else ...[
-          Row(
-            children: [
-              for (final weekday in const ['日', '月', '火', '水', '木', '金', '土'])
-                Expanded(
-                  child: ExcludeSemantics(
-                    child: Text(
-                      weekday,
-                      textAlign: TextAlign.center,
-                      style: StairTypography.role(StairTextRole.caption).copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: weekday == '日'
-                            ? CupertinoColors.systemRed
-                            : weekday == '土'
-                            ? CupertinoColors.systemBlue
-                            : theme.colorScheme.onSurfaceVariant,
+            Row(
+              children: [
+                for (final weekday in const ['日', '月', '火', '水', '木', '金', '土'])
+                  Expanded(
+                    child: ExcludeSemantics(
+                      child: Text(
+                        weekday,
+                        textAlign: TextAlign.center,
+                        style: StairTypography.role(StairTextRole.caption)
+                            .copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: weekday == '日'
+                                  ? CupertinoColors.systemRed
+                                  : weekday == '土'
+                                  ? CupertinoColors.systemBlue
+                                  : theme.colorScheme.onSurfaceVariant,
+                            ),
                       ),
                     ),
                   ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          for (var row = 0; row < rows; row++) ...[
-            Row(
-              children: [
-                for (var column = 0; column < 7; column++)
-                  Expanded(
-                    child: _day(row * 7 + column - offset + 1, now),
-                  ),
               ],
             ),
-            if (row + 1 < rows) const SizedBox(height: 8),
-          ],
+            const SizedBox(height: 8),
+            for (var row = 0; row < rows; row++) ...[
+              Row(
+                children: [
+                  for (var column = 0; column < 7; column++)
+                    Expanded(child: _day(row * 7 + column - offset + 1, now)),
+                ],
+              ),
+              if (row + 1 < rows) const SizedBox(height: 8),
+            ],
           ],
         ],
       ),
@@ -729,9 +731,11 @@ class _StairCalendarState extends State<StairCalendar> {
                 onSelectedItemChanged: (value) =>
                     _pickerYear = widget.firstDate.year + value,
                 children: [
-                  for (var year = widget.firstDate.year;
-                      year <= widget.lastDate.year;
-                      year++)
+                  for (
+                    var year = widget.firstDate.year;
+                    year <= widget.lastDate.year;
+                    year++
+                  )
                     Text('$year年'),
                 ],
               ),
@@ -741,7 +745,9 @@ class _StairCalendarState extends State<StairCalendar> {
                 scrollController: _months,
                 itemExtent: 32,
                 onSelectedItemChanged: (value) => _pickerMonth = value + 1,
-                children: [for (var month = 1; month <= 12; month++) Text('$month月')],
+                children: [
+                  for (var month = 1; month <= 12; month++) Text('$month月'),
+                ],
               ),
             ),
           ],
@@ -755,7 +761,10 @@ class _StairCalendarState extends State<StairCalendar> {
           _month = DateTime(_pickerYear, _pickerMonth);
           _showingMonthPicker = false;
         }),
-        child: const Text('この年月を表示', style: TextStyle(fontWeight: FontWeight.w700)),
+        child: const Text(
+          'この年月を表示',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
       ),
     ],
   );
@@ -803,11 +812,17 @@ class _StairCalendarState extends State<StairCalendar> {
                     : selected
                     ? Colors.white
                     : date.weekday == DateTime.sunday
-                    ? CupertinoColors.systemRed.withValues(alpha: isCurrentMonth ? 1 : .28)
+                    ? CupertinoColors.systemRed.withValues(
+                        alpha: isCurrentMonth ? 1 : .28,
+                      )
                     : date.weekday == DateTime.saturday
-                    ? CupertinoColors.systemBlue.withValues(alpha: isCurrentMonth ? 1 : .28)
+                    ? CupertinoColors.systemBlue.withValues(
+                        alpha: isCurrentMonth ? 1 : .28,
+                      )
                     : !isCurrentMonth
-                    ? Theme.of(context).colorScheme.onSurface.withValues(alpha: .28)
+                    ? Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: .28)
                     : Theme.of(context).colorScheme.onSurface,
                 fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
               ),

@@ -115,25 +115,29 @@ abstract final class StairTypography {
         letterSpacing: cupertino.textStyle.letterSpacing,
       ),
     };
-    return style(base.copyWith(color: color), platform: platform, role: role);
+    return style(
+      base.copyWith(color: color),
+      platform: platform,
+      role: role,
+    );
   }
 
   static StairTextRole _roleFor(TextStyle original) {
     final size = original.fontSize ?? 17;
     final weight = original.fontWeight ?? FontWeight.w400;
-    if (size >= 29 && weight.index >= FontWeight.w700.index) {
+    if (size >= 29 && weight.value >= FontWeight.w700.value) {
       return StairTextRole.pageTitle;
     }
-    if (size == 18 && weight.index >= FontWeight.w700.index) {
+    if (size == 18 && weight.value >= FontWeight.w700.value) {
       return StairTextRole.sectionTitle;
     }
     if (size == 15 && weight == FontWeight.w500) {
       return StairTextRole.formLabel;
     }
-    if (weight.index >= FontWeight.w700.index) {
+    if (weight.value >= FontWeight.w700.value) {
       return StairTextRole.saveButton;
     }
-    if (weight.index >= FontWeight.w600.index) {
+    if (weight.value >= FontWeight.w600.value) {
       return StairTextRole.dateValue;
     }
     if (weight == FontWeight.w500 && size != 10) {
@@ -157,8 +161,10 @@ abstract final class StairTypography {
     final roundedName = metadata?['latinPostscriptName'];
     final japaneseName = metadata?['japanesePostscriptName'];
     return original.copyWith(
-      fontFamily: usesRoundedDesign(selectedRole) &&
-              roundedName != null && roundedName.isNotEmpty
+      fontFamily:
+          usesRoundedDesign(selectedRole) &&
+              roundedName != null &&
+              roundedName.isNotEmpty
           ? roundedName
           : display || (original.fontSize ?? 0) >= 20
           ? displayFamily(target)
@@ -170,29 +176,32 @@ abstract final class StairTypography {
     );
   }
 
-  static TextTheme _textTheme(TextTheme theme, TargetPlatform platform) => TextTheme(
-    displayLarge: style(theme.displayLarge!, platform: platform),
-    displayMedium: style(theme.displayMedium!, platform: platform),
-    displaySmall: style(theme.displaySmall!, platform: platform),
-    headlineLarge: style(theme.headlineLarge!, platform: platform),
-    headlineMedium: style(theme.headlineMedium!, platform: platform),
-    headlineSmall: style(theme.headlineSmall!, platform: platform),
-    titleLarge: style(theme.titleLarge!, platform: platform),
-    titleMedium: style(theme.titleMedium!, platform: platform),
-    titleSmall: style(theme.titleSmall!, platform: platform),
-    bodyLarge: style(theme.bodyLarge!, platform: platform),
-    bodyMedium: style(theme.bodyMedium!, platform: platform),
-    bodySmall: style(theme.bodySmall!, platform: platform),
-    labelLarge: style(theme.labelLarge!, platform: platform),
-    labelMedium: style(theme.labelMedium!, platform: platform),
-    labelSmall: style(theme.labelSmall!, platform: platform),
-  );
+  static TextTheme _textTheme(TextTheme theme, TargetPlatform platform) =>
+      TextTheme(
+        displayLarge: style(theme.displayLarge!, platform: platform),
+        displayMedium: style(theme.displayMedium!, platform: platform),
+        displaySmall: style(theme.displaySmall!, platform: platform),
+        headlineLarge: style(theme.headlineLarge!, platform: platform),
+        headlineMedium: style(theme.headlineMedium!, platform: platform),
+        headlineSmall: style(theme.headlineSmall!, platform: platform),
+        titleLarge: style(theme.titleLarge!, platform: platform),
+        titleMedium: style(theme.titleMedium!, platform: platform),
+        titleSmall: style(theme.titleSmall!, platform: platform),
+        bodyLarge: style(theme.bodyLarge!, platform: platform),
+        bodyMedium: style(theme.bodyMedium!, platform: platform),
+        bodySmall: style(theme.bodySmall!, platform: platform),
+        labelLarge: style(theme.labelLarge!, platform: platform),
+        labelMedium: style(theme.labelMedium!, platform: platform),
+        labelSmall: style(theme.labelSmall!, platform: platform),
+      );
 
   static ButtonStyle _button(ButtonStyle? original, TargetPlatform platform) =>
       (original ?? const ButtonStyle()).copyWith(
         textStyle: WidgetStateProperty.resolveWith(
-          (states) =>
-              style(original?.textStyle?.resolve(states) ?? const TextStyle(), platform: platform),
+          (states) => style(
+            original?.textStyle?.resolve(states) ?? const TextStyle(),
+            platform: platform,
+          ),
         ),
       );
 
@@ -211,13 +220,25 @@ abstract final class StairTypography {
         textTheme: text.copyWith(
           textStyle: style(text.textStyle, platform: platform),
           actionTextStyle: style(text.actionTextStyle, platform: platform),
-          actionSmallTextStyle: style(text.actionSmallTextStyle, platform: platform),
+          actionSmallTextStyle: style(
+            text.actionSmallTextStyle,
+            platform: platform,
+          ),
           tabLabelTextStyle: style(text.tabLabelTextStyle, platform: platform),
           navTitleTextStyle: style(text.navTitleTextStyle, platform: platform),
-          navLargeTitleTextStyle: style(text.navLargeTitleTextStyle, platform: platform),
-          navActionTextStyle: style(text.navActionTextStyle, platform: platform),
+          navLargeTitleTextStyle: style(
+            text.navLargeTitleTextStyle,
+            platform: platform,
+          ),
+          navActionTextStyle: style(
+            text.navActionTextStyle,
+            platform: platform,
+          ),
           pickerTextStyle: style(text.pickerTextStyle, platform: platform),
-          dateTimePickerTextStyle: style(text.dateTimePickerTextStyle, platform: platform),
+          dateTimePickerTextStyle: style(
+            text.dateTimePickerTextStyle,
+            platform: platform,
+          ),
         ),
       ),
       appBarTheme: original.appBarTheme.copyWith(
@@ -232,17 +253,38 @@ abstract final class StairTypography {
         ),
       ),
       inputDecorationTheme: input.copyWith(
-        labelStyle: style(input.labelStyle ?? const TextStyle(), platform: platform),
+        labelStyle: style(
+          input.labelStyle ?? const TextStyle(),
+          platform: platform,
+        ),
         floatingLabelStyle: style(
           input.floatingLabelStyle ?? const TextStyle(),
           platform: platform,
         ),
-        hintStyle: style(input.hintStyle ?? const TextStyle(), platform: platform),
-        helperStyle: style(input.helperStyle ?? const TextStyle(), platform: platform),
-        errorStyle: style(input.errorStyle ?? const TextStyle(), platform: platform),
-        prefixStyle: style(input.prefixStyle ?? const TextStyle(), platform: platform),
-        suffixStyle: style(input.suffixStyle ?? const TextStyle(), platform: platform),
-        counterStyle: style(input.counterStyle ?? const TextStyle(), platform: platform),
+        hintStyle: style(
+          input.hintStyle ?? const TextStyle(),
+          platform: platform,
+        ),
+        helperStyle: style(
+          input.helperStyle ?? const TextStyle(),
+          platform: platform,
+        ),
+        errorStyle: style(
+          input.errorStyle ?? const TextStyle(),
+          platform: platform,
+        ),
+        prefixStyle: style(
+          input.prefixStyle ?? const TextStyle(),
+          platform: platform,
+        ),
+        suffixStyle: style(
+          input.suffixStyle ?? const TextStyle(),
+          platform: platform,
+        ),
+        counterStyle: style(
+          input.counterStyle ?? const TextStyle(),
+          platform: platform,
+        ),
       ),
       listTileTheme: original.listTileTheme.copyWith(
         titleTextStyle: style(

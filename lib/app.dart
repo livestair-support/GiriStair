@@ -18,11 +18,8 @@ import 'ui/stair_native_controls.dart';
 import 'ui/stair_symbols.dart';
 
 class GiriStairApp extends StatefulWidget {
-  const GiriStairApp({
-    super.key,
-    required this.store,
-    this.initialTab = 1,
-  }) : assert(initialTab >= 0 && initialTab < 5);
+  const GiriStairApp({super.key, required this.store, this.initialTab = 1})
+    : assert(initialTab >= 0 && initialTab < 5);
 
   final GiriStore store;
   final int initialTab;

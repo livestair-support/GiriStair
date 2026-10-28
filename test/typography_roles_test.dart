@@ -26,7 +26,10 @@ void main() {
     expect(StairTypography.role(StairTextRole.pageTitle).fontSize, 34);
     expect(StairTypography.role(StairTextRole.sectionTitle).fontSize, 18);
     expect(StairTypography.usesRoundedDesign(StairTextRole.pageTitle), isFalse);
-    expect(StairTypography.usesRoundedDesign(StairTextRole.sectionTitle), isTrue);
+    expect(
+      StairTypography.usesRoundedDesign(StairTextRole.sectionTitle),
+      isTrue,
+    );
   });
 
   test('device-resolved faces preserve rounded design and Japanese weight', () {
@@ -66,13 +69,21 @@ void main() {
       },
     });
     for (final role in StairTextRole.values) {
-      final style = StairTypography.role(role, platform: TargetPlatform.android);
+      final style = StairTypography.role(
+        role,
+        platform: TargetPlatform.android,
+      );
       expect(style.fontFamily, isNull);
       expect(style.fontFamilyFallback, isNull);
       expect(style.locale, const Locale('ja', 'JP'));
     }
-    final theme = StairTypography.theme(ThemeData(platform: TargetPlatform.android));
+    final theme = StairTypography.theme(
+      ThemeData(platform: TargetPlatform.android),
+    );
     expect(theme.textTheme.bodyLarge!.fontFamily, isNot(contains('Cupertino')));
-    expect(theme.textTheme.bodyLarge!.fontFamilyFallback, isNot(contains('Hiragino Sans')));
+    expect(
+      theme.textTheme.bodyLarge!.fontFamilyFallback,
+      isNot(contains('Hiragino Sans')),
+    );
   });
 }

@@ -37,22 +37,27 @@ abstract final class StairNativeControls {
     required String mode,
     required bool dark,
   }) async {
-    final response = await _channel.invokeMapMethod<String, dynamic>('pickDate', {
-      'label': label,
-      'mode': mode,
-      'dark': dark,
-      'components': [
-        initial.year,
-        initial.month,
-        initial.day,
-        initial.hour,
-        initial.minute,
-      ],
-    });
+    final response = await _channel.invokeMapMethod<String, dynamic>(
+      'pickDate',
+      {
+        'label': label,
+        'mode': mode,
+        'dark': dark,
+        'components': [
+          initial.year,
+          initial.month,
+          initial.day,
+          initial.hour,
+          initial.minute,
+        ],
+      },
+    );
     if (response?['committed'] != true) return null;
     final parts = response?['components'];
     if (parts == null) return const StairNativeDateSelection(null);
-    if (parts is! List || parts.length != 5 || parts.any((part) => part is! int)) {
+    if (parts is! List ||
+        parts.length != 5 ||
+        parts.any((part) => part is! int)) {
       throw const FormatException('Invalid native date selection.');
     }
     return StairNativeDateSelection(
@@ -153,8 +158,8 @@ class _StairNativeMenuState extends State<StairNativeMenu> {
 
   @override
   Widget build(BuildContext context) {
-    final label = widget.selectedIndex >= 0 &&
-            widget.selectedIndex < widget.labels.length
+    final label =
+        widget.selectedIndex >= 0 && widget.selectedIndex < widget.labels.length
         ? widget.labels[widget.selectedIndex]
         : '';
     final text = TextPainter(
@@ -218,7 +223,9 @@ class _StairNativeTimeState extends State<StairNativeTime> {
   void _created(int id) {
     _channel = MethodChannel('giristair/native-time/$id');
     _channel!.setMethodCallHandler((call) async {
-      if (!mounted || call.method != 'changed' || call.arguments is! List) return;
+      if (!mounted || call.method != 'changed' || call.arguments is! List) {
+        return;
+      }
       final parts = call.arguments as List;
       if (parts.length != 5 || parts.any((value) => value is! int)) return;
       widget.onChanged?.call(

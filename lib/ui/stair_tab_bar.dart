@@ -92,7 +92,8 @@ class _StairTabBarState extends State<StairTabBar> {
   Widget build(BuildContext context) {
     // Native iPad tabs can move to the top. Keep five bottom tabs on wider
     // layouts with Flutter's standard Cupertino control.
-    final nativePhone = widget.nativeAvailable &&
+    final nativePhone =
+        widget.nativeAvailable &&
         !kIsWeb &&
         defaultTargetPlatform == TargetPlatform.iOS &&
         MediaQuery.sizeOf(context).shortestSide < 600;
@@ -113,9 +114,9 @@ class _StairTabBarState extends State<StairTabBar> {
       onTap: widget.onTap,
       activeColor: StairColors.action,
       inactiveColor: Theme.of(context).colorScheme.onSurface,
-      backgroundColor: Theme.of(context).colorScheme.surface.withValues(
-        alpha: .9,
-      ),
+      backgroundColor: Theme.of(
+        context,
+      ).colorScheme.surface.withValues(alpha: .9),
       items: const [
         BottomNavigationBarItem(
           icon: Icon(CupertinoIcons.add_circled_solid),
@@ -125,10 +126,7 @@ class _StairTabBarState extends State<StairTabBar> {
           icon: Icon(CupertinoIcons.clock_fill),
           label: '一覧',
         ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.emoji_events),
-          label: '戦績',
-        ),
+        BottomNavigationBarItem(icon: Icon(Icons.emoji_events), label: '戦績'),
         BottomNavigationBarItem(
           icon: Icon(CupertinoIcons.text_badge_checkmark),
           label: '思考',

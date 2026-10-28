@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:giristair/ui/stair_native_controls.dart';
@@ -53,6 +52,10 @@ void main() {
   testWidgets(
     'an older iOS runner without the channel retains the Flutter fallback',
     (tester) async {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (_) async => throw MissingPluginException(),
+      );
       await StairNativeControls.initialize();
       expect(StairNativeControls.available, isFalse);
     },

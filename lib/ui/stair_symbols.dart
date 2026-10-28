@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
@@ -15,7 +13,7 @@ abstract final class StairSymbols {
 
   // Aliases (add/plus, info/info_circle, location/placemark) share IconData,
   // so keep a single key for each glyph.
-  static const _names = <IconData, String>{
+  static final _names = <IconData, String>{
     CupertinoIcons.add: 'plus',
     CupertinoIcons.clock: 'clock',
     CupertinoIcons.slider_horizontal_3: 'slider.horizontal.3',
@@ -56,7 +54,8 @@ abstract final class StairSymbols {
     _images.clear();
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
     final views = PlatformDispatcher.instance.views;
-    final displayScale = scale ?? (views.isEmpty ? 2 : views.first.devicePixelRatio);
+    final displayScale =
+        scale ?? (views.isEmpty ? 2 : views.first.devicePixelRatio);
     try {
       final response = await _channel.invokeMapMethod<String, dynamic>(
         'rasterize',
@@ -74,10 +73,16 @@ abstract final class StairSymbols {
     }
   }
 
-  static _StairSymbolImage? _image(IconData icon, double size, FontWeight weight) {
+  static _StairSymbolImage? _image(
+    IconData icon,
+    double size,
+    FontWeight weight,
+  ) {
     final name = nameFor(icon);
-    if (name == null || defaultTargetPlatform != TargetPlatform.iOS) return null;
-    return _images['$name/${size.toInt()}/${(weight.index + 1) * 100}'];
+    if (name == null || defaultTargetPlatform != TargetPlatform.iOS) {
+      return null;
+    }
+    return _images['$name/${size.toInt()}/${weight.value.toInt()}'];
   }
 }
 
@@ -93,7 +98,10 @@ class _StairSymbolImage {
     final bytes = value['bytes'];
     final width = value['width'];
     final height = value['height'];
-    if (bytes is! Uint8List || bytes.isEmpty || width is! num || height is! num) {
+    if (bytes is! Uint8List ||
+        bytes.isEmpty ||
+        width is! num ||
+        height is! num) {
       return null;
     }
     if (!width.isFinite || !height.isFinite || width <= 0 || height <= 0) {

@@ -31,7 +31,10 @@ void main() {
     await tester.tap(find.text('思考'));
     await tester.pumpAndSettle();
     expect(selected, 3);
-    expect(tester.widget<CupertinoTabBar>(find.byType(CupertinoTabBar)).currentIndex, 3);
+    expect(
+      tester.widget<CupertinoTabBar>(find.byType(CupertinoTabBar)).currentIndex,
+      3,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -46,12 +49,16 @@ void main() {
       final configurations = <Map<Object?, Object?>>[];
       MethodChannel? nativeChannel;
       var creations = 0;
-      messenger.setMockMethodCallHandler(SystemChannels.platform_views, (call) async {
+      messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
+        call,
+      ) async {
         if (call.method == 'create') {
           creations++;
           final arguments = call.arguments as Map<Object?, Object?>;
           expect(arguments['viewType'], 'giristair/native-tab-bar');
-          nativeChannel = MethodChannel('giristair/native-tab-bar/${arguments['id']}');
+          nativeChannel = MethodChannel(
+            'giristair/native-tab-bar/${arguments['id']}',
+          );
           messenger.setMockMethodCallHandler(nativeChannel!, (call) async {
             if (call.method == 'configure') {
               configurations.add(call.arguments as Map<Object?, Object?>);
@@ -63,7 +70,9 @@ void main() {
       });
       addTearDown(() {
         messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);
-        if (nativeChannel != null) messenger.setMockMethodCallHandler(nativeChannel!, null);
+        if (nativeChannel != null) {
+          messenger.setMockMethodCallHandler(nativeChannel!, null);
+        }
       });
       var selected = 1;
       await tester.pumpWidget(

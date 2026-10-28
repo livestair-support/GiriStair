@@ -1,6 +1,5 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../models.dart';
 import '../participant_import.dart';
@@ -482,7 +481,9 @@ class _EventEditorState extends State<EventEditor> {
                             return ListTile(
                               title: Text(
                                 name,
-                                style: StairTypography.role(StairTextRole.value),
+                                style: StairTypography.role(
+                                  StairTextRole.value,
+                                ),
                               ),
                               subtitle: player.furigana.isEmpty
                                   ? null
