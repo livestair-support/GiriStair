@@ -3,6 +3,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'stair_typography.dart';
+export 'stair_typography.dart';
+
 /// Shared visual language, taken from LiveStair's default/system theme.
 abstract final class StairColors {
   static const action = Color(0xFFFF2D55);
@@ -28,12 +31,8 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
       : const Color(0xFF8E8E93);
   // Use the same system typefaces as SwiftUI on iPhone. Android keeps its
   // platform font rather than downloading or bundling a different typeface.
-  final ios = const [
-    TargetPlatform.iOS,
-    TargetPlatform.macOS,
-  ].contains(defaultTargetPlatform);
-  final font = ios ? '.SF Pro Text' : null;
-  final displayFont = ios ? '.SF Pro Display' : null;
+  final font = StairTypography.bodyFamily(defaultTargetPlatform);
+  final displayFont = StairTypography.displayFamily(defaultTargetPlatform);
   final scheme =
       ColorScheme.fromSeed(
         seedColor: StairColors.action,
@@ -57,6 +56,7 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
     scaffoldBackgroundColor: background,
     visualDensity: VisualDensity.standard,
     fontFamily: font,
+    fontFamilyFallback: StairTypography.fallback(defaultTargetPlatform),
     cupertinoOverrideTheme: CupertinoThemeData(
       brightness: brightness,
       primaryColor: StairColors.action,
@@ -70,146 +70,156 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
       },
     ),
   );
-  return base.copyWith(
-    textTheme: base.textTheme.copyWith(
-      headlineLarge: base.textTheme.headlineLarge?.copyWith(
-        fontFamily: displayFont,
-        fontSize: 34,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.8,
-      ),
-      titleLarge: base.textTheme.titleLarge?.copyWith(
-        fontSize: 20,
-        fontWeight: FontWeight.w700,
-      ),
-      titleMedium: base.textTheme.titleMedium?.copyWith(
-        fontSize: 18,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 0,
-      ),
-      bodyLarge: base.textTheme.bodyLarge?.copyWith(
-        fontSize: 17,
-        height: 1.25,
-        fontWeight: FontWeight.w400,
-        letterSpacing: 0,
-      ),
-      bodyMedium: base.textTheme.bodyMedium?.copyWith(
-        fontSize: 17,
-        height: 1.25,
-        fontWeight: FontWeight.w400,
-        letterSpacing: 0,
-      ),
-      bodySmall: base.textTheme.bodySmall?.copyWith(
-        fontSize: 13,
-        color: secondaryText,
-        letterSpacing: 0,
-      ),
-    ),
-    appBarTheme: AppBarTheme(
-      backgroundColor: background,
-      foregroundColor: text,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      scrolledUnderElevation: 0,
-      centerTitle: false,
-      titleTextStyle: TextStyle(
-        color: text,
-        fontSize: 18,
-        fontWeight: FontWeight.w600,
-      ),
-    ),
-    cardTheme: CardThemeData(
-      color: surface,
-      elevation: 0,
-      surfaceTintColor: Colors.transparent,
-      margin: const EdgeInsets.symmetric(vertical: 7),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-    ),
-    dividerTheme: DividerThemeData(
-      color: scheme.outlineVariant,
-      thickness: 0.5,
-    ),
-    inputDecorationTheme: InputDecorationTheme(
-      filled: false,
-      border: InputBorder.none,
-      enabledBorder: InputBorder.none,
-      focusedBorder: InputBorder.none,
-      errorBorder: InputBorder.none,
-      focusedErrorBorder: InputBorder.none,
-      contentPadding: const EdgeInsets.symmetric(vertical: 10),
-      labelStyle: TextStyle(color: secondaryText, fontSize: 17),
-      hintStyle: TextStyle(
-        color: secondaryText.withValues(alpha: 0.55),
-        fontSize: 17,
-        fontWeight: FontWeight.w400,
-      ),
-      errorMaxLines: 3,
-    ),
-    chipTheme: base.chipTheme.copyWith(
-      backgroundColor: surface,
-      selectedColor: StairColors.action.withValues(alpha: dark ? 0.22 : 0.10),
-      side: BorderSide(color: scheme.outlineVariant),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      labelStyle: TextStyle(color: text, fontSize: 13),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      showCheckmark: false,
-    ),
-    segmentedButtonTheme: SegmentedButtonThemeData(
-      style: ButtonStyle(
-        minimumSize: const WidgetStatePropertyAll(Size(0, 40)),
-        visualDensity: VisualDensity.compact,
-        padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+  return StairTypography.theme(
+    base.copyWith(
+      textTheme: base.textTheme.copyWith(
+        headlineLarge: base.textTheme.headlineLarge?.copyWith(
+          fontFamily: displayFont,
+          fontSize: 34,
+          fontWeight: FontWeight.w700,
+          letterSpacing: const CupertinoTextThemeData()
+              .navLargeTitleTextStyle
+              .letterSpacing,
         ),
-        side: WidgetStatePropertyAll(BorderSide(color: scheme.outlineVariant)),
-        backgroundColor: WidgetStateProperty.resolveWith((states) {
-          return states.contains(WidgetState.selected)
-              ? StairColors.action.withValues(alpha: dark ? 0.20 : 0.10)
-              : surface;
-        }),
-        foregroundColor: WidgetStateProperty.resolveWith((states) {
-          return states.contains(WidgetState.selected)
-              ? StairColors.action
-              : text;
-        }),
+        titleLarge: base.textTheme.titleLarge?.copyWith(
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+        ),
+        titleMedium: base.textTheme.titleMedium?.copyWith(
+          fontSize: 18,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0,
+        ),
+        bodyLarge: base.textTheme.bodyLarge?.copyWith(
+          fontSize: 17,
+          height: 1.25,
+          fontWeight: FontWeight.w400,
+          letterSpacing: 0,
+        ),
+        bodyMedium: base.textTheme.bodyMedium?.copyWith(
+          fontSize: 17,
+          height: 1.25,
+          fontWeight: FontWeight.w400,
+          letterSpacing: 0,
+        ),
+        bodySmall: base.textTheme.bodySmall?.copyWith(
+          fontSize: 13,
+          color: secondaryText,
+          letterSpacing: 0,
+        ),
       ),
-    ),
-    filledButtonTheme: FilledButtonThemeData(
-      style: FilledButton.styleFrom(
-        shape: const StadiumBorder(),
-        minimumSize: const Size(44, 44),
-        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+      appBarTheme: AppBarTheme(
+        backgroundColor: background,
+        foregroundColor: text,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        centerTitle: false,
+        titleTextStyle: TextStyle(
+          color: text,
+          fontSize: 18,
+          fontWeight: FontWeight.w600,
+        ),
       ),
-    ),
-    outlinedButtonTheme: OutlinedButtonThemeData(
-      style: OutlinedButton.styleFrom(
-        foregroundColor: StairColors.action,
+      cardTheme: CardThemeData(
+        color: surface,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        margin: const EdgeInsets.symmetric(vertical: 7),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      ),
+      dividerTheme: DividerThemeData(
+        color: (dark ? Colors.white : Colors.black).withValues(
+          alpha: dark ? 0.14 : 0.12,
+        ),
+        thickness: 0.5,
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: false,
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        errorBorder: InputBorder.none,
+        focusedErrorBorder: InputBorder.none,
+        contentPadding: const EdgeInsets.symmetric(vertical: 10),
+        labelStyle: TextStyle(color: secondaryText, fontSize: 17),
+        hintStyle: TextStyle(
+          color: secondaryText.withValues(alpha: 0.55),
+          fontSize: 17,
+          fontWeight: FontWeight.w400,
+        ),
+        errorMaxLines: 3,
+      ),
+      chipTheme: base.chipTheme.copyWith(
+        backgroundColor: surface,
+        selectedColor: StairColors.action.withValues(alpha: dark ? 0.22 : 0.10),
         side: BorderSide(color: scheme.outlineVariant),
-        minimumSize: const Size(44, 44),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        labelStyle: TextStyle(color: text, fontSize: 13),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        showCheckmark: false,
+      ),
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(Size(0, 40)),
+          visualDensity: VisualDensity.compact,
+          padding: const WidgetStatePropertyAll(
+            EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          ),
+          side: WidgetStatePropertyAll(
+            BorderSide(color: scheme.outlineVariant),
+          ),
+          backgroundColor: WidgetStateProperty.resolveWith((states) {
+            return states.contains(WidgetState.selected)
+                ? StairColors.action.withValues(alpha: dark ? 0.20 : 0.10)
+                : surface;
+          }),
+          foregroundColor: WidgetStateProperty.resolveWith((states) {
+            return states.contains(WidgetState.selected)
+                ? StairColors.action
+                : text;
+          }),
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          shape: const StadiumBorder(),
+          minimumSize: const Size(44, 44),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: StairColors.action,
+          side: BorderSide(color: scheme.outlineVariant),
+          minimumSize: const Size(44, 44),
+          shape: const StadiumBorder(),
+        ),
+      ),
+      listTileTheme: ListTileThemeData(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        iconColor: secondaryText,
+        titleTextStyle: TextStyle(
+          color: text,
+          fontSize: 17,
+          fontWeight: FontWeight.w400,
+        ),
+        subtitleTextStyle: TextStyle(
+          color: secondaryText,
+          fontSize: 13,
+          height: 1.5,
+        ),
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: surface,
+        foregroundColor: StairColors.action,
         shape: const StadiumBorder(),
+        elevation: 2,
+      ),
+      snackBarTheme: const SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
       ),
     ),
-    listTileTheme: ListTileThemeData(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      iconColor: secondaryText,
-      titleTextStyle: TextStyle(
-        color: text,
-        fontSize: 17,
-        fontWeight: FontWeight.w400,
-      ),
-      subtitleTextStyle: TextStyle(
-        color: secondaryText,
-        fontSize: 13,
-        height: 1.5,
-      ),
-    ),
-    floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: surface,
-      foregroundColor: StairColors.action,
-      shape: const StadiumBorder(),
-      elevation: 2,
-    ),
-    snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
   );
 }
 
@@ -312,7 +322,7 @@ class StairCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final tint = Color.alphaBlend(
-      accent.withValues(alpha: dark ? 0.10 : 0.065),
+      accent.withValues(alpha: dark ? 0.08 : 0.075),
       Theme.of(context).colorScheme.surface,
     );
     return Padding(
@@ -322,7 +332,7 @@ class StairCard extends StatelessWidget {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
           side: BorderSide(
-            color: accent.withValues(alpha: dark ? 0.28 : 0.18),
+            color: accent.withValues(alpha: dark ? 0.20 : 0.28),
             width: 0.65,
           ),
         ),
@@ -399,7 +409,7 @@ class StairSection extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: StairSectionTitle(title: title, icon: icon, accent: accent),
         ),
-        Divider(height: 0.5, color: accent.withValues(alpha: 0.22)),
+        Divider(height: 0.5, color: Theme.of(context).dividerTheme.color),
         Padding(padding: const EdgeInsets.all(16), child: child),
       ],
     ),
@@ -436,7 +446,7 @@ class StairFormSection extends StatelessWidget {
           Divider(
             height: 0.5,
             thickness: 0.5,
-            color: accent.withValues(alpha: 0.24),
+            color: Theme.of(context).dividerTheme.color,
           ),
           child,
         ],

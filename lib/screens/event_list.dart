@@ -1,7 +1,9 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
 import 'event_editor.dart';
 
@@ -91,80 +93,58 @@ class _EventListScreenState extends State<EventListScreen> {
       return ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(2, 2, 2, 8),
-            child: Text(
-              '${widget.store.events.length}件の予定と記録',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ),
-          StairSection(
+          StairFormSection(
             title: '表示・検索',
-            icon: Icons.tune,
+            icon: CupertinoIcons.slider_horizontal_3,
             accent: StairColors.online,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: false, label: Text('すべての記録')),
-                    ButtonSegment(value: true, label: Text('予定・締切')),
-                  ],
-                  selected: {_upcomingOnly},
-                  onSelectionChanged: (value) =>
-                      setState(() => _upcomingOnly = value.first),
+            children: [
+              StairMenuRow<bool>(
+                key: const ValueKey('list-display-filter'),
+                label: '表示',
+                accent: StairColors.online,
+                value: _upcomingOnly,
+                items: const {false: 'すべての記録', true: '予定・締切'},
+                onChanged: (value) => setState(() => _upcomingOnly = value),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
                 ),
-                const SizedBox(height: 10),
-                TextField(
+                child: TextField(
+                  key: const ValueKey('list-search'),
                   decoration: const InputDecoration(
                     hintText: 'タイトル・会場・主催者・参加者で検索',
-                    prefixIcon: Icon(Icons.search),
+                    prefixIcon: Icon(CupertinoIcons.search, size: 20),
                   ),
                   onChanged: (value) => setState(() => _query = value.trim()),
                 ),
-                const Divider(height: 14),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    ChoiceChip(
-                      label: const Text('すべて'),
-                      selected: _kind == null,
-                      onSelected: (_) => setState(() => _kind = null),
-                    ),
-                    ChoiceChip(
-                      label: const Text('生大喜利'),
-                      selected: _kind == EventKind.live,
-                      onSelected: (_) => setState(() => _kind = EventKind.live),
-                    ),
-                    ChoiceChip(
-                      label: const Text('ネット大喜利'),
-                      selected: _kind == EventKind.online,
-                      onSelected: (_) =>
-                          setState(() => _kind = EventKind.online),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    ChoiceChip(
-                      label: const Text('全ての状態'),
-                      selected: _status == null,
-                      onSelected: (_) => setState(() => _status = null),
-                    ),
-                    for (final status in EventStatus.values)
-                      ChoiceChip(
-                        label: Text(eventStatusLabel(status)),
-                        selected: _status == status,
-                        onSelected: (_) => setState(() => _status = status),
-                      ),
-                  ],
-                ),
-              ],
-            ),
+              ),
+              StairMenuRow<int>(
+                key: const ValueKey('list-kind-filter'),
+                label: '形式',
+                accent: StairColors.online,
+                value: _kind?.index ?? -1,
+                items: const {-1: 'すべて', 0: '生大喜利', 1: 'ネット大喜利'},
+                onChanged: (value) => setState(() {
+                  _kind = value == -1 ? null : EventKind.values[value];
+                }),
+              ),
+              StairMenuRow<int>(
+                key: const ValueKey('list-status-filter'),
+                label: '参加状況',
+                accent: StairColors.online,
+                value: _status?.index ?? -1,
+                items: {
+                  -1: 'すべて',
+                  for (final status in EventStatus.values)
+                    status.index: eventStatusLabel(status),
+                },
+                onChanged: (value) => setState(() {
+                  _status = value == -1 ? null : EventStatus.values[value];
+                }),
+              ),
+            ],
           ),
           const SizedBox(height: 4),
           if (events.isEmpty)
@@ -180,18 +160,8 @@ class _EventListScreenState extends State<EventListScreen> {
                   ),
                   const SizedBox(height: 14),
                   Text(
-                    widget.store.events.isEmpty
-                        ? '最初の一席を残しましょう'
-                        : '該当する記録がありません',
+                    widget.store.events.isEmpty ? '記録がありません' : '該当する記録がありません',
                     style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    widget.store.events.isEmpty
-                        ? '「登録」タブから参加予定や過去の記録を追加できます。'
-                        : '検索条件や絞り込みを変えてみてください。',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
               ),

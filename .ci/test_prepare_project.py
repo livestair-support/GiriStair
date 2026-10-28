@@ -102,6 +102,32 @@ class PrepareProjectTest(unittest.TestCase):
         project = self.root / "ios/Runner.xcodeproj/project.pbxproj"
         self.assertIn("IPHONEOS_DEPLOYMENT_TARGET = 18.0;", project.read_text())
 
+    def test_ios_native_locale_is_japanese_and_other_settings_survive(self) -> None:
+        native_fixture(self.root)
+        info_path = self.root / "ios/Runner/Info.plist"
+        original = {
+            "CFBundleDisplayName": "giristair",
+            "CFBundleDevelopmentRegion": "en",
+            "NSPhotoLibraryUsageDescription": "参加者の画像を読み取ります。",
+            "UIApplicationSupportsIndirectInputEvents": True,
+        }
+        info_path.write_bytes(plistlib.dumps(original))
+
+        prepare_project.prepare(self.root)
+        prepared = plistlib.loads(info_path.read_bytes())
+        self.assertEqual(prepared["CFBundleDevelopmentRegion"], "ja")
+        self.assertEqual(prepared["CFBundleLocalizations"], ["ja"])
+        self.assertEqual(prepared["CFBundleDisplayName"], "GiriStair")
+        self.assertEqual(
+            prepared["NSPhotoLibraryUsageDescription"],
+            original["NSPhotoLibraryUsageDescription"],
+        )
+        self.assertTrue(prepared["UIApplicationSupportsIndirectInputEvents"])
+
+        # Re-running preparation must retain the native locale declaration.
+        prepare_project.prepare(self.root)
+        self.assertEqual(plistlib.loads(info_path.read_bytes()), prepared)
+
     def test_signing_id_mismatch_fails_before_generation(self) -> None:
         with mock.patch.dict(os.environ, {"BUNDLE_ID": "com.other.app"}):
             with mock.patch.object(prepare_project.subprocess, "run") as generate:

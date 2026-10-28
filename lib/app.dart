@@ -57,8 +57,8 @@ class _GiriStairAppState extends State<GiriStairApp>
       builder: (context, _) => MaterialApp(
         title: 'GiriStair',
         debugShowCheckedModeBanner: false,
-        locale: const Locale('ja'),
-        supportedLocales: const [Locale('ja')],
+        locale: StairTypography.locale,
+        supportedLocales: const [StairTypography.locale],
         localizationsDelegates: GlobalMaterialLocalizations.delegates,
         theme: stairTheme(
           Brightness.light,

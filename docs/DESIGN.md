@@ -5,7 +5,7 @@ LiveStairの登録画面を基準に、Flutter側の共通部品を `lib/ui/stai
 ## 基本
 
 - 提示されたLiveStairの画面に合わせ、既定はライト表示です。背景は `#F9F9FB`、カードの地色は白。ダーク用の共通テーマも保持します。
-- iPhoneの本文はSF Pro Text、見出しはSF Pro Display、日本語はシステム書体を使います。本文・入力値は17pxの標準ウェイトを基本にします。
+- iPhoneの本文・見出しはFlutter 3.44の正式なAppleシステムフォント指定 `CupertinoSystemText` / `CupertinoSystemDisplay` を使います。日本語は `Hiragino Sans` → `Hiragino Kaku Gothic ProN` の順に明示し、ロケールはja_JPに揃えます。入力欄・AppBar・Cupertinoダイアログ・共有画像でも同じ文字設定を保持します。本文・入力値は17pxの標準ウェイトを基本にします。
 - 主な操作はピンク `#FF2D55`。
 - メイン画面は38pxの淡色アイコンと34pxの太字見出し。
 - カードは角丸20px、淡い色の背景と枠、左側に3pxのカラーライン。
@@ -29,3 +29,8 @@ LiveStairの登録画面を基準に、Flutter側の共通部品を `lib/ui/stai
 参考はLiveStairの `CommonUI.swift` 内の `AppSectionAccent`、`AppCardSectionTitle`、`appTintedCard`、`MainTabTitleHeader` と、登録画面の入力行です。テーマは端末・ライト・ダーク・GiriStair（暖色）から選択し、再起動後も保持します。設定は共有ページ・集計・一覧・デフォルト設定・通知・データ管理・サポートのカードで構成し、バージョンはサポートの最後に表示します。
 
 投稿期間の判定、メモの保持、登録・編集・削除の動作を維持します。開催日だけの記録については `docs/SPEC.md` の `eventDate` を使います。
+
+## 条件選択と説明文
+
+- 一覧・戦績・思考・共有などの条件や種類の選択は、左にラベル、右に選択値と小さな上下矢印を置く `StairMenuRow` を使います。値を押すとチェック付きメニューが開き、外を押して閉じたときは変更しません。絞り込みにチップやボタン群を並べず、LiveStairの該当画面の形を優先します。
+- 一覧・戦績・思考の画面冒頭や空状態に、機能を説明するキャプションは付けません。空のときは「記録がありません」など状態を短く表示します。記録そのものの内容・日付・結果・件数、保存や削除の確認は維持します。

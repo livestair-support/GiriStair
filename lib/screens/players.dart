@@ -188,15 +188,15 @@ class _PlayerEditorState extends State<_PlayerEditor> {
   Future<void> _delete() async {
     final confirmed = await showCupertinoDialog<bool>(
       context: context,
-      builder: (context) => CupertinoAlertDialog(
+      builder: (context) => StairCupertinoAlertDialog(
         title: const Text('プレイヤーの登録情報を削除しますか？'),
         content: const Text('過去の会に記録した名前は残ります。過去の参加者は一覧にも引き続き表示されます。'),
         actions: [
-          CupertinoDialogAction(
+          StairCupertinoDialogAction(
             onPressed: () => Navigator.pop(context, false),
             child: const Text('キャンセル'),
           ),
-          CupertinoDialogAction(
+          StairCupertinoDialogAction(
             isDestructiveAction: true,
             onPressed: () => Navigator.pop(context, true),
             child: const Text('削除'),

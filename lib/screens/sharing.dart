@@ -118,33 +118,20 @@ class _ShareRecordsScreenState extends State<ShareRecordsScreen> {
               icon: CupertinoIcons.slider_horizontal_3,
               accent: StairColors.settings,
               children: [
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: CupertinoSlidingSegmentedControl<bool>(
-                    groupValue: _list,
-                    thumbColor: StairColors.action.withValues(alpha: 0.12),
-                    children: const {
-                      false: Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 10),
-                        child: Text('Summary'),
-                      ),
-                      true: Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 10),
-                        child: Text('List'),
-                      ),
-                    },
-                    onValueChanged: (value) {
-                      if (value != null) {
-                        setState(() {
-                          _list = value;
-                          _page = 0;
-                        });
-                      }
-                    },
-                  ),
+                StairMenuRow<bool>(
+                  key: const ValueKey('share-image-kind'),
+                  label: '画像',
+                  value: _list,
+                  accent: StairColors.settings,
+                  items: const {false: 'Summary', true: 'List'},
+                  onChanged: (value) => setState(() {
+                    _list = value;
+                    _page = 0;
+                  }),
                 ),
                 StairMenuRow<int>(
                   label: '期間',
+                  accent: StairColors.settings,
                   value: selectedYear ?? 0,
                   items: {0: 'すべて', for (final year in years) year: '$year年'},
                   onChanged: (value) => setState(() {
@@ -169,13 +156,6 @@ class _ShareRecordsScreenState extends State<ShareRecordsScreen> {
                     (value) => setState(() => _showParticipants = value),
                   ),
               ],
-            ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(4, 8, 4, 10),
-              child: Text(
-                '下の画像を共有します。名前や会場名など、公開する内容を確認してください。',
-                style: TextStyle(fontSize: 13),
-              ),
             ),
             Center(
               child: ConstrainedBox(

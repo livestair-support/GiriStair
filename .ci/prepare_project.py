@@ -53,6 +53,10 @@ def set_ios_settings(root: Path, config: dict[str, str]) -> None:
         info = plistlib.load(source)
     info["CFBundleDisplayName"] = config["display_name"]
     info["CFBundleName"] = config["display_name"]
+    # Flutter's Locale('ja') does not declare the native app's localization.
+    # Keep generated runners, system dialogs and app language selection Japanese.
+    info["CFBundleDevelopmentRegion"] = "ja"
+    info["CFBundleLocalizations"] = ["ja"]
     # Initial app stores on-device records and adds no encryption features.
     info["ITSAppUsesNonExemptEncryption"] = False
     with info_path.open("wb") as destination:

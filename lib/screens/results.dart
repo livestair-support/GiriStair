@@ -1,8 +1,10 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
 import '../ui/stair_theme.dart';
+import '../ui/stair_controls.dart';
 import 'event_editor.dart';
 import 'event_list.dart';
 
@@ -71,60 +73,34 @@ class _ResultsScreenState extends State<ResultsScreen> {
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
           children: [
-            Text(
-              '大会の結果や順位を、記録から追記できます。',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 10),
-            StairSection(
-              title: '表示する大会',
-              icon: Icons.tune,
+            StairFormSection(
+              title: '表示条件',
+              icon: CupertinoIcons.slider_horizontal_3,
               accent: StairColors.result,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('すべて'),
-                        selected: _kind == null,
-                        onSelected: (_) => setState(() => _kind = null),
-                      ),
-                      ChoiceChip(
-                        label: const Text('生大喜利'),
-                        selected: _kind == EventKind.live,
-                        onSelected: (_) =>
-                            setState(() => _kind = EventKind.live),
-                      ),
-                      ChoiceChip(
-                        label: const Text('ネット大喜利'),
-                        selected: _kind == EventKind.online,
-                        onSelected: (_) =>
-                            setState(() => _kind = EventKind.online),
-                      ),
-                    ],
+              children: [
+                StairMenuRow<int>(
+                  key: const ValueKey('results-format'),
+                  label: '形式',
+                  accent: StairColors.result,
+                  value: _kind?.index ?? -1,
+                  items: const {-1: 'すべて', 0: '生大喜利', 1: 'ネット大喜利'},
+                  onChanged: (value) => setState(
+                    () => _kind = value < 0 ? null : EventKind.values[value],
                   ),
-                  const Divider(height: 24),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    children: [
-                      for (final filter in _ResultFilter.values)
-                        ChoiceChip(
-                          label: Text(switch (filter) {
-                            _ResultFilter.all => 'すべての結果',
-                            _ResultFilter.recorded => '結果あり',
-                            _ResultFilter.unrecorded => '未入力',
-                          }),
-                          selected: _filter == filter,
-                          onSelected: (_) => setState(() => _filter = filter),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
+                ),
+                StairMenuRow<_ResultFilter>(
+                  key: const ValueKey('results-result-filter'),
+                  label: '結果',
+                  accent: StairColors.result,
+                  value: _filter,
+                  items: const {
+                    _ResultFilter.all: 'すべての結果',
+                    _ResultFilter.recorded: '結果あり',
+                    _ResultFilter.unrecorded: '未入力',
+                  },
+                  onChanged: (value) => setState(() => _filter = value),
+                ),
+              ],
             ),
             StairCard(
               accent: StairColors.result,
@@ -160,16 +136,8 @@ class _ResultsScreenState extends State<ResultsScreen> {
                     ),
                     const SizedBox(height: 14),
                     Text(
-                      tournaments.isEmpty ? '大会の記録はこれから' : '該当する結果がありません',
+                      tournaments.isEmpty ? '大会の記録がありません' : '該当する結果がありません',
                       style: Theme.of(context).textTheme.titleMedium,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      tournaments.isEmpty
-                          ? '「登録」で大会を選ぶと、ここに参加予定や結果が並びます。'
-                          : '結果の絞り込みを変えてみてください。',
-                      style: Theme.of(context).textTheme.bodySmall,
                       textAlign: TextAlign.center,
                     ),
                   ],

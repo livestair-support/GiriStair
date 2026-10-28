@@ -355,11 +355,11 @@ class _EventEditorState extends State<EventEditor> {
     if (history.isEmpty) {
       await showCupertinoDialog<void>(
         context: context,
-        builder: (context) => CupertinoAlertDialog(
+        builder: (context) => StairCupertinoAlertDialog(
           title: const Text('プレイヤーを選ぶ'),
           content: const Text('設定の「大喜利プレイヤー一覧」に登録した人や、過去の参加者を選べます。'),
           actions: [
-            CupertinoDialogAction(
+            StairCupertinoDialogAction(
               onPressed: () => Navigator.pop(context),
               child: const Text('閉じる'),
             ),

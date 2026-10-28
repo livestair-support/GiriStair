@@ -49,11 +49,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _message(String title, String text) => showCupertinoDialog<void>(
     context: context,
-    builder: (context) => CupertinoAlertDialog(
+    builder: (context) => StairCupertinoAlertDialog(
       title: Text(title),
       content: Text(text),
       actions: [
-        CupertinoDialogAction(
+        StairCupertinoDialogAction(
           onPressed: () => Navigator.pop(context),
           child: const Text('閉じる'),
         ),
@@ -169,17 +169,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       final confirmed = await showCupertinoDialog<bool>(
         context: context,
-        builder: (context) => CupertinoAlertDialog(
+        builder: (context) => StairCupertinoAlertDialog(
           title: const Text('バックアップから復元しますか？'),
           content: Text(
             '現在の記録・思考メモ・プレイヤー・設定を「${file.name}」の内容に置き換えます。必要な記録は先にバックアップしてください。',
           ),
           actions: [
-            CupertinoDialogAction(
+            StairCupertinoDialogAction(
               onPressed: () => Navigator.pop(context, false),
               child: const Text('キャンセル'),
             ),
-            CupertinoDialogAction(
+            StairCupertinoDialogAction(
               isDestructiveAction: true,
               onPressed: () => Navigator.pop(context, true),
               child: const Text('復元'),
