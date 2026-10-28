@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
@@ -30,10 +31,12 @@ class ParticipantImportScreen extends StatefulWidget {
     super.key,
     this.existingNames = const [],
     this.readImages = readParticipantImages,
+    this.startWithImages = false,
   });
 
   final List<String> existingNames;
   final Future<String?> Function() readImages;
+  final bool startWithImages;
 
   @override
   State<ParticipantImportScreen> createState() =>
@@ -46,6 +49,16 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
   final _selected = <bool>[];
   bool _reading = false;
   String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.startWithImages) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _readImages();
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -122,7 +135,7 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
     final count = _selectedNames.length;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('参加者を一括追加'),
+        title: Text(widget.startWithImages ? 'OCRで一括追加' : '文字から一括追加'),
         actions: [
           TextButton(
             key: const ValueKey('participant-import-apply'),
@@ -138,14 +151,10 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
         children: [
           StairFormSection(
-            title: '文章・画像から読み込む',
-            icon: Icons.document_scanner_outlined,
+            title: widget.startWithImages ? '読み取った文章' : '参加者名を貼り付け',
+            icon: widget.startWithImages ? CupertinoIcons.doc_text_viewfinder : CupertinoIcons.doc_text,
             accent: StairColors.online,
             children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: Text('ツイプラ・noteなどの参加者一覧を貼り付けるか、スクリーンショットを選びます。'),
-              ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: TextField(
@@ -175,11 +184,11 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
                 child: Wrap(
                   alignment: WrapAlignment.spaceBetween,
                   children: [
-                    TextButton.icon(
+                    if (widget.startWithImages) TextButton.icon(
                       key: const ValueKey('participant-import-images'),
                       onPressed: _reading ? null : _readImages,
-                      icon: const Icon(Icons.photo_library_outlined, size: 20),
-                      label: Text(_reading ? '読み取り中…' : '画像から読み取る'),
+                      icon: const Icon(CupertinoIcons.photo_on_rectangle, size: 20),
+                      label: Text(_reading ? '読み取り中…' : '画像を選び直す'),
                     ),
                     TextButton(
                       key: const ValueKey('participant-import-preview'),
@@ -189,7 +198,10 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
                   ],
                 ),
               ),
-              if (_reading) const LinearProgressIndicator(minHeight: 2),
+              if (_reading) const Padding(
+                padding: EdgeInsets.all(12),
+                child: CupertinoActivityIndicator(),
+              ),
             ],
           ),
           if (_message != null)
@@ -203,7 +215,7 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
           if (_names.isNotEmpty)
             StairFormSection(
               title: '追加する名前を確認',
-              icon: Icons.people_outline,
+              icon: CupertinoIcons.person_2,
               accent: StairColors.online,
               children: [
                 Padding(
@@ -218,13 +230,22 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
                     padding: const EdgeInsets.only(left: 4, right: 16),
                     child: Row(
                       children: [
-                        Checkbox(
-                          value: _selected[i],
-                          activeColor: StairColors.action,
-                          onChanged: _reading
-                              ? null
-                              : (value) =>
-                                    setState(() => _selected[i] = value!),
+                        Semantics(
+                          checked: _selected[i],
+                          label: '${_names[i].text}を追加',
+                          child: CupertinoButton(
+                            key: ValueKey('participant-import-selected-$i'),
+                            padding: const EdgeInsets.all(10),
+                            minimumSize: const Size(44, 44),
+                            onPressed: _reading
+                                ? null
+                                : () => setState(() => _selected[i] = !_selected[i]),
+                            child: Icon(
+                              _selected[i] ? CupertinoIcons.check_mark_circled_solid : CupertinoIcons.circle,
+                              size: 22,
+                              color: _selected[i] ? StairColors.action : Theme.of(context).colorScheme.outline,
+                            ),
+                          ),
                         ),
                         Expanded(
                           child: TextField(
@@ -232,7 +253,7 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
                             controller: _names[i],
                             enabled: !_reading,
                             onChanged: (_) => setState(() {}),
-                            style: const TextStyle(fontSize: 17),
+                            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w500),
                             decoration: const InputDecoration(
                               isDense: true,
                               contentPadding: EdgeInsets.symmetric(

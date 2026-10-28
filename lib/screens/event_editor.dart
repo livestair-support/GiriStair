@@ -8,14 +8,23 @@ import '../store.dart';
 import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
 import 'participant_import.dart';
+import 'event_round_editor.dart';
+import 'tournament_result_editor.dart';
 
 /// Registration form shared by the registration tab and event editing routes.
 class EventEditor extends StatefulWidget {
-  const EventEditor({required this.store, this.event, this.onSaved, super.key});
+  const EventEditor({
+    required this.store,
+    this.event,
+    this.onSaved,
+    this.readImages = readParticipantImages,
+    super.key,
+  });
 
   final GiriStore store;
   final GiriEvent? event;
   final VoidCallback? onSaved;
+  final Future<String?> Function() readImages;
 
   @override
   State<EventEditor> createState() => _EventEditorState();
@@ -38,10 +47,8 @@ class _EventEditorState extends State<EventEditor> {
   DateTime? _eventDate;
   DateTime? _startsAt;
   DateTime? _endsAt;
-  DateTime? _submissionStart;
-  DateTime? _submissionEnd;
-  DateTime? _votingStart;
-  DateTime? _votingEnd;
+  List<EventRound> _rounds = [];
+  TournamentResult _tournamentResult = TournamentResult();
   bool _saving = false;
   String? _scheduleError;
 
@@ -78,7 +85,10 @@ class _EventEditorState extends State<EventEditor> {
       );
     _siteUrl.text = event?.siteUrl ?? '';
     _memo.text = event?.memo ?? '';
-    _result.text = event?.resultText ?? '';
+    _result.text = event?.tournamentResult?.memo.isNotEmpty == true
+        ? event!.tournamentResult!.memo
+        : event?.resultText ?? '';
+    _tournamentResult = event?.tournamentResult ?? TournamentResult();
     _placement.text = event?.placement?.toString() ?? '';
     _kind = event?.kind ?? EventKind.live;
     _meetingType = event?.meetingType ?? MeetingType.casual;
@@ -91,10 +101,10 @@ class _EventEditorState extends State<EventEditor> {
         : null;
     _startsAt = event?.startsAt;
     _endsAt = event?.endsAt;
-    _submissionStart = event?.submissionStart;
-    _submissionEnd = event?.submissionEnd;
-    _votingStart = event?.votingStart;
-    _votingEnd = event?.votingEnd;
+    _rounds = event?.effectiveRounds.toList() ?? [];
+    if (event?.kind == EventKind.online && _rounds.isEmpty) {
+      _rounds.add(EventRound(id: widget.store.newId(), name: '予選1回戦'));
+    }
     _scheduleError = null;
   }
 
@@ -165,15 +175,18 @@ class _EventEditorState extends State<EventEditor> {
       }
       return null;
     }
-    for (final range in [
-      ('投稿', _submissionStart, _submissionEnd),
-      ('投票', _votingStart, _votingEnd),
-    ]) {
-      if ((range.$2 == null) != (range.$3 == null)) {
-        return '${range.$1}期間は開始・終了の両方を入力してください。';
-      }
-      if (range.$2 != null && !range.$3!.isAfter(range.$2!)) {
-        return '${range.$1}の終了日時は開始日時より後にしてください。';
+    for (final round in _rounds) {
+      for (final range in [
+        ('投稿', round.submissionStart, round.submissionEnd),
+        ('投票', round.votingStart, round.votingEnd),
+      ]) {
+        final prefix = _rounds.length > 1 ? '${round.name}：' : '';
+        if ((range.$2 == null) != (range.$3 == null)) {
+          return '$prefix${range.$1}期間は開始・終了の両方を入力してください。';
+        }
+        if (range.$2 != null && !range.$3!.isAfter(range.$2!)) {
+          return '$prefix${range.$1}の終了日時は開始日時より後にしてください。';
+        }
       }
     }
     return null;
@@ -204,18 +217,27 @@ class _EventEditorState extends State<EventEditor> {
       eventDate: _kind == EventKind.live ? _eventDate : null,
       startsAt: _kind == EventKind.live ? _startsAt : null,
       endsAt: _kind == EventKind.live ? _endsAt : null,
-      submissionStart: _kind == EventKind.online ? _submissionStart : null,
-      submissionEnd: _kind == EventKind.online ? _submissionEnd : null,
-      votingStart: _kind == EventKind.online ? _votingStart : null,
-      votingEnd: _kind == EventKind.online ? _votingEnd : null,
+      submissionStart: _kind == EventKind.online ? _rounds.firstOrNull?.submissionStart : null,
+      submissionEnd: _kind == EventKind.online ? _rounds.firstOrNull?.submissionEnd : null,
+      votingStart: _kind == EventKind.online ? _rounds.firstOrNull?.votingStart : null,
+      votingEnd: _kind == EventKind.online ? _rounds.firstOrNull?.votingEnd : null,
+      rounds: _kind == EventKind.online ? _rounds : const [],
       siteUrl: _kind == EventKind.online ? _siteUrl.text.trim() : '',
       status: _status,
       memo: _memo.text.trim(),
       resultText: _meetingType == MeetingType.tournament
           ? _result.text.trim()
           : '',
-      placement: _meetingType == MeetingType.tournament
-          ? int.tryParse(_placement.text.trim())
+      placement: _meetingType != MeetingType.tournament
+          ? null
+          : switch (_tournamentResult.outcome) {
+              TournamentOutcome.champion => 1,
+              TournamentOutcome.runnerUp => 2,
+              TournamentOutcome.placed || TournamentOutcome.unrecorded => int.tryParse(_placement.text.trim()),
+              _ => null,
+            },
+      tournamentResult: _meetingType == MeetingType.tournament
+          ? _tournamentResult.copyWith(memo: _result.text.trim())
           : null,
     );
     setState(() => _saving = true);
@@ -223,9 +245,6 @@ class _EventEditorState extends State<EventEditor> {
       await widget.store.saveEvent(event);
       HapticFeedback.lightImpact();
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('記録を保存しました')));
       if (original == null) {
         _formKey.currentState!.reset();
         setState(_loadEvent);
@@ -233,9 +252,7 @@ class _EventEditorState extends State<EventEditor> {
       widget.onSaved?.call();
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('保存できませんでした。入力内容を残しています。もう一度お試しください。')),
-      );
+      showStairMessage(context, '保存できませんでした。入力内容を残しています。', error: true);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -263,7 +280,7 @@ class _EventEditorState extends State<EventEditor> {
         maxLines: maxLines,
         keyboardType: keyboardType,
         textInputAction: textInputAction,
-        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w400),
+        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w500),
         decoration: InputDecoration(
           isDense: true,
           hintText: label,
@@ -451,7 +468,7 @@ class _EventEditorState extends State<EventEditor> {
                               name,
                               style: const TextStyle(
                                 fontSize: 17,
-                                fontWeight: FontWeight.w400,
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
                             subtitle: player.furigana.isEmpty
@@ -507,11 +524,13 @@ class _EventEditorState extends State<EventEditor> {
     });
   }
 
-  Future<void> _importParticipants() async {
+  Future<void> _importParticipants({bool images = false}) async {
     FocusManager.instance.primaryFocus?.unfocus();
     final names = await Navigator.of(context).push<List<String>>(
-      MaterialPageRoute(
+      CupertinoPageRoute(
         builder: (_) => ParticipantImportScreen(
+          startWithImages: images,
+          readImages: widget.readImages,
           existingNames: _participants
               .map((controller) => controller.text.trim())
               .toList(),
@@ -526,22 +545,45 @@ class _EventEditorState extends State<EventEditor> {
     title: '参加者',
     icon: CupertinoIcons.person_2,
     accent: StairColors.online,
+    trailing: Text(
+      '${_participants.map((controller) => playerSearchKey(controller.text)).where((name) => name.isNotEmpty).toSet().length}人',
+      key: const ValueKey('event-participant-count'),
+      style: Theme.of(context).textTheme.bodySmall,
+    ),
     children: [
       Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         child: Row(
           children: [
             Expanded(
-              child: Text(
-                '${_participants.where((controller) => controller.text.trim().isNotEmpty).length}人',
-                style: Theme.of(context).textTheme.bodySmall,
+              child: CupertinoButton(
+                key: const ValueKey('event-import-participants'),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                onPressed: _saving ? null : () => _importParticipants(),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(CupertinoIcons.doc_text, size: 20),
+                    SizedBox(width: 6),
+                    Text('文字一括'),
+                  ],
+                ),
               ),
             ),
-            TextButton.icon(
-              key: const ValueKey('event-import-participants'),
-              onPressed: _saving ? null : _importParticipants,
-              icon: const Icon(CupertinoIcons.doc_text_viewfinder, size: 19),
-              label: const Text('文章・画像から一括追加'),
+            Expanded(
+              child: CupertinoButton(
+                key: const ValueKey('event-import-participant-images'),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                onPressed: _saving ? null : () => _importParticipants(images: true),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(CupertinoIcons.doc_text_viewfinder, size: 20),
+                    SizedBox(width: 6),
+                    Text('OCR一括'),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
@@ -560,7 +602,7 @@ class _EventEditorState extends State<EventEditor> {
                     enabled: !_saving,
                     style: const TextStyle(
                       fontSize: 17,
-                      fontWeight: FontWeight.w400,
+                      fontWeight: FontWeight.w500,
                     ),
                     textInputAction: TextInputAction.next,
                     onChanged: (_) => setState(() {}),
@@ -649,7 +691,7 @@ class _EventEditorState extends State<EventEditor> {
               icon: const Icon(CupertinoIcons.plus_circle, size: 23),
               label: const Text(
                 '参加者を追加',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w400),
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500),
               ),
             ),
             TextButton(
@@ -664,21 +706,6 @@ class _EventEditorState extends State<EventEditor> {
         ),
       ),
     ],
-  );
-
-  Widget _periodRow(
-    String label,
-    DateTime? value,
-    ValueChanged<DateTime?> onChanged,
-  ) => StairDateRow(
-    label: label,
-    value: value,
-    onChanged: _saving
-        ? null
-        : (value) => setState(() {
-            onChanged(value);
-            _scheduleError = null;
-          }),
   );
 
   @override
@@ -730,6 +757,9 @@ class _EventEditorState extends State<EventEditor> {
                       ? null
                       : (value) => setState(() {
                           _kind = value;
+                          if (value == EventKind.online && _rounds.isEmpty) {
+                            _rounds.add(EventRound(id: widget.store.newId(), name: '予選1回戦'));
+                          }
                           _scheduleError = null;
                         }),
                 ),
@@ -818,35 +848,14 @@ class _EventEditorState extends State<EventEditor> {
             if (_kind == EventKind.live)
               _participantsSection()
             else
-              StairFormSection(
-                title: 'スケジュール',
-                icon: Icons.calendar_month_outlined,
-                accent: StairColors.online,
-                children: [
-                  _periodRow(
-                    '投稿開始',
-                    _submissionStart,
-                    (value) => _submissionStart = value,
-                  ),
-                  _periodRow(
-                    '投稿締切',
-                    _submissionEnd,
-                    (value) => _submissionEnd = value,
-                  ),
-                  _periodRow(
-                    '投票開始',
-                    _votingStart,
-                    (value) => _votingStart = value,
-                  ),
-                  _periodRow('投票締切', _votingEnd, (value) => _votingEnd = value),
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(
-                      '投稿期間中の会は「思考」に表示されます。',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                ],
+              EventRoundEditor(
+                rounds: _rounds,
+                enabled: !_saving,
+                newId: widget.store.newId,
+                onChanged: (rounds) => setState(() {
+                  _rounds = rounds;
+                  _scheduleError = null;
+                }),
               ),
             if (_scheduleError != null)
               Padding(
@@ -857,31 +866,13 @@ class _EventEditorState extends State<EventEditor> {
                 ),
               ),
             if (_meetingType == MeetingType.tournament)
-              StairFormSection(
-                title: '大会の結果',
-                icon: Icons.emoji_events_outlined,
-                accent: StairColors.result,
-                children: [
-                  _textField(
-                    label: '結果（優勝・予選敗退など）',
-                    controller: _result,
-                    fieldKey: const ValueKey('event-result'),
-                  ),
-                  _textField(
-                    label: '順位（任意）',
-                    controller: _placement,
-                    fieldKey: const ValueKey('event-placement'),
-                    keyboardType: TextInputType.number,
-                    suffixText: '位',
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) return null;
-                      final number = int.tryParse(value.trim());
-                      return number == null || number < 1
-                          ? '1以上の整数を入力してください'
-                          : null;
-                    },
-                  ),
-                ],
+              TournamentResultEditor(
+                value: _tournamentResult,
+                placement: _placement,
+                memo: _result,
+                enabled: !_saving,
+                newId: widget.store.newId,
+                onChanged: (result) => setState(() => _tournamentResult = result),
               ),
             StairFormSection(
               title: '振り返り',

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../tournament_presentation.dart';
 import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
 import 'event_editor.dart';
@@ -33,15 +34,16 @@ class _EventListScreenState extends State<EventListScreen> {
   String _query = '';
   EventKind? _kind;
   EventStatus? _status;
-  bool _upcomingOnly = false;
 
   DateTime? _relevantDate(GiriEvent event, DateTime now) {
     if (event.kind == EventKind.live) {
       return event.endsAt ?? event.startsAt ?? event.eventDate;
     }
     final deadlines = [
-      event.submissionEnd,
-      event.votingEnd,
+      for (final round in event.effectiveRounds) ...[
+        round.submissionEnd,
+        round.votingEnd,
+      ],
     ].whereType<DateTime>().toList()..sort();
     final upcoming = deadlines.where((date) => !date.isBefore(now));
     if (upcoming.isNotEmpty) return upcoming.first;
@@ -57,19 +59,6 @@ class _EventListScreenState extends State<EventListScreen> {
           widget.store.events.where((event) {
             if (_kind != null && event.kind != _kind) return false;
             if (_status != null && event.status != _status) return false;
-            if (_upcomingOnly) {
-              if (event.status != EventStatus.planned) return false;
-              final date = _relevantDate(event, now);
-              final dateOnly =
-                  event.kind == EventKind.live &&
-                  event.startsAt == null &&
-                  event.endsAt == null &&
-                  event.eventDate != null;
-              final cutoff = dateOnly
-                  ? DateTime(now.year, now.month, now.day)
-                  : now;
-              if (date != null && date.isBefore(cutoff)) return false;
-            }
             final searchable = [
               event.title,
               event.organizer,
@@ -86,9 +75,7 @@ class _EventListScreenState extends State<EventListScreen> {
             }
             if (aDate == null) return 1;
             if (bDate == null) return -1;
-            return _upcomingOnly
-                ? aDate.compareTo(bDate)
-                : bDate.compareTo(aDate);
+            return bDate.compareTo(aDate);
           });
       return ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
@@ -98,14 +85,6 @@ class _EventListScreenState extends State<EventListScreen> {
             icon: CupertinoIcons.slider_horizontal_3,
             accent: StairColors.online,
             children: [
-              StairMenuRow<bool>(
-                key: const ValueKey('list-display-filter'),
-                label: '表示',
-                accent: StairColors.online,
-                value: _upcomingOnly,
-                items: const {false: 'すべての記録', true: '予定・締切'},
-                onChanged: (value) => setState(() => _upcomingOnly = value),
-              ),
               Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
@@ -151,10 +130,13 @@ class _EventListScreenState extends State<EventListScreen> {
             StairCard(
               accent: StairColors.online,
               padding: const EdgeInsets.all(24),
-              child: Column(
-                children: [
+              child: SizedBox(
+                width: double.infinity,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
                   const StairIconBadge(
-                    icon: Icons.event_note_outlined,
+                    icon: CupertinoIcons.calendar,
                     accent: StairColors.online,
                     size: 38,
                   ),
@@ -162,8 +144,10 @@ class _EventListScreenState extends State<EventListScreen> {
                   Text(
                     widget.store.events.isEmpty ? '記録がありません' : '該当する記録がありません',
                     style: Theme.of(context).textTheme.titleMedium,
+                    textAlign: TextAlign.center,
                   ),
                 ],
+                ),
               ),
             ),
           for (final event in events)
@@ -172,16 +156,19 @@ class _EventListScreenState extends State<EventListScreen> {
                   ? StairColors.live
                   : StairColors.online,
               padding: EdgeInsets.zero,
-              child: InkWell(
-                onTap: () => Navigator.of(context).push<void>(
-                  MaterialPageRoute(
+              child: CupertinoButton(
+                padding: EdgeInsets.zero,
+                onPressed: () => Navigator.of(context).push<void>(
+                  CupertinoPageRoute(
                     builder: (_) => EventDetailScreen(
                       store: widget.store,
                       eventId: event.id,
                     ),
                   ),
                 ),
-                child: Padding(
+                child: DefaultTextStyle(
+                  style: Theme.of(context).textTheme.bodyLarge!,
+                  child: Padding(
                   padding: const EdgeInsets.all(18),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -189,13 +176,13 @@ class _EventListScreenState extends State<EventListScreen> {
                       StairSectionTitle(
                         title: event.title,
                         icon: event.kind == EventKind.live
-                            ? Icons.groups_outlined
-                            : Icons.language,
+                            ? CupertinoIcons.person_2
+                            : CupertinoIcons.globe,
                         accent: event.kind == EventKind.live
                             ? StairColors.live
                             : StairColors.online,
                         trailing: Icon(
-                          Icons.chevron_right,
+                          CupertinoIcons.chevron_right,
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                           size: 20,
                         ),
@@ -212,22 +199,20 @@ class _EventListScreenState extends State<EventListScreen> {
                         Text(formatLiveEventDate(event)),
                         if (event.venue.isNotEmpty) Text(event.venue),
                       ] else ...[
-                        if (event.submissionEnd != null)
-                          Text('投稿締切 ${formatEventDate(event.submissionEnd)}'),
-                        if (event.votingEnd != null)
-                          Text('投票締切 ${formatEventDate(event.votingEnd)}'),
-                        if (event.submissionEnd == null &&
-                            event.votingEnd == null)
+                        if (event.effectiveRounds.isEmpty)
                           const Text('スケジュール未設定'),
+                        for (final round in event.effectiveRounds) ...[
+                          if (round.name.isNotEmpty) Text(round.name),
+                          if (round.submissionEnd != null)
+                            Text('投稿締切 ${formatEventDate(round.submissionEnd)}'),
+                          if (round.votingEnd != null)
+                            Text('投票締切 ${formatEventDate(round.votingEnd)}'),
+                        ],
                       ],
-                      if (event.resultText.isNotEmpty ||
-                          event.placement != null) ...[
+                      if (event.hasRecordedResult) ...[
                         const SizedBox(height: 12),
                         Text(
-                          [
-                            if (event.placement != null) '${event.placement}位',
-                            if (event.resultText.isNotEmpty) event.resultText,
-                          ].join(' · '),
+                          tournamentResultSummary(event),
                           style: TextStyle(
                             color: StairColors.result,
                             fontWeight: FontWeight.w600,
@@ -236,6 +221,7 @@ class _EventListScreenState extends State<EventListScreen> {
                       ],
                     ],
                   ),
+                ),
                 ),
               ),
             ),
@@ -263,17 +249,18 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   bool _deleting = false;
 
   Future<void> _delete() async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showCupertinoDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => StairCupertinoAlertDialog(
         title: const Text('この記録を削除しますか？'),
         content: const Text('参加記録は削除されます。ひもづいている思考メモは独立したメモとして残ります。'),
         actions: [
-          TextButton(
+          StairCupertinoDialogAction(
             onPressed: () => Navigator.pop(context, false),
             child: const Text('キャンセル'),
           ),
-          TextButton(
+          StairCupertinoDialogAction(
+            isDestructiveAction: true,
             onPressed: () => Navigator.pop(context, true),
             child: const Text('削除する'),
           ),
@@ -287,9 +274,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       if (mounted) Navigator.of(context).pop();
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('削除できませんでした。もう一度お試しください。')),
-        );
+        showStairMessage(context, '削除できませんでした。もう一度お試しください。', error: true);
       }
     } finally {
       if (mounted) setState(() => _deleting = false);
@@ -332,7 +317,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                 onPressed: _deleting
                     ? null
                     : () => Navigator.of(context).push<void>(
-                        MaterialPageRoute(
+                        CupertinoPageRoute(
                           builder: (context) => EventEditor(
                             store: widget.store,
                             event: event,
@@ -340,7 +325,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                           ),
                         ),
                       ),
-                icon: const Icon(Icons.edit_outlined),
+                icon: const Icon(CupertinoIcons.pencil),
               ),
           ],
         ),
@@ -352,8 +337,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   StairSection(
                     title: event.title,
                     icon: event.kind == EventKind.live
-                        ? Icons.groups_outlined
-                        : Icons.language,
+                        ? CupertinoIcons.person_2
+                        : CupertinoIcons.globe,
                     accent: event.kind == EventKind.live
                         ? StairColors.live
                         : StairColors.online,
@@ -374,7 +359,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   if (event.kind == EventKind.live)
                     StairSection(
                       title: '会場・日時',
-                      icon: Icons.place_outlined,
+                      icon: CupertinoIcons.placemark,
                       accent: StairColors.venue,
                       child: Column(
                         children: [
@@ -395,50 +380,68 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   else
                     StairSection(
                       title: 'サイト・スケジュール',
-                      icon: Icons.language,
+                      icon: CupertinoIcons.globe,
                       accent: StairColors.online,
                       child: Column(
                         children: [
                           _line('サイトURL', event.siteUrl),
                           const Divider(height: 1),
-                          _line('投稿開始', formatEventDate(event.submissionStart)),
-                          const Divider(height: 1),
-                          _line('投稿締切', formatEventDate(event.submissionEnd)),
-                          const Divider(height: 1),
-                          _line('投票開始', formatEventDate(event.votingStart)),
-                          const Divider(height: 1),
-                          _line('投票締切', formatEventDate(event.votingEnd)),
+                          for (final round in event.effectiveRounds) ...[
+                            _line('段階', round.name),
+                            const Divider(height: 1),
+                            _line('投稿開始', formatEventDate(round.submissionStart)),
+                            const Divider(height: 1),
+                            _line('投稿締切', formatEventDate(round.submissionEnd)),
+                            const Divider(height: 1),
+                            _line('投票開始', formatEventDate(round.votingStart)),
+                            const Divider(height: 1),
+                            _line('投票締切', formatEventDate(round.votingEnd)),
+                            const Divider(height: 1),
+                          ],
                         ],
                       ),
                     ),
                   if (event.meetingType == MeetingType.tournament)
                     StairSection(
                       title: '大会の結果',
-                      icon: Icons.emoji_events_outlined,
+                      icon: CupertinoIcons.rosette,
                       accent: StairColors.result,
                       child: Column(
                         children: [
-                          _line('結果', event.resultText),
-                          const Divider(height: 1),
-                          _line(
-                            '順位',
-                            event.placement == null
-                                ? ''
-                                : '${event.placement}位',
-                          ),
+                          _line('最終結果', tournamentResultSummary(event)),
+                          if (event.tournamentResult case final result?) ...[
+                            const Divider(height: 1),
+                            _line('対戦形式', tournamentFormatLabel(result.format)),
+                            if (result.teamName.isNotEmpty) ...[
+                              const Divider(height: 1),
+                              _line('チーム名', result.teamName),
+                            ],
+                            if (result.members.isNotEmpty) ...[
+                              const Divider(height: 1),
+                              _line('メンバー', result.members.join('、'), multiline: true),
+                            ],
+                            for (final stage in result.stages) ...[
+                              const Divider(height: 1),
+                              _line(stage.name, resultStageSummary(stage), multiline: true),
+                            ],
+                            if (result.memo.isNotEmpty) ...[
+                              const Divider(height: 1),
+                              _line('結果メモ', result.memo, multiline: true),
+                            ],
+                          ],
                         ],
                       ),
                     ),
                   StairSection(
                     title: '振り返り',
-                    icon: Icons.notes_outlined,
+                    icon: CupertinoIcons.text_alignleft,
                     accent: StairColors.memo,
                     child: _line('メモ', event.memo, multiline: true),
                   ),
                   const SizedBox(height: 16),
                   OutlinedButton.icon(
                     onPressed: _deleting ? null : _delete,
-                    icon: const Icon(Icons.delete_outline),
+                    icon: const Icon(CupertinoIcons.trash),
                     label: Text(_deleting ? '削除中…' : 'この記録を削除'),
                   ),
                 ],

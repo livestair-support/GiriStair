@@ -1,5 +1,4 @@
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 /// SF covers Latin characters; CJK glyphs need an explicit Japanese font.
@@ -25,7 +24,7 @@ abstract final class StairTypography {
     TargetPlatform? platform,
     bool display = false,
   }) {
-    final target = platform ?? defaultTargetPlatform;
+    final target = platform ?? TargetPlatform.iOS;
     return original.copyWith(
       fontFamily: display || (original.fontSize ?? 0) >= 20
           ? displayFamily(target)

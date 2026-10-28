@@ -126,4 +126,41 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('typed final result and team stages remain visible in detail', (tester) async {
+    final store = GiriStore(storage: MemoryGiriStorage());
+    await store.load();
+    await store.saveEvent(tournament('チーム大会', EventKind.online).copyWith(
+      rounds: [
+        EventRound(id: 'q', name: '予選1回戦', submissionEnd: DateTime(2026, 10, 30)),
+        EventRound(id: 'f', name: '決勝', votingEnd: DateTime(2026, 11, 15)),
+      ],
+      tournamentResult: TournamentResult(
+        format: TournamentFormat.team,
+        outcome: TournamentOutcome.champion,
+        teamName: 'チーム星',
+        members: ['A', 'B', 'C'],
+        stages: [
+          const ResultStage(id: 'q', name: '予選', outcome: TournamentOutcome.advanced, placement: 2),
+          const ResultStage(id: 'r', name: '敗者復活', outcome: TournamentOutcome.advanced, memo: '同点決選'),
+          const ResultStage(id: 'f', name: '決勝', outcome: TournamentOutcome.champion),
+        ],
+      ),
+    ));
+    await showResults(tester, store);
+    await choose(tester, 'results-result-filter', '結果あり');
+    expect(find.text('チーム大会'), findsOneWidget);
+    expect(find.text('チーム戦 · チーム星'), findsOneWidget);
+    expect(find.text('優勝'), findsOneWidget);
+    await tester.tap(find.text('チーム大会'));
+    await tester.pumpAndSettle();
+    expect(find.text('参加記録'), findsOneWidget);
+    expect(find.text('予選1回戦'), findsOneWidget);
+    expect(find.text('チーム星'), findsOneWidget);
+    expect(find.text('A、B、C'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('敗者復活'), 400);
+    expect(find.text('通過 · 同点決選'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
 }

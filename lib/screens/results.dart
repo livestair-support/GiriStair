@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../analytics.dart';
+import '../tournament_presentation.dart';
 import '../ui/stair_theme.dart';
 import '../ui/stair_controls.dart';
-import 'event_editor.dart';
 import 'event_list.dart';
+import 'event_editor.dart';
 
 enum _ResultFilter { all, recorded, unrecorded }
 
@@ -23,15 +25,10 @@ class _ResultsScreenState extends State<ResultsScreen> {
   EventKind? _kind;
   _ResultFilter _filter = _ResultFilter.all;
 
-  bool _hasResult(GiriEvent event) =>
-      event.resultText.trim().isNotEmpty || event.placement != null;
+  bool _hasResult(GiriEvent event) => event.hasRecordedResult;
 
   DateTime _eventDate(GiriEvent event) =>
-      event.startsAt ??
-      (event.kind == EventKind.live ? event.eventDate : null) ??
-      event.votingEnd ??
-      event.submissionEnd ??
-      event.createdAt;
+      GiriAnalytics.dateOf(event) ?? event.createdAt;
 
   Widget _count(String label, int value) => Expanded(
     child: Column(
@@ -48,7 +45,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
   Widget build(BuildContext context) => Scaffold(
     appBar: const StairPageHeader(
       title: '戦績',
-      icon: Icons.emoji_events_outlined,
+      icon: CupertinoIcons.rosette,
       accent: StairColors.result,
     ),
     body: ListenableBuilder(
@@ -115,7 +112,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
             const SizedBox(height: 18),
             StairSectionTitle(
               title: '大会の記録',
-              icon: Icons.emoji_events_outlined,
+              icon: CupertinoIcons.rosette,
               accent: StairColors.result,
               trailing: Text(
                 '${events.length}件',
@@ -127,10 +124,12 @@ class _ResultsScreenState extends State<ResultsScreen> {
               StairCard(
                 accent: StairColors.result,
                 padding: const EdgeInsets.all(24),
-                child: Column(
-                  children: [
+                child: SizedBox(
+                  width: double.infinity,
+                  child: Column(
+                    children: [
                     const StairIconBadge(
-                      icon: Icons.emoji_events_outlined,
+                      icon: CupertinoIcons.rosette,
                       accent: StairColors.result,
                       size: 38,
                     ),
@@ -141,21 +140,25 @@ class _ResultsScreenState extends State<ResultsScreen> {
                       textAlign: TextAlign.center,
                     ),
                   ],
+                  ),
                 ),
               ),
             for (final event in events)
               StairCard(
                 accent: StairColors.result,
                 padding: EdgeInsets.zero,
-                child: InkWell(
-                  onTap: () => Navigator.of(context).push<void>(
-                    MaterialPageRoute(
+                child: CupertinoButton(
+                  padding: EdgeInsets.zero,
+                  onPressed: () => Navigator.of(context).push<void>(
+                    CupertinoPageRoute(
                       builder: (_) => EventDetailScreen(
                         store: widget.store,
                         eventId: event.id,
                       ),
                     ),
                   ),
+                  child: DefaultTextStyle(
+                  style: Theme.of(context).textTheme.bodyLarge!,
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
@@ -165,8 +168,8 @@ class _ResultsScreenState extends State<ResultsScreen> {
                           children: [
                             StairIconBadge(
                               icon: event.kind == EventKind.live
-                                  ? Icons.groups_outlined
-                                  : Icons.language,
+                                  ? CupertinoIcons.person_2
+                                  : CupertinoIcons.globe,
                               accent: event.kind == EventKind.live
                                   ? StairColors.live
                                   : StairColors.online,
@@ -199,24 +202,38 @@ class _ResultsScreenState extends State<ResultsScreen> {
                           event.kind == EventKind.live
                               ? formatLiveEventDate(event)
                               : formatEventDate(
-                                  event.startsAt ??
-                                      event.votingEnd ??
-                                      event.submissionEnd,
+                                  GiriAnalytics.dateOf(event),
                                 ),
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
+                        if (event.tournamentResult case final result?) ...[
+                          if (result.format != TournamentFormat.individual ||
+                              result.teamName.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              [
+                                tournamentFormatLabel(result.format),
+                                if (result.teamName.isNotEmpty) result.teamName,
+                              ].join(' · '),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                          if (result.stages.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              '${result.stages.last.name} · '
+                              '${resultStageSummary(result.stages.last)}',
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ],
+                        ],
                         const Divider(height: 24),
                         Row(
                           children: [
                             Expanded(
                               child: Text(
                                 _hasResult(event)
-                                    ? [
-                                        if (event.placement != null)
-                                          '${event.placement}位',
-                                        if (event.resultText.trim().isNotEmpty)
-                                          event.resultText,
-                                      ].join(' · ')
+                                    ? tournamentResultSummary(event)
                                     : '結果を入力する',
                                 style: TextStyle(
                                   color: _hasResult(event)
@@ -228,7 +245,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                             ),
                             const SizedBox(width: 8),
                             Icon(
-                              Icons.chevron_right,
+                              CupertinoIcons.chevron_right,
                               color: Theme.of(
                                 context,
                               ).colorScheme.onSurfaceVariant,
@@ -238,6 +255,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                         ),
                       ],
                     ),
+                  ),
                   ),
                 ),
               ),

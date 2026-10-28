@@ -1,0 +1,226 @@
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+
+import '../models.dart';
+import '../tournament_presentation.dart';
+import '../ui/stair_controls.dart';
+import '../ui/stair_theme.dart';
+import 'stage_name_row.dart';
+
+class TournamentResultEditor extends StatelessWidget {
+  const TournamentResultEditor({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    required this.newId,
+    required this.placement,
+    required this.memo,
+    this.enabled = true,
+  });
+
+  final TournamentResult value;
+  final ValueChanged<TournamentResult> onChanged;
+  final String Function() newId;
+  final TextEditingController placement;
+  final TextEditingController memo;
+  final bool enabled;
+
+  void _stage(int index, ResultStage stage) {
+    final stages = List<ResultStage>.of(value.stages);
+    stages[index] = stage;
+    onChanged(value.copyWith(stages: stages));
+  }
+
+  Widget _field({
+    required String hint,
+    required Key key,
+    String? initialValue,
+    TextEditingController? controller,
+    ValueChanged<String>? onChanged,
+    bool number = false,
+    int maxLines = 1,
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    child: TextFormField(
+      key: key,
+      initialValue: controller == null ? initialValue : null,
+      controller: controller,
+      enabled: enabled,
+      onChanged: onChanged,
+      maxLines: maxLines,
+      keyboardType: number ? TextInputType.number : null,
+      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w500),
+      decoration: InputDecoration(
+        hintText: hint,
+        suffixText: number ? '位' : null,
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(vertical: 13),
+      ),
+      validator: number
+          ? (text) {
+              if (text == null || text.trim().isEmpty) return null;
+              final rank = int.tryParse(text.trim());
+              return rank == null || rank < 1 ? '1以上の整数を入力してください' : null;
+            }
+          : null,
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      StairFormSection(
+        title: '大会の結果',
+        icon: CupertinoIcons.rosette,
+        accent: StairColors.result,
+        children: [
+          StairMenuRow<TournamentFormat>(
+            key: const ValueKey('event-tournament-format'),
+            label: '参加形式',
+            accent: StairColors.result,
+            value: value.format,
+            items: {
+              for (final format in TournamentFormat.values)
+                format: tournamentFormatLabel(format),
+            },
+            onChanged: enabled
+                ? (format) => onChanged(value.copyWith(format: format))
+                : null,
+          ),
+          if (value.format != TournamentFormat.individual) ...[
+            _field(
+              key: const ValueKey('event-team-name'),
+              hint: value.format == TournamentFormat.pair ? 'タッグ名' : 'チーム名',
+              initialValue: value.teamName,
+              onChanged: (name) => onChanged(value.copyWith(teamName: name)),
+            ),
+            _field(
+              key: const ValueKey('event-team-members'),
+              hint: 'メンバー（1行に1人）',
+              initialValue: value.members.join('\n'),
+              maxLines: 4,
+              onChanged: (text) => onChanged(value.copyWith(
+                members: text.split(RegExp(r'[\n、,]'))
+                    .map((name) => name.trim())
+                    .where((name) => name.isNotEmpty)
+                    .toList(),
+              )),
+            ),
+          ],
+          StairMenuRow<TournamentOutcome>(
+            key: const ValueKey('event-final-outcome'),
+            label: '最終結果',
+            accent: StairColors.result,
+            value: value.outcome,
+            items: {
+              for (final outcome in TournamentOutcome.values)
+                outcome: tournamentOutcomeLabel(outcome),
+            },
+            onChanged: enabled
+                ? (outcome) {
+                    if (outcome == TournamentOutcome.champion) {
+                      placement.text = '1';
+                    } else if (outcome == TournamentOutcome.runnerUp) {
+                      placement.text = '2';
+                    } else if (outcome != TournamentOutcome.placed) {
+                      placement.clear();
+                    }
+                    onChanged(value.copyWith(outcome: outcome));
+                  }
+                : null,
+          ),
+          if (value.outcome == TournamentOutcome.placed ||
+              (value.outcome == TournamentOutcome.unrecorded && placement.text.isNotEmpty))
+            _field(
+              key: const ValueKey('event-placement'),
+              hint: '最終順位（任意）',
+              controller: placement,
+              number: true,
+            ),
+          _field(
+            key: const ValueKey('event-result'),
+            hint: '結果メモ',
+            controller: memo,
+            maxLines: 4,
+          ),
+        ],
+      ),
+      for (var index = 0; index < value.stages.length; index++)
+        StairFormSection(
+          key: ValueKey('event-result-stage-${value.stages[index].id}'),
+          title: value.stages[index].name,
+          icon: CupertinoIcons.list_number,
+          accent: StairColors.result,
+          trailing: CupertinoButton(
+            key: ValueKey('event-result-stage-remove-${value.stages[index].id}'),
+            minimumSize: const Size(32, 32),
+            padding: EdgeInsets.zero,
+            onPressed: enabled
+                ? () => onChanged(value.copyWith(
+                      stages: List.of(value.stages)..removeAt(index),
+                    ))
+                : null,
+            child: const Icon(CupertinoIcons.minus_circle, size: 20),
+          ),
+          children: [
+            StageNameRow(
+              label: '段階',
+              accent: StairColors.result,
+              value: value.stages[index].name,
+              onChanged: enabled
+                  ? (name) => _stage(index, value.stages[index].copyWith(name: name))
+                  : null,
+            ),
+            StairMenuRow<TournamentOutcome>(
+              key: ValueKey('event-stage-outcome-${value.stages[index].id}'),
+              label: '結果',
+              accent: StairColors.result,
+              value: value.stages[index].outcome,
+              items: {
+                for (final outcome in TournamentOutcome.values)
+                  outcome: tournamentOutcomeLabel(outcome),
+              },
+              onChanged: enabled
+                  ? (outcome) => _stage(index, value.stages[index].copyWith(outcome: outcome))
+                  : null,
+            ),
+            _field(
+              key: ValueKey('event-stage-placement-${value.stages[index].id}'),
+              hint: 'この段階の順位（任意）',
+              initialValue: value.stages[index].placement?.toString() ?? '',
+              number: true,
+              onChanged: (text) => _stage(index, value.stages[index].copyWith(
+                placement: int.tryParse(text.trim()),
+              )),
+            ),
+            _field(
+              key: ValueKey('event-stage-memo-${value.stages[index].id}'),
+              hint: '対戦・得点・回答など',
+              initialValue: value.stages[index].memo,
+              maxLines: 4,
+              onChanged: (memo) => _stage(index, value.stages[index].copyWith(memo: memo)),
+            ),
+          ],
+        ),
+      CupertinoButton(
+        key: const ValueKey('event-result-stage-add'),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        onPressed: enabled
+            ? () => onChanged(value.copyWith(stages: [
+                  ...value.stages,
+                  ResultStage(id: newId(), name: '予選${value.stages.length + 1}回戦'),
+                ]))
+            : null,
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(CupertinoIcons.plus_circle, size: 22),
+            SizedBox(width: 8),
+            Text('段階ごとの結果を追加'),
+          ],
+        ),
+      ),
+    ],
+  );
+}

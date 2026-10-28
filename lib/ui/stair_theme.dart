@@ -1,10 +1,10 @@
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'stair_typography.dart';
 export 'stair_typography.dart';
+export 'stair_feedback.dart';
 
 /// Shared visual language, taken from LiveStair's default/system theme.
 abstract final class StairColors {
@@ -31,8 +31,8 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
       : const Color(0xFF8E8E93);
   // Use the same system typefaces as SwiftUI on iPhone. Android keeps its
   // platform font rather than downloading or bundling a different typeface.
-  final font = StairTypography.bodyFamily(defaultTargetPlatform);
-  final displayFont = StairTypography.displayFamily(defaultTargetPlatform);
+  final font = StairTypography.bodyFamily(TargetPlatform.iOS);
+  final displayFont = StairTypography.displayFamily(TargetPlatform.iOS);
   final scheme =
       ColorScheme.fromSeed(
         seedColor: StairColors.action,
@@ -51,12 +51,13 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
       );
   final base = ThemeData(
     useMaterial3: true,
+    platform: TargetPlatform.iOS,
     brightness: brightness,
     colorScheme: scheme,
     scaffoldBackgroundColor: background,
     visualDensity: VisualDensity.standard,
     fontFamily: font,
-    fontFamilyFallback: StairTypography.fallback(defaultTargetPlatform),
+    fontFamilyFallback: StairTypography.fallback(TargetPlatform.iOS),
     cupertinoOverrideTheme: CupertinoThemeData(
       brightness: brightness,
       primaryColor: StairColors.action,
@@ -93,13 +94,13 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
         bodyLarge: base.textTheme.bodyLarge?.copyWith(
           fontSize: 17,
           height: 1.25,
-          fontWeight: FontWeight.w400,
+          fontWeight: FontWeight.w500,
           letterSpacing: 0,
         ),
         bodyMedium: base.textTheme.bodyMedium?.copyWith(
           fontSize: 17,
           height: 1.25,
-          fontWeight: FontWeight.w400,
+          fontWeight: FontWeight.w500,
           letterSpacing: 0,
         ),
         bodySmall: base.textTheme.bodySmall?.copyWith(
@@ -114,10 +115,11 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        centerTitle: false,
+        centerTitle: true,
+        toolbarHeight: 44,
         titleTextStyle: TextStyle(
           color: text,
-          fontSize: 18,
+          fontSize: 17,
           fontWeight: FontWeight.w600,
         ),
       ),
@@ -146,7 +148,7 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
         hintStyle: TextStyle(
           color: secondaryText.withValues(alpha: 0.55),
           fontSize: 17,
-          fontWeight: FontWeight.w400,
+          fontWeight: FontWeight.w500,
         ),
         errorMaxLines: 3,
       ),
@@ -202,7 +204,7 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
         titleTextStyle: TextStyle(
           color: text,
           fontSize: 17,
-          fontWeight: FontWeight.w400,
+          fontWeight: FontWeight.w500,
         ),
         subtitleTextStyle: TextStyle(
           color: secondaryText,
@@ -216,8 +218,10 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
         shape: const StadiumBorder(),
         elevation: 2,
       ),
-      snackBarTheme: const SnackBarThemeData(
-        behavior: SnackBarBehavior.floating,
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: StairColors.action,
+        selectionColor: StairColors.action.withValues(alpha: 0.22),
+        selectionHandleColor: StairColors.action,
       ),
     ),
   );
@@ -424,12 +428,14 @@ class StairFormSection extends StatelessWidget {
     required this.icon,
     required this.accent,
     required this.children,
+    this.trailing,
   });
 
   final String title;
   final IconData icon;
   final Color accent;
   final List<Widget> children;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) => StairCard(
@@ -440,7 +446,9 @@ class StairFormSection extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: StairSectionTitle(title: title, icon: icon, accent: accent),
+          child: StairSectionTitle(
+            title: title, icon: icon, accent: accent, trailing: trailing,
+          ),
         ),
         for (final child in children) ...[
           Divider(
@@ -591,7 +599,7 @@ class StairSaveButton extends StatelessWidget {
         ? const SizedBox(
             width: 18,
             height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
+            child: CupertinoActivityIndicator(radius: 9),
           )
         : Text(
             label,

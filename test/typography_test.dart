@@ -81,6 +81,19 @@ void main() {
       expectJapaneseText(tester, find.text('会の種類'));
       expectJapaneseText(tester, find.text('会・大会名 *'));
       expectJapaneseInput(tester, find.byKey(const ValueKey('event-title')));
+      // Family aliases alone did not change the thin body weight on-device.
+      // Inspect rendered controls, including inherited TextFormField styles.
+      expect(paragraph(tester, find.text('会の種類')).text.style!.fontWeight,
+          FontWeight.w500);
+      expect(paragraph(tester, find.text('通常会')).text.style!.fontWeight,
+          FontWeight.w500);
+      final editable = tester.state<EditableTextState>(find.descendant(
+        of: find.byKey(const ValueKey('event-title')),
+        matching: find.byType(EditableText),
+      ));
+      expect(editable.renderEditable.text!.style!.fontWeight, FontWeight.w500);
+      expect(paragraph(tester, find.text('会・大会名 *')).text.style!.fontWeight,
+          FontWeight.w500);
 
       await tester.tap(find.byType(StairMenuRow<MeetingType>));
       await tester.pumpAndSettle();

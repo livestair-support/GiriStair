@@ -10,6 +10,7 @@ GiriEvent meeting(
   DateTime? start,
   DateTime? submission,
   DateTime? voting,
+  List<EventRound> rounds = const [],
 }) => GiriEvent(
   id: id,
   title: '会$id',
@@ -21,6 +22,7 @@ GiriEvent meeting(
   startsAt: start,
   submissionEnd: submission,
   votingEnd: voting,
+  rounds: rounds,
 );
 
 void main() {
@@ -149,5 +151,116 @@ void main() {
     );
     expect(plan.single.when, start);
     expect(plan.single.body, '開始時刻です');
+  });
+
+  test('each round has distinct submission and voting reminders', () {
+    final deadline = DateTime(2026, 10, 29, 23);
+    final event = meeting(
+      'online',
+      kind: EventKind.online,
+      // Explicit rounds replace the old single-period fields.
+      submission: DateTime(2026, 10, 30, 23),
+      voting: DateTime(2026, 11, 1, 23),
+      rounds: [
+        EventRound(
+          id: 'qualifier-1',
+          name: '予選1回戦',
+          submissionEnd: deadline,
+          votingEnd: deadline,
+        ),
+        EventRound(
+          id: 'final',
+          name: '決勝',
+          submissionEnd: deadline.add(const Duration(days: 14)),
+        ),
+      ],
+    );
+    final plan = planGiriReminders(
+      events: [event],
+      preferences: enabled.copyWith(reminderMinutes: 30),
+      now: now,
+    );
+    expect(plan.map((item) => item.key).toSet(), {
+      'online:round:qualifier-1:submission',
+      'online:round:qualifier-1:voting',
+      'online:round:final:submission',
+    });
+    expect(plan.first.when, DateTime(2026, 10, 29, 22, 30));
+    expect(plan.first.body, '予選1回戦・投稿締切の30分前です');
+    expect(plan.last.body, '決勝・投稿締切の30分前です');
+
+    final renamed = event.copyWith(
+      rounds: [
+        event.rounds.last.copyWith(name: '決勝戦'),
+        event.rounds.first.copyWith(name: '予選'),
+      ],
+    );
+    final renamedPlan = planGiriReminders(
+      events: [renamed],
+      preferences: enabled.copyWith(reminderMinutes: 30),
+      now: now,
+    );
+    expect(
+      renamedPlan.map((item) => item.key),
+      plan.map((item) => item.key),
+    );
+    expect(renamedPlan.last.body, '決勝戦・投稿締切の30分前です');
+  });
+
+  test('elapsed rounds and non-planned events do not produce reminders', () {
+    final event = meeting(
+      'online',
+      kind: EventKind.online,
+      rounds: [
+        EventRound(
+          id: 'past',
+          name: '予選',
+          submissionEnd: now.subtract(const Duration(days: 1)),
+        ),
+        EventRound(
+          id: 'future',
+          name: '本戦',
+          votingEnd: now.add(const Duration(days: 7)),
+        ),
+        const EventRound(id: 'unknown', name: '決勝'),
+      ],
+    );
+    final plan = planGiriReminders(
+      events: [
+        event,
+        event.copyWith(id: 'canceled', status: EventStatus.canceled),
+        event.copyWith(id: 'attended', status: EventStatus.attended),
+      ],
+      preferences: enabled.copyWith(reminderMinutes: 0),
+      now: now,
+    );
+    expect(plan.single.key, 'online:round:future:voting');
+    expect(plan.single.body, '本戦・投票の締切です');
+    expect(plan.single.when, now.add(const Duration(days: 7)));
+  });
+
+  test('one long tournament still keeps only the nearest 64 deadlines', () {
+    final event = meeting(
+      'long',
+      kind: EventKind.online,
+      rounds: List.generate(
+        40,
+        (index) => EventRound(
+          id: 'round$index',
+          name: '${index + 1}回戦',
+          submissionEnd: now.add(Duration(days: index * 2 + 1)),
+          votingEnd: now.add(Duration(days: index * 2 + 2)),
+        ),
+      ).reversed.toList(),
+    );
+    final plan = planGiriReminders(
+      events: [event],
+      preferences: enabled,
+      now: now,
+    );
+    expect(plan.length, 64);
+    expect(plan.first.key, 'long:round:round0:submission');
+    expect(plan.last.key, 'long:round:round31:voting');
+    expect(plan.map((item) => item.key).toSet().length, 64);
   });
 }

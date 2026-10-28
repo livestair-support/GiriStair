@@ -8,12 +8,12 @@ import 'package:giristair/store.dart';
 import 'package:giristair/ui/stair_controls.dart';
 import 'package:giristair/ui/stair_theme.dart';
 
-Widget editor(GiriStore store, {GiriEvent? event}) => MaterialApp(
+Widget editor(GiriStore store, {GiriEvent? event, Future<String?> Function()? readImages}) => MaterialApp(
   locale: const Locale('ja'),
   supportedLocales: const [Locale('ja')],
   localizationsDelegates: GlobalMaterialLocalizations.delegates,
   theme: stairTheme(Brightness.light),
-  home: EventEditor(store: store, event: event),
+  home: EventEditor(store: store, event: event, readImages: readImages ?? () async => null),
 );
 
 Finder participant(int index) =>
@@ -323,4 +323,99 @@ void main() {
       store.dispose();
     },
   );
+  testWidgets('participant count is in header and OCR starts with one tap', (tester) async {
+    final store = GiriStore(storage: MemoryGiriStorage());
+    await store.load();
+    var reads = 0;
+    await tester.pumpWidget(editor(store, readImages: () async {
+      reads++;
+      return '一人目\n二人目';
+    }));
+    final count = find.byKey(const ValueKey('event-participant-count'));
+    expect(find.ancestor(of: count, matching: find.byType(StairSectionTitle)), findsOneWidget);
+    final ocr = find.byKey(const ValueKey('event-import-participant-images'));
+    await tester.ensureVisible(ocr);
+    await tester.tap(ocr);
+    await tester.pumpAndSettle();
+    expect(reads, 1);
+    expect(find.text('OCRで一括追加'), findsOneWidget);
+    expect(find.text('2人を追加'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('participant-import-apply')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(count).data, '2人');
+    expect(tester.widget<TextFormField>(participant(1)).controller!.text, '二人目');
+    await tester.pumpWidget(const SizedBox());
+    store.dispose();
+  });
+
+  testWidgets('online schedule appends and reorders named rounds without losing dates', (tester) async {
+    final store = GiriStore(storage: MemoryGiriStorage());
+    await store.load();
+    final original = GiriEvent(
+      id: 'rounds', title: '繰り返す大会', kind: EventKind.online,
+      meetingType: MeetingType.tournament, createdAt: DateTime(2026),
+      rounds: [EventRound(id: 'first', name: '予選1回戦',
+        submissionStart: DateTime(2026, 10, 1), submissionEnd: DateTime(2026, 10, 8),
+        votingStart: DateTime(2026, 10, 8), votingEnd: DateTime(2026, 10, 15))],
+    );
+    await tester.pumpWidget(editor(store, event: original));
+    final add = find.byKey(const ValueKey('event-round-add'));
+    await tester.ensureVisible(add);
+    await tester.tap(add);
+    await tester.pumpAndSettle();
+    expect(find.text('予選2回戦'), findsWidgets);
+    expect(find.textContaining('思考に表示'), findsNothing);
+    await save(tester);
+    final updated = store.events.single;
+    expect(updated.rounds, hasLength(2));
+    expect(updated.rounds.first.id, 'first');
+    expect(updated.rounds.first.votingEnd, original.rounds.first.votingEnd);
+    expect(updated.rounds.last.name, '予選2回戦');
+    expect(updated.rounds.last.id, isNot('first'));
+    await tester.pumpWidget(const SizedBox());
+    store.dispose();
+  });
+
+  testWidgets('team tournament saves stages separately from final outcome', (tester) async {
+    final store = GiriStore(storage: MemoryGiriStorage());
+    await store.load();
+    final original = GiriEvent(
+      id: 'team', title: 'チーム大会', kind: EventKind.live,
+      meetingType: MeetingType.tournament, createdAt: DateTime(2026),
+      placement: 3,
+      tournamentResult: TournamentResult(format: TournamentFormat.team,
+        outcome: TournamentOutcome.placed, teamName: '元チーム', members: ['本人', '先輩']),
+    );
+    await tester.pumpWidget(editor(store, event: original));
+    await enter(tester, find.byKey(const ValueKey('event-team-name')), 'スリザリン');
+    await enter(tester, find.byKey(const ValueKey('event-team-members')), '本人\n先輩\n後輩');
+    final add = find.byKey(const ValueKey('event-result-stage-add'));
+    await tester.ensureVisible(add);
+    await tester.tap(add);
+    await tester.pumpAndSettle();
+    final stageMenu = find.byWidgetPredicate((widget) =>
+      widget is StairMenuRow<TournamentOutcome> && widget.label == '結果');
+    await tester.ensureVisible(stageMenu);
+    await tester.tap(stageMenu);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('通過'));
+    await tester.pumpAndSettle();
+    final finalMenu = find.byKey(const ValueKey('event-final-outcome'));
+    await tester.ensureVisible(finalMenu);
+    await tester.tap(finalMenu);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('敗退'));
+    await tester.pumpAndSettle();
+    await save(tester);
+    final updated = store.events.single;
+    expect(updated.tournamentResult!.format, TournamentFormat.team);
+    expect(updated.tournamentResult!.teamName, 'スリザリン');
+    expect(updated.tournamentResult!.members, ['本人', '先輩', '後輩']);
+    expect(updated.tournamentResult!.outcome, TournamentOutcome.eliminated);
+    expect(updated.tournamentResult!.stages.single.outcome, TournamentOutcome.advanced);
+    expect(updated.placement, isNull);
+    await tester.pumpWidget(const SizedBox());
+    store.dispose();
+  });
+
 }

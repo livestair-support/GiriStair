@@ -85,20 +85,31 @@ List<GiriReminder> planGiriReminders({
         }
       }
     } else {
-      for (final entry in [
-        ('submission', '投稿', event.submissionEnd),
-        ('voting', '投票', event.votingEnd),
-      ]) {
-        final deadline = entry.$3;
-        if (deadline == null) continue;
-        add(
-          event,
-          entry.$1,
-          preferences.reminderMinutes == 0
-              ? '${entry.$2}の締切です'
-              : '${entry.$2}締切の${preferences.reminderMinutes}分前です',
-          deadline.subtract(lead),
-        );
+      for (final round in event.effectiveRounds) {
+        // Old one-period records retain their reminder keys. Explicit rounds
+        // use their immutable ID so renaming or reordering a round never
+        // changes its identity, and equal deadlines remain separate reminders.
+        final prefix = event.rounds.isEmpty
+            ? ''
+            : 'round:${Uri.encodeComponent(round.id)}:';
+        final roundLabel = event.rounds.isEmpty || round.name.trim().isEmpty
+            ? ''
+            : '${round.name.trim()}・';
+        for (final entry in [
+          ('submission', '投稿', round.submissionEnd),
+          ('voting', '投票', round.votingEnd),
+        ]) {
+          final deadline = entry.$3;
+          if (deadline == null) continue;
+          add(
+            event,
+            '$prefix${entry.$1}',
+            preferences.reminderMinutes == 0
+                ? '$roundLabel${entry.$2}の締切です'
+                : '$roundLabel${entry.$2}締切の${preferences.reminderMinutes}分前です',
+            deadline.subtract(lead),
+          );
+        }
       }
     }
   }

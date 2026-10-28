@@ -89,7 +89,7 @@ class GiriStore extends ChangeNotifier {
     document.events.removeWhere((event) => event.id == id);
     for (var i = 0; i < document.notes.length; i++) {
       if (document.notes[i].eventId == id) {
-        document.notes[i] = document.notes[i].copyWith(eventId: null);
+        document.notes[i] = document.notes[i].copyWith(eventId: null, roundId: null);
       }
     }
   });

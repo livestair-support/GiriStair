@@ -84,8 +84,8 @@ void main() {
       await choose(tester, 'list-status-filter', '参加予定');
       expect(find.text('参加済みの会'), findsNothing);
       expect(find.text('中止した会'), findsNothing);
-      await choose(tester, 'list-display-filter', '予定・締切');
-      expect(find.text('過去の予定'), findsNothing);
+      expect(find.byKey(const ValueKey('list-display-filter')), findsNothing);
+      expect(find.text('過去の予定'), findsOneWidget);
       expect(find.text('南の予定'), findsOneWidget);
 
       await tester.enterText(find.byKey(const ValueKey('list-search')), '北会場');
@@ -108,7 +108,6 @@ void main() {
       );
       expect(find.text('北の予定'), findsOneWidget);
 
-      await choose(tester, 'list-display-filter', 'すべての記録');
       await choose(tester, 'list-kind-filter', 'すべて');
       await choose(tester, 'list-status-filter', 'すべて');
       await tester.enterText(find.byKey(const ValueKey('list-search')), '');
@@ -128,6 +127,10 @@ void main() {
     await store.load();
     await showList(tester, store);
     expect(find.text('記録がありません'), findsOneWidget);
+    expect(find.byKey(const ValueKey('list-display-filter')), findsNothing);
+    final emptyText = tester.getRect(find.text('記録がありません'));
+    final screen = tester.getRect(find.byType(EventListScreen));
+    expect(emptyText.center.dx, closeTo(screen.center.dx, 1));
     expect(find.text('0件の予定と記録'), findsNothing);
     expect(find.text('最初の一席を残しましょう'), findsNothing);
     expect(find.text('「登録」タブから参加予定や過去の記録を追加できます。'), findsNothing);

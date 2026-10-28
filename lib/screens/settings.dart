@@ -747,9 +747,7 @@ class _SupportScreen extends StatelessWidget {
                 onPressed: () async {
                   await Clipboard.setData(const ClipboardData(text: _url));
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('問い合わせ先をコピーしました')),
-                    );
+                    showStairMessage(context, '問い合わせ先をコピーしました');
                   }
                 },
                 icon: const Icon(CupertinoIcons.doc_on_clipboard),
