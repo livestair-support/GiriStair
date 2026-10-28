@@ -1,10 +1,11 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import json
 import subprocess
 import unittest
 from unittest.mock import patch
 
-from parity_ios import choose_phone, run, start_phone
+from parity_ios import choose_phone, run, start_phone, verify_font_diagnostics
 
 
 class SimulatorSelectionTest(unittest.TestCase):
@@ -59,6 +60,32 @@ class SimulatorSelectionTest(unittest.TestCase):
                     run("xcrun", "simctl", "bootstatus", timeout=600)
         self.assertIn("Waiting for SpringBoard", output.getvalue())
         self.assertIn("Simulator diagnostic", output.getvalue())
+
+
+class FontDiagnosticsTest(unittest.TestCase):
+    def font_log(self, family="Hiragino Sans"):
+        fonts = {
+            role: {"japaneseFamilyName": family, "basePostscriptName": ".SFUI-Regular"}
+            for role in ("pageTitle", "sectionTitle", "formLabel", "input", "dateValue")
+        }
+        return "Runner (CoreText) GiriStairTypography " + json.dumps(fonts)
+
+    def test_accepts_actual_ui_families_and_retains_diagnostics(self):
+        fonts = verify_font_diagnostics(self.font_log())
+        self.assertEqual(fonts["input"]["japaneseFamilyName"], "Hiragino Sans")
+
+    def test_rejects_system_font_reconstruction_warning(self):
+        warning = 'CoreText note: Client requested name ".SFUI-Bold", it will get TimesNewRomanPSMT rather than the intended font.'
+        with self.assertRaisesRegex(RuntimeError, "Times New Roman"):
+            verify_font_diagnostics(warning + "\n" + self.font_log())
+
+    def test_rejects_mincho_fallback(self):
+        with self.assertRaisesRegex(RuntimeError, "Unexpected Japanese UI font"):
+            verify_font_diagnostics(self.font_log("Hiragino Mincho ProN"))
+
+    def test_missing_diagnostics_cannot_claim_font_verification(self):
+        with self.assertRaisesRegex(RuntimeError, "unverified"):
+            verify_font_diagnostics("Runner launched")
 
 
 if __name__ == "__main__":

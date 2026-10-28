@@ -104,6 +104,25 @@ def prepare_simulator(output: Path) -> None:
     print(f"Started {device['name']} ({runtime}); boot overlaps the app build.", flush=True)
 
 
+def verify_font_diagnostics(logs: str) -> dict:
+    if re.search(r"CoreText note:.*TimesNewRoman", logs):
+        raise RuntimeError("CoreText substituted Times New Roman for a system UI font.")
+    marker = "GiriStairTypography "
+    fonts = {}
+    for line in logs.splitlines():
+        if marker not in line:
+            continue
+        entry, _ = json.JSONDecoder().raw_decode(line.split(marker, 1)[1])
+        fonts.update(entry)
+    if fonts:
+        for role in ("pageTitle", "sectionTitle", "formLabel", "input", "dateValue"):
+            family = fonts.get(role, {}).get("japaneseFamilyName", "")
+            if not family or re.search(r"Mincho|Times|Serif", family, re.IGNORECASE):
+                raise RuntimeError(f"Unexpected Japanese UI font for {role}: {family!r}")
+        return fonts
+    raise RuntimeError("No native font diagnostics were captured; glyph selection is unverified.")
+
+
 def capture(app: Path, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     with (app / "Info.plist").open("rb") as source:
@@ -125,6 +144,7 @@ def capture(app: Path, output: Path) -> None:
     launch = run(
         "xcrun", "simctl", "launch", "--terminate-running-process", udid, bundle_id,
         "--disable-vm-service", "--disable-vm-service-publication",
+        "--stair-font-diagnostics",
     )
     # Let the production startup resolve native fonts and the tab's measured
     # safe-area height before capturing the real composed simulator window.
@@ -155,6 +175,10 @@ def capture(app: Path, output: Path) -> None:
         "--style", "compact", "--predicate", 'process == "Runner"',
     ).stdout
     (output / "simulator.log").write_text(logs, encoding="utf-8")
+    fonts = verify_font_diagnostics(logs)
+    (output / "font-metadata.json").write_text(
+        json.dumps(fonts, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     print(json.dumps(metadata, ensure_ascii=False, indent=2))
 
 

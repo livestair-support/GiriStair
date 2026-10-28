@@ -22,6 +22,8 @@
 
 ## 合わせられるものと残る差
 
+iPhone 16 / iOS 26.2の最初の実撮影で、Flutterのラベル等が明朝体になり、CoreTextログに `.SFUI-*` をTimes New Romanへ置き換えた記録が出ました。UIFontをPostScript名から `CTFontCreateWithName` で作り直したことが原因でした。UIFontをそのままCTFontへbridgeする方式に修正し、撮影CIで実際の日本語family情報とTimesへの代替警告も検査します。テストのstyle指定だけを見てグリフ一致の根拠にしません。
+
 寸法、余白、色、文字の役割、行順、選択値更新、キーボード対応はFlutter側で合わせられます。タブ、Pickerメニュー、compact時刻のOS依存部分は実際のUIKitを使います。Roundedや日本語faceを端末から取得しても、Flutterの文字組み・fallbackがSwiftUIと完全に同じとはコード上だけで証明できません。
 
 Form自体はSwiftUI Formではありません。曲率、OS更新によるリスト余白、カーソル・選択ハンドル、画面遷移の細かい物理特性、FlutterのCupertino確認ダイアログには差が残る可能性があります。LiveStairの未定時刻は最初のタップで18時・19時を設定しますが、GiriStairの開始・終了に無関係な時刻を保存しないよう、未定を保持して選択させます。投稿・投票日時はGiriStairの確定シートを維持します。時刻の刻みはLiveStairが5分、GiriStairは既存の1分単位の入力を維持します。カレンダーの日本の祝日色は移植せず、週末色を合わせます。

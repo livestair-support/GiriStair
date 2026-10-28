@@ -27,7 +27,16 @@ final class StairNativeControls: NSObject, FlutterPlugin {
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "initialize":
-      result(["available": true, "fonts": Self.fonts()])
+      let fonts = Self.fonts()
+      if ProcessInfo.processInfo.arguments.contains("--stair-font-diagnostics") {
+        for role in fonts.keys.sorted() {
+          if let data = try? JSONSerialization.data(withJSONObject: [role: fonts[role]!], options: [.sortedKeys]),
+            let json = String(data: data, encoding: .utf8) {
+            NSLog("GiriStairTypography %@", json)
+          }
+        }
+      }
+      result(["available": true, "fonts": fonts])
     case "pickDate":
       guard let arguments = call.arguments as? [String: Any],
         let components = arguments["components"] as? [Int], components.count == 5,
@@ -90,13 +99,17 @@ final class StairNativeControls: NSObject, FlutterPlugin {
       if rounded, let descriptor = font.fontDescriptor.withDesign(.rounded) {
         font = UIFont(descriptor: descriptor, size: size)
       }
-      let base = CTFontCreateWithName(font.fontName as CFString, size, nil)
+      // CTFontRef is bridged to UIFont. Recreating a private system face by
+      // its .SFUI-* name makes CoreText substitute Times New Roman instead.
+      let base = font as CTFont
       let text = "あいうえお漢字" as CFString
       let japanese = CTFontCreateForString(base, text, CFRange(location: 0, length: CFStringGetLength(text)))
       output[name] = [
         "latinPostscriptName": font.fontName,
         "japanesePostscriptName": CTFontCopyPostScriptName(japanese) as String,
         "latinFamilyName": font.familyName,
+        "basePostscriptName": CTFontCopyPostScriptName(base) as String,
+        "baseFamilyName": CTFontCopyFamilyName(base) as String,
         "japaneseFamilyName": CTFontCopyFamilyName(japanese) as String,
         "fontSize": font.pointSize, "lineHeight": font.lineHeight,
         "ascender": font.ascender, "descender": font.descender,
