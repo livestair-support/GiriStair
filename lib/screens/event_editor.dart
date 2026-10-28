@@ -1,12 +1,12 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../models.dart';
 import '../participant_import.dart';
 import '../store.dart';
 import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
+import '../ui/stair_native_controls.dart';
 import 'participant_import.dart';
 import 'event_round_editor.dart';
 import 'tournament_result_editor.dart';
@@ -252,7 +252,7 @@ class _EventEditorState extends State<EventEditor> {
     setState(() => _saving = true);
     try {
       await widget.store.saveEvent(event);
-      HapticFeedback.lightImpact();
+      StairNativeControls.saveFeedback();
       if (!mounted) return;
       if (original == null) {
         _formKey.currentState!.reset();
@@ -289,13 +289,16 @@ class _EventEditorState extends State<EventEditor> {
         maxLines: maxLines,
         keyboardType: keyboardType,
         textInputAction: textInputAction,
-        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w500),
+        style: StairTypography.role(StairTextRole.input),
+        textAlignVertical: TextAlignVertical.center,
         decoration: InputDecoration(
           isDense: true,
           hintText: label,
           suffixText: suffixText,
           constraints: const BoxConstraints(minHeight: 48),
-          contentPadding: const EdgeInsets.symmetric(vertical: 12),
+          contentPadding: const EdgeInsets.symmetric(
+            vertical: StairFormMetrics.rowVerticalInset,
+          ),
         ),
         validator: validator,
       ),
@@ -303,7 +306,10 @@ class _EventEditorState extends State<EventEditor> {
   );
 
   Widget _liveTimes() => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+    padding: const EdgeInsets.symmetric(
+      horizontal: StairFormMetrics.horizontalInset,
+      vertical: StairFormMetrics.rowVerticalInset + 4,
+    ),
     child: LayoutBuilder(
       builder: (context, constraints) {
         final buttons = [
@@ -320,7 +326,7 @@ class _EventEditorState extends State<EventEditor> {
             onChanged: _saving ? null : _changeEnd,
           ),
         ];
-        final reset = TextButton(
+        final reset = CupertinoButton(
           onPressed: _saving
               ? null
               : () => setState(() {
@@ -328,16 +334,14 @@ class _EventEditorState extends State<EventEditor> {
                   _endsAt = null;
                   _scheduleError = null;
                 }),
-          style: TextButton.styleFrom(
-            foregroundColor: StairColors.action,
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-            minimumSize: const Size(44, 44),
-          ),
+          padding: EdgeInsets.zero,
+          minimumSize: const Size(36, 34),
           child: const Column(
             mainAxisSize: MainAxisSize.min,
+            spacing: 3,
             children: [
-              Icon(Icons.restart_alt, size: 18),
-              Text('未定', style: TextStyle(fontSize: 11)),
+              Icon(CupertinoIcons.arrow_counterclockwise, size: 13),
+              Text('未定', style: TextStyle(fontSize: 12)),
             ],
           ),
         );
@@ -359,9 +363,13 @@ class _EventEditorState extends State<EventEditor> {
         return Row(
           children: [
             Expanded(child: buttons[0]),
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
             Expanded(child: buttons[1]),
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6),
+              child: SizedBox(height: 34, child: VerticalDivider(width: 0.5)),
+            ),
             reset,
           ],
         );
@@ -473,9 +481,8 @@ class _EventEditorState extends State<EventEditor> {
                             return ListTile(
                               title: Text(
                                 name,
-                                style: const TextStyle(
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w500,
+                                style: StairTypography.role(
+                                  StairTextRole.value,
                                 ),
                               ),
                               subtitle: player.furigana.isEmpty
@@ -550,6 +557,7 @@ class _EventEditorState extends State<EventEditor> {
   }
 
   Widget _participantsSection() => StairFormSection(
+    editorStyle: true,
     title: '参加者',
     icon: CupertinoIcons.person_2,
     accent: StairColors.online,
@@ -610,10 +618,7 @@ class _EventEditorState extends State<EventEditor> {
                     key: ValueKey('event-participant-$index'),
                     controller: _participants[index],
                     enabled: !_saving,
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w500,
-                    ),
+                    style: StairTypography.role(StairTextRole.input),
                     textInputAction: TextInputAction.next,
                     onChanged: (_) => setState(() {}),
                     onFieldSubmitted: (_) {
@@ -628,7 +633,7 @@ class _EventEditorState extends State<EventEditor> {
                       isDense: true,
                       constraints: const BoxConstraints(minHeight: 44),
                       hintText: index == 0 ? '参加者名' : '参加者名を入力',
-                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 8),
                     ),
                   ),
                 ),
@@ -699,9 +704,9 @@ class _EventEditorState extends State<EventEditor> {
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
               ),
               icon: const Icon(CupertinoIcons.plus_circle, size: 23),
-              label: const Text(
+              label: Text(
                 '参加者を追加',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500),
+                style: StairTypography.role(StairTextRole.button),
               ),
             ),
             TextButton(
@@ -718,39 +723,86 @@ class _EventEditorState extends State<EventEditor> {
     ],
   );
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: StairPageHeader(
-      title: widget.event == null ? '登録' : '記録を編集',
-      icon: widget.event == null ? CupertinoIcons.add : CupertinoIcons.pencil,
-      accent: StairColors.live,
-      leading: widget.event == null ? null : const BackButton(),
-      trailing: ValueListenableBuilder<TextEditingValue>(
-        valueListenable: _title,
-        builder: (context, value, child) => Row(
+  Widget get _saveHeaderButton => ValueListenableBuilder<TextEditingValue>(
+    valueListenable: _title,
+    builder: (context, value, child) => StairSaveButton(
+      onPressed: value.text.trim().isEmpty || _saving ? null : _save,
+      saving: _saving,
+    ),
+  );
+
+  PreferredSizeWidget _header(BuildContext context) {
+    if (widget.event == null) {
+      return StairPageHeader(
+        title: '登録',
+        icon: CupertinoIcons.add,
+        accent: StairColors.live,
+        trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             const StairInfoButton(
               label: '登録',
               message: '会の予定や参加記録を保存できます。参加者は文章や画像から一括追加できます。',
             ),
-            StairSaveButton(
-              onPressed: value.text.trim().isEmpty || _saving ? null : _save,
-              saving: _saving,
-            ),
+            const SizedBox(width: 8),
+            _saveHeaderButton,
           ],
         ),
+      );
+    }
+    // LiveStair keeps the native back toolbar above the large edit heading.
+    return AppBar(
+      automaticallyImplyLeading: false,
+      leading: CupertinoButton(
+        padding: EdgeInsets.zero,
+        onPressed: () => Navigator.of(context).maybePop(),
+        child: Icon(
+          CupertinoIcons.back,
+          size: 17,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
       ),
-    ),
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(70),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '記録を編集',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: StairTypography.role(StairTextRole.pageTitle),
+                ),
+              ),
+              const SizedBox(width: 8),
+              _saveHeaderButton,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: _header(context),
     body: Form(
       key: _formKey,
       child: SingleChildScrollView(
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 120),
+        padding: EdgeInsets.fromLTRB(
+          StairFormMetrics.horizontalInset,
+          StairFormMetrics.topInset,
+          StairFormMetrics.horizontalInset,
+          MediaQuery.viewInsetsOf(context).bottom > 0 ? 24 : 120,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             StairFormSection(
+              editorStyle: true,
               title: '基本情報',
               icon: CupertinoIcons.slider_horizontal_3,
               accent: StairColors.live,
@@ -791,6 +843,7 @@ class _EventEditorState extends State<EventEditor> {
                 ),
                 StairMenuRow<EventStatus>(
                   label: '参加状況',
+                  selectionFeedback: true,
                   value: _status,
                   items: {
                     for (final status in EventStatus.values)
@@ -891,6 +944,7 @@ class _EventEditorState extends State<EventEditor> {
                     setState(() => _tournamentResult = result),
               ),
             StairFormSection(
+              editorStyle: true,
               title: '振り返り',
               icon: CupertinoIcons.text_alignleft,
               accent: StairColors.memo,

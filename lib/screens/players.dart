@@ -6,6 +6,7 @@ import '../models.dart';
 import '../participant_import.dart';
 import '../store.dart';
 import '../ui/stair_theme.dart';
+import '../ui/stair_native_controls.dart';
 
 class PlayerDirectoryScreen extends StatefulWidget {
   const PlayerDirectoryScreen({super.key, required this.store});
@@ -172,7 +173,7 @@ class _PlayerEditorState extends State<_PlayerEditor> {
         ),
       );
       if (!mounted) return;
-      HapticFeedback.lightImpact();
+      StairNativeControls.saveFeedback();
       Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;

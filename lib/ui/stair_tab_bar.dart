@@ -1,145 +1,141 @@
-import 'dart:ui';
+import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'stair_theme.dart';
 
-/// Inset translucent tabs, matching LiveStair's floating iPhone navigation.
-class StairTabBar extends StatelessWidget {
+/// LiveStair uses SwiftUI's system TabView, with no custom selection capsule.
+/// On iPhone, let the same iOS tab-bar implementation own its geometry, fonts,
+/// symbols, glass, selection background and animation. Flutter retains the
+/// screen state and receives only the selected index.
+class StairTabBar extends StatefulWidget {
   const StairTabBar({
     super.key,
     required this.currentIndex,
     required this.onTap,
+    this.nativeAvailable = false,
   });
 
   final int currentIndex;
   final ValueChanged<int> onTap;
+  final bool nativeAvailable;
 
-  static const _tabs = [
-    (CupertinoIcons.add_circled_solid, '登録'),
-    (CupertinoIcons.clock_fill, '一覧'),
-    (Icons.emoji_events, '戦績'),
-    (CupertinoIcons.text_badge_checkmark, '思考'),
-    (CupertinoIcons.gear_solid, '設定'),
-  ];
+  @override
+  State<StairTabBar> createState() => _StairTabBarState();
+}
+
+class _StairTabBarState extends State<StairTabBar> {
+  static const _viewType = 'giristair/native-tab-bar';
+  MethodChannel? _channel;
+  double? _nativeHeight;
+  Map<String, Object>? _configuration;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _configure();
+  }
+
+  @override
+  void didUpdateWidget(covariant StairTabBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _configure();
+  }
+
+  Map<String, Object> _arguments() => {
+    'selectedIndex': widget.currentIndex,
+    'dark': Theme.of(context).brightness == Brightness.dark,
+    'tintColor': StairColors.action.toARGB32(),
+  };
+
+  void _configure() {
+    final channel = _channel;
+    if (channel == null) return;
+    final arguments = _arguments();
+    if (mapEquals(_configuration, arguments)) return;
+    _configuration = arguments;
+    unawaited(channel.invokeMethod<void>('configure', arguments));
+  }
+
+  void _created(int id) {
+    final channel = MethodChannel('$_viewType/$id');
+    _channel = channel;
+    _configuration = null;
+    channel.setMethodCallHandler((call) async {
+      if (!mounted) return;
+      if (call.method == 'select') {
+        final index = call.arguments;
+        if (index is int && index >= 0 && index < 5) widget.onTap(index);
+      } else if (call.method == 'heightChanged') {
+        final height = call.arguments;
+        if (height is num && height >= 44 && height <= 180) {
+          final measured = height.toDouble();
+          if (_nativeHeight == null || (_nativeHeight! - measured).abs() > .5) {
+            setState(() => _nativeHeight = measured);
+          }
+        }
+      }
+    });
+    _configure();
+  }
+
+  @override
+  void dispose() {
+    _channel?.setMethodCallHandler(null);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final dark = theme.brightness == Brightness.dark;
-    return SafeArea(
-      top: false,
-      minimum: const EdgeInsets.fromLTRB(18, 8, 18, 8),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(40),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 14,
-              offset: const Offset(0, 3),
-            ),
-          ],
+    // Native iPad tabs can move to the top. Keep five bottom tabs on wider
+    // layouts with Flutter's standard Cupertino control.
+    final nativePhone =
+        widget.nativeAvailable &&
+        !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.iOS &&
+        MediaQuery.sizeOf(context).shortestSide < 600;
+    if (nativePhone) {
+      return SizedBox(
+        height: _nativeHeight ?? 49 + MediaQuery.paddingOf(context).bottom,
+        child: UiKitView(
+          key: const ValueKey('stair-system-tab-bar'),
+          viewType: _viewType,
+          creationParams: _arguments(),
+          creationParamsCodec: const StandardMessageCodec(),
+          onPlatformViewCreated: _created,
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(40),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surface.withValues(alpha: 0.84),
-                borderRadius: BorderRadius.circular(40),
-                border: Border.all(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.12),
-                  width: 0.5,
-                ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(4),
-                child: Row(
-                  children: [
-                    for (var index = 0; index < _tabs.length; index++)
-                      Expanded(
-                        child: Semantics(
-                          label: _tabs[index].$2,
-                          button: true,
-                          selected: index == currentIndex,
-                          onTap: () {
-                            if (index != currentIndex) {
-                              HapticFeedback.selectionClick();
-                            }
-                            onTap(index);
-                          },
-                          child: ExcludeSemantics(
-                            child: Material(
-                              color: Colors.transparent,
-                              child: CupertinoButton(
-                                padding: EdgeInsets.zero,
-                                minimumSize: Size.zero,
-                                borderRadius: BorderRadius.circular(36),
-                                onPressed: () {
-                                  if (index != currentIndex) {
-                                    HapticFeedback.selectionClick();
-                                  }
-                                  onTap(index);
-                                },
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 180),
-                                  constraints: const BoxConstraints(
-                                    minHeight: 52,
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 2,
-                                    vertical: 5,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(36),
-                                    color: index == currentIndex
-                                        ? theme.colorScheme.onSurface
-                                              .withValues(
-                                                alpha: dark ? 0.12 : 0.065,
-                                              )
-                                        : Colors.transparent,
-                                  ),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        _tabs[index].$1,
-                                        size: 26,
-                                        color: index == currentIndex
-                                            ? StairColors.action
-                                            : theme.colorScheme.onSurface,
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        _tabs[index].$2,
-                                        maxLines: 1,
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w600,
-                                          color: index == currentIndex
-                                              ? StairColors.action
-                                              : theme.colorScheme.onSurface,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+      );
+    }
+    return CupertinoTabBar(
+      currentIndex: widget.currentIndex,
+      onTap: widget.onTap,
+      activeColor: StairColors.action,
+      inactiveColor: Theme.of(context).colorScheme.onSurface,
+      backgroundColor: Theme.of(
+        context,
+      ).colorScheme.surface.withValues(alpha: .9),
+      items: const [
+        BottomNavigationBarItem(
+          icon: Icon(CupertinoIcons.add_circled_solid),
+          label: '登録',
         ),
-      ),
+        BottomNavigationBarItem(
+          icon: Icon(CupertinoIcons.clock_fill),
+          label: '一覧',
+        ),
+        BottomNavigationBarItem(icon: Icon(Icons.emoji_events), label: '戦績'),
+        BottomNavigationBarItem(
+          icon: Icon(CupertinoIcons.text_badge_checkmark),
+          label: '思考',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(CupertinoIcons.gear_solid),
+          label: '設定',
+        ),
+      ],
     );
   }
 }

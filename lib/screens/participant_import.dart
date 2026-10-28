@@ -266,10 +266,7 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
                             controller: _names[i],
                             enabled: !_reading,
                             onChanged: (_) => setState(() {}),
-                            style: const TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w500,
-                            ),
+                            style: StairTypography.role(StairTextRole.input),
                             decoration: const InputDecoration(
                               isDense: true,
                               contentPadding: EdgeInsets.symmetric(

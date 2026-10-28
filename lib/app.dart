@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -13,11 +14,15 @@ import 'store.dart';
 import 'notifications.dart';
 import 'ui/stair_theme.dart';
 import 'ui/stair_tab_bar.dart';
+import 'ui/stair_native_controls.dart';
+import 'ui/stair_symbols.dart';
 
 class GiriStairApp extends StatefulWidget {
-  const GiriStairApp({super.key, required this.store});
+  const GiriStairApp({super.key, required this.store, this.initialTab = 1})
+    : assert(initialTab >= 0 && initialTab < 5);
 
   final GiriStore store;
+  final int initialTab;
 
   @override
   State<GiriStairApp> createState() => _GiriStairAppState();
@@ -32,7 +37,14 @@ class _GiriStairAppState extends State<GiriStairApp>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     widget.store.addListener(_refreshReminders);
-    _loading = widget.store.load();
+    _loading = _load();
+  }
+
+  Future<void> _load() async {
+    await StairNativeControls.initialize();
+    await StairSymbols.initialize();
+    if (mounted) setState(() {});
+    await widget.store.load();
   }
 
   void _refreshReminders() =>
@@ -57,7 +69,9 @@ class _GiriStairAppState extends State<GiriStairApp>
       builder: (context, _) => MaterialApp(
         title: 'GiriStair',
         debugShowCheckedModeBanner: false,
-        scrollBehavior: const CupertinoScrollBehavior(),
+        scrollBehavior: defaultTargetPlatform == TargetPlatform.iOS
+            ? const CupertinoScrollBehavior()
+            : const MaterialScrollBehavior(),
         locale: StairTypography.locale,
         supportedLocales: const [StairTypography.locale],
         localizationsDelegates: GlobalMaterialLocalizations.delegates,
@@ -99,7 +113,7 @@ class _GiriStairAppState extends State<GiriStairApp>
                         const SizedBox(height: 20),
                         FilledButton.icon(
                           onPressed: () => setState(() {
-                            _loading = widget.store.load();
+                            _loading = _load();
                           }),
                           icon: const Icon(Icons.refresh),
                           label: const Text('再読み込み'),
@@ -110,7 +124,7 @@ class _GiriStairAppState extends State<GiriStairApp>
                 ),
               );
             }
-            return _Home(store: widget.store);
+            return _Home(store: widget.store, initialTab: widget.initialTab);
           },
         ),
       ),
@@ -119,16 +133,17 @@ class _GiriStairAppState extends State<GiriStairApp>
 }
 
 class _Home extends StatefulWidget {
-  const _Home({required this.store});
+  const _Home({required this.store, required this.initialTab});
 
   final GiriStore store;
+  final int initialTab;
 
   @override
   State<_Home> createState() => _HomeState();
 }
 
 class _HomeState extends State<_Home> {
-  int _selected = 1;
+  late int _selected = widget.initialTab;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -157,6 +172,7 @@ class _HomeState extends State<_Home> {
         ? null
         : StairTabBar(
             currentIndex: _selected,
+            nativeAvailable: StairNativeControls.available,
             onTap: (index) => setState(() => _selected = index),
           ),
   );

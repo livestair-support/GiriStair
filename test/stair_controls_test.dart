@@ -59,7 +59,7 @@ void main() {
   });
 
   testWidgets(
-    'date changes stay draft until Done; cancel and dismissal discard them',
+    'calendar day commits immediately; cancel and dismissal preserve the date',
     (tester) async {
       final original = DateTime(2026, 10, 28);
       DateTime? value = original;
@@ -81,16 +81,12 @@ void main() {
       );
 
       await openDatePicker(tester);
-      selectPickerDate(tester, DateTime(2026, 11, 2));
-      expect(value, original);
-      expect(changes, isEmpty);
       await tester.tap(find.text('キャンセル'));
       await tester.pumpAndSettle();
       expect(value, original);
       expect(changes, isEmpty);
 
       await openDatePicker(tester);
-      selectPickerDate(tester, DateTime(2026, 11, 3));
       await tester.tapAt(const Offset(20, 20));
       await tester.pumpAndSettle();
       expect(find.byType(StairCalendar), findsNothing);
@@ -99,9 +95,11 @@ void main() {
 
       await openDatePicker(tester);
       final confirmed = DateTime(2026, 11, 4);
-      selectPickerDate(tester, confirmed);
-      await tester.tap(find.text('完了'));
+      await tester.tap(find.byKey(const ValueKey('calendar-next-month')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('calendar-2026-11-4')));
+      await tester.pumpAndSettle();
+      expect(find.byType(StairCalendar), findsNothing);
       expect(value, confirmed);
       expect(changes, [confirmed]);
       expect(find.text('2026年11月4日(水)'), findsOneWidget);
