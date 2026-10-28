@@ -20,7 +20,9 @@ Future<void> openDatePicker(WidgetTester tester) async {
 
 void selectPickerDate(WidgetTester tester, DateTime date) {
   if (find.byType(CalendarDatePicker).evaluate().isNotEmpty) {
-    tester.widget<CalendarDatePicker>(find.byType(CalendarDatePicker)).onDateChanged(date);
+    tester
+        .widget<CalendarDatePicker>(find.byType(CalendarDatePicker))
+        .onDateChanged(date);
     return;
   }
   // Simulate a wheel selection. The wheel itself is provided by Flutter;

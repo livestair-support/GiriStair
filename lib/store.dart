@@ -39,12 +39,14 @@ class GiriStore extends ChangeNotifier {
         () => GiriPlayer(id: 'history:$key', name: trimmed),
       );
     }
-    return List.unmodifiable(profiles.values.toList()..sort((a, b) {
-      final aKey = playerSearchKey(a.furigana.isEmpty ? a.name : a.furigana);
-      final bKey = playerSearchKey(b.furigana.isEmpty ? b.name : b.furigana);
-      final order = aKey.compareTo(bKey);
-      return order == 0 ? a.name.compareTo(b.name) : order;
-    }));
+    return List.unmodifiable(
+      profiles.values.toList()..sort((a, b) {
+        final aKey = playerSearchKey(a.furigana.isEmpty ? a.name : a.furigana);
+        final bKey = playerSearchKey(b.furigana.isEmpty ? b.name : b.furigana);
+        final order = aKey.compareTo(bKey);
+        return order == 0 ? a.name.compareTo(b.name) : order;
+      }),
+    );
   }
 
   String newId() => List.generate(
@@ -113,7 +115,9 @@ class GiriStore extends ChangeNotifier {
     if (name.isEmpty) throw const FormatException('名前を入力してください。');
     final old = playerDirectory.where((p) => p.id == player.id).firstOrNull;
     final key = playerSearchKey(name);
-    if (playerDirectory.any((p) => p.id != player.id && playerSearchKey(p.name) == key)) {
+    if (playerDirectory.any(
+      (p) => p.id != player.id && playerSearchKey(p.name) == key,
+    )) {
       throw const FormatException('同じ名前のプレイヤーが登録されています。');
     }
     final index = document.players.indexWhere((p) => p.id == player.id);
@@ -131,9 +135,14 @@ class GiriStore extends ChangeNotifier {
       final oldKey = playerSearchKey(old.name);
       for (var i = 0; i < document.events.length; i++) {
         final event = document.events[i];
-        document.events[i] = event.copyWith(participants: event.participants
-            .map((participant) => playerSearchKey(participant) == oldKey ? name : participant)
-            .toList());
+        document.events[i] = event.copyWith(
+          participants: event.participants
+              .map(
+                (participant) =>
+                    playerSearchKey(participant) == oldKey ? name : participant,
+              )
+              .toList(),
+        );
       }
     }
   });
@@ -143,9 +152,10 @@ class GiriStore extends ChangeNotifier {
     document.players.removeWhere((player) => player.id == id);
   });
 
-  Future<void> savePreferences(AppPreferences preferences) => _mutate((document) {
-    document.preferences = AppPreferences.fromJson(preferences.toJson());
-  });
+  Future<void> savePreferences(AppPreferences preferences) =>
+      _mutate((document) {
+        document.preferences = AppPreferences.fromJson(preferences.toJson());
+      });
 
   String exportBackup() {
     _requireLoaded();
@@ -196,7 +206,9 @@ class _GiriDocument {
     List<GiriPlayer>? players,
     this.preferences = const AppPreferences(),
     this.lastBackupAt,
-  }) : events = events ?? [], notes = notes ?? [], players = players ?? [];
+  }) : events = events ?? [],
+       notes = notes ?? [],
+       players = players ?? [];
 
   final List<GiriEvent> events;
   final List<ThoughtNote> notes;
@@ -223,11 +235,17 @@ class _GiriDocument {
 
   factory _GiriDocument.decode(String contents) {
     final json = jsonDecode(contents);
-    if (json is! Map<String, dynamic> || json['schemaVersion'] != 1 ||
-        json['events'] is! List || json['notes'] is! List) {
+    if (json is! Map<String, dynamic> ||
+        json['schemaVersion'] != 1 ||
+        json['events'] is! List ||
+        json['notes'] is! List) {
       throw const FormatException('Unsupported GiriStair data format.');
     }
-    List<T> records<T>(String key, T Function(Map<String, dynamic>) decode, {bool optional = false}) {
+    List<T> records<T>(
+      String key,
+      T Function(Map<String, dynamic>) decode, {
+      bool optional = false,
+    }) {
       final value = json[key];
       if (optional && value == null) return [];
       if (value is! List) throw FormatException('Invalid $key list.');
@@ -238,13 +256,15 @@ class _GiriDocument {
         return decode(item);
       }).toList();
     }
+
     final events = records('events', GiriEvent.fromJson);
     final notes = records('notes', ThoughtNote.fromJson);
     final players = records('players', GiriPlayer.fromJson, optional: true);
     if (events.map((item) => item.id).toSet().length != events.length ||
         notes.map((item) => item.id).toSet().length != notes.length ||
         players.map((item) => item.id).toSet().length != players.length ||
-        players.map((item) => playerSearchKey(item.name)).toSet().length != players.length) {
+        players.map((item) => playerSearchKey(item.name)).toSet().length !=
+            players.length) {
       throw const FormatException('Duplicate record IDs or player names.');
     }
     final settings = json['preferences'];
@@ -252,15 +272,20 @@ class _GiriDocument {
       throw const FormatException('Invalid application preferences.');
     }
     final backupAt = json['lastBackupAt'];
-    if (backupAt != null && (backupAt is! String || DateTime.tryParse(backupAt) == null)) {
+    if (backupAt != null &&
+        (backupAt is! String || DateTime.tryParse(backupAt) == null)) {
       throw const FormatException('Invalid backup date.');
     }
     return _GiriDocument(
       events: events,
       notes: notes,
       players: players,
-      preferences: settings == null ? const AppPreferences() : AppPreferences.fromJson(settings as Map<String, dynamic>),
-      lastBackupAt: backupAt == null ? null : DateTime.parse(backupAt as String).toLocal(),
+      preferences: settings == null
+          ? const AppPreferences()
+          : AppPreferences.fromJson(settings as Map<String, dynamic>),
+      lastBackupAt: backupAt == null
+          ? null
+          : DateTime.parse(backupAt as String).toLocal(),
     );
   }
 }

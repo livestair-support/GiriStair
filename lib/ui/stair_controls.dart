@@ -32,13 +32,22 @@ class StairMenuRow<T> extends StatelessWidget {
     final screen = MediaQuery.sizeOf(context);
     final padding = MediaQuery.paddingOf(context);
     final width = math.min(250.0, screen.width - 32);
-    final rowHeight = math.max(44.0, MediaQuery.textScalerOf(context).scale(17) + 20);
-    final height = math.min(items.length * rowHeight + 16,
-        screen.height - padding.vertical - 32);
-    final top = origin.dy.clamp(padding.top + 12,
-        math.max(padding.top + 12, screen.height - padding.bottom - height - 12));
-    final left = (origin.dx + box.size.width - width - 16)
-        .clamp(16.0, screen.width - width - 16);
+    final rowHeight = math.max(
+      44.0,
+      MediaQuery.textScalerOf(context).scale(17) + 20,
+    );
+    final height = math.min(
+      items.length * rowHeight + 16,
+      screen.height - padding.vertical - 32,
+    );
+    final top = origin.dy.clamp(
+      padding.top + 12,
+      math.max(padding.top + 12, screen.height - padding.bottom - height - 12),
+    );
+    final left = (origin.dx + box.size.width - width - 16).clamp(
+      16.0,
+      screen.width - width - 16,
+    );
     final selected = await showGeneralDialog<T>(
       context: context,
       barrierDismissible: true,
@@ -50,22 +59,37 @@ class StairMenuRow<T> extends StatelessWidget {
       pageBuilder: (context, animation, secondaryAnimation) => Stack(
         children: [
           Positioned(
-            left: left, top: top, width: width, height: height,
+            left: left,
+            top: top.toDouble(),
+            width: width,
+            height: height,
             child: Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(28),
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.14),
-                    blurRadius: 28, offset: const Offset(0, 10))],
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.14),
+                    blurRadius: 28,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(28),
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
                   child: Material(
-                    color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.94),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surface.withValues(alpha: 0.94),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(28),
-                      side: BorderSide(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.15), width: 0.5),
+                      side: BorderSide(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withValues(alpha: 0.15),
+                        width: 0.5,
+                      ),
                     ),
                     child: ListView(
                       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -75,15 +99,37 @@ class StairMenuRow<T> extends StatelessWidget {
                           Semantics(
                             selected: item.key == value,
                             child: CupertinoButton(
-                              padding: const EdgeInsets.symmetric(horizontal: 20),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                              ),
                               minimumSize: Size(0, rowHeight),
-                              onPressed: () => Navigator.of(context).pop(item.key),
-                              child: Row(children: [
-                                SizedBox(width: 24, child: item.key == value
-                                    ? Icon(CupertinoIcons.check_mark, size: 18, color: Theme.of(context).colorScheme.onSurface) : null),
-                                const SizedBox(width: 4),
-                                Expanded(child: Text(item.value, style: Theme.of(context).textTheme.bodyLarge)),
-                              ]),
+                              onPressed: () =>
+                                  Navigator.of(context).pop(item.key),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 24,
+                                    child: item.key == value
+                                        ? Icon(
+                                            CupertinoIcons.check_mark,
+                                            size: 18,
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
+                                          )
+                                        : null,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      item.value,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodyLarge,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                       ],
@@ -169,8 +215,12 @@ class StairDateRow extends StatelessWidget {
             context: context,
             builder: (context) => _CalendarDialog(label: label, initial: local),
           )
-        : await _showPicker(context, label: label, initial: local,
-            mode: CupertinoDatePickerMode.dateAndTime);
+        : await _showPicker(
+            context,
+            label: label,
+            initial: local,
+            mode: CupertinoDatePickerMode.dateAndTime,
+          );
     if (context.mounted && selected != null) {
       final date = selected.value;
       onChanged?.call(
@@ -279,7 +329,11 @@ class StairTimeButton extends StatelessWidget {
       children: [
         Text(
           label,
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: scheme.onSurfaceVariant),
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            color: scheme.onSurfaceVariant,
+          ),
         ),
         Semantics(
           label: label,
@@ -382,37 +436,54 @@ class _CalendarDialogState extends State<_CalendarDialog> {
     child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 380),
       child: SingleChildScrollView(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
-            child: Row(children: [
-              Expanded(child: Text(widget.label, style: Theme.of(context).textTheme.titleMedium)),
-              CupertinoButton(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                onPressed: () => Navigator.pop(context),
-                child: const Text('キャンセル', style: TextStyle(fontSize: 15)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.label,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  CupertinoButton(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('キャンセル', style: TextStyle(fontSize: 15)),
+                  ),
+                ],
               ),
-            ]),
-          ),
-          CalendarDatePicker(
-            initialDate: _selection,
-            firstDate: DateTime(math.min(1900, _selection.year)),
-            lastDate: DateTime(math.max(2200, _selection.year), 12, 31),
-            onDateChanged: (date) => setState(() => _selection = date),
-          ),
-          const Divider(height: 1),
-          Row(children: [
-            CupertinoButton(
-              onPressed: () => Navigator.pop(context, const _DateSelection(null)),
-              child: const Text('未定に戻す', style: TextStyle(fontSize: 15)),
             ),
-            const Spacer(),
-            CupertinoButton(
-              onPressed: () => Navigator.pop(context, _DateSelection(_selection)),
-              child: const Text('完了', style: TextStyle(fontWeight: FontWeight.w600)),
+            CalendarDatePicker(
+              initialDate: _selection,
+              firstDate: DateTime(math.min(1900, _selection.year)),
+              lastDate: DateTime(math.max(2200, _selection.year), 12, 31),
+              onDateChanged: (date) => setState(() => _selection = date),
             ),
-          ]),
-        ]),
+            const Divider(height: 1),
+            Row(
+              children: [
+                CupertinoButton(
+                  onPressed: () =>
+                      Navigator.pop(context, const _DateSelection(null)),
+                  child: const Text('未定に戻す', style: TextStyle(fontSize: 15)),
+                ),
+                const Spacer(),
+                CupertinoButton(
+                  onPressed: () =>
+                      Navigator.pop(context, _DateSelection(_selection)),
+                  child: const Text(
+                    '完了',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     ),
   );

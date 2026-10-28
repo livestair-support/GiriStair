@@ -27,8 +27,9 @@ String playerSearchKey(String text) {
     }
     runes.add(rune);
   }
-  final normalized = String.fromCharCodes(runes.map((rune) =>
-    rune >= 0x30A1 && rune <= 0x30F6 ? rune - 0x60 : rune));
+  final normalized = String.fromCharCodes(
+    runes.map((rune) => rune >= 0x30A1 && rune <= 0x30F6 ? rune - 0x60 : rune),
+  );
   return normalized.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
 }
 
@@ -40,11 +41,16 @@ List<String> parseParticipantNames(String source) {
   final seen = <String>{};
   for (final raw in source.split(RegExp(r'[\r\n,，、\t]+'))) {
     var name = raw.trim();
-    name = name.replaceFirst(RegExp(r'^\s*(?:[-・●○■□▪︎•]\s*|[0-9０-９]+[.．)）:：]\s*)'), '');
+    name = name.replaceFirst(
+      RegExp(r'^\s*(?:[-・●○■□▪︎•]\s*|[0-9０-９]+[.．)）:：]\s*)'),
+      '',
+    );
     name = name.replaceFirst(RegExp(r'^@(?=\S)'), '').trim();
     if (name.isEmpty ||
         RegExp(r'^(?:https?://|www\.)', caseSensitive: false).hasMatch(name) ||
-        RegExp(r'^(?:参加者(?:一覧)?|参加予定(?:者)?|参加(?:する)?人|参加者名|名前|参加者リスト|キャンセル待ち)(?:\s*[（(]?[0-9０-９]+\s*人?[)）]?)?\s*[:：]?$').hasMatch(name)) {
+        RegExp(
+          r'^(?:参加者(?:一覧)?|参加予定(?:者)?|参加(?:する)?人|参加者名|名前|参加者リスト|キャンセル待ち)(?:\s*[（(]?[0-9０-９]+\s*人?[)）]?)?\s*[:：]?$',
+        ).hasMatch(name)) {
       continue;
     }
     final key = playerSearchKey(name);

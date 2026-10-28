@@ -52,54 +52,56 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('list previews all records over explicit pages on narrow iPhone', (
-    tester,
-  ) async {
-    final store = await makeStore(count: 16);
-    await showScreen(tester, store, list: true);
-    expect(find.text('会0'), findsOneWidget);
-    expect(find.text('会14'), findsOneWidget);
-    expect(find.text('会15'), findsNothing);
-    expect(tester.takeException(), isNull);
+  testWidgets(
+    'list previews all records over explicit pages on narrow iPhone',
+    (tester) async {
+      final store = await makeStore(count: 16);
+      await showScreen(tester, store, list: true);
+      expect(find.text('会0'), findsOneWidget);
+      expect(find.text('会14'), findsOneWidget);
+      expect(find.text('会15'), findsNothing);
+      expect(tester.takeException(), isNull);
 
-    await tester.scrollUntilVisible(find.byTooltip('次のページ'), 500);
-    await tester.tap(find.byTooltip('次のページ'));
-    await tester.pumpAndSettle();
-    expect(find.text('会15'), findsOneWidget);
-    expect(find.text('会0'), findsNothing);
-    expect(find.text('2 / 2 ページ'), findsOneWidget);
-    expect(find.text('GiriStair  ·  2 / 2'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+      await tester.scrollUntilVisible(find.byTooltip('次のページ'), 500);
+      await tester.tap(find.byTooltip('次のページ'));
+      await tester.pumpAndSettle();
+      expect(find.text('会15'), findsOneWidget);
+      expect(find.text('会0'), findsNothing);
+      expect(find.text('2 / 2 ページ'), findsOneWidget);
+      expect(find.text('GiriStair  ·  2 / 2'), findsOneWidget);
+      expect(tester.takeException(), isNull);
 
-    await tester.tap(find.byTooltip('前のページ'));
-    await tester.pumpAndSettle();
-    expect(find.text('会0'), findsOneWidget);
-    expect(find.text('会15'), findsNothing);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox());
-    store.dispose();
-  });
+      await tester.tap(find.byTooltip('前のページ'));
+      await tester.pumpAndSettle();
+      expect(find.text('会0'), findsOneWidget);
+      expect(find.text('会15'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      store.dispose();
+    },
+  );
 
-  testWidgets('summary respects venue and participant visibility before sharing', (
-    tester,
-  ) async {
-    final store = await makeStore();
-    await showScreen(tester, store);
-    // Building the complete preview still shows no participant name by default.
-    expect(find.text('公開を選べる会場'), findsOneWidget);
-    expect(find.text('公開を選べる参加者'), findsNothing);
-    await tester.tap(find.byType(CupertinoSwitch).at(0));
-    await tester.pumpAndSettle();
-    expect(find.text('公開を選べる会場'), findsNothing);
+  testWidgets(
+    'summary respects venue and participant visibility before sharing',
+    (tester) async {
+      final store = await makeStore();
+      await showScreen(tester, store);
+      // Building the complete preview still shows no participant name by default.
+      expect(find.text('公開を選べる会場'), findsOneWidget);
+      expect(find.text('公開を選べる参加者'), findsNothing);
+      await tester.tap(find.byType(CupertinoSwitch).at(0));
+      await tester.pumpAndSettle();
+      expect(find.text('公開を選べる会場'), findsNothing);
 
-    await tester.tap(find.byType(CupertinoSwitch).at(2));
-    await tester.pumpAndSettle();
-    expect(find.text('公開を選べる参加者'), findsOneWidget);
-    await tester.tap(find.byType(CupertinoSwitch).at(2));
-    await tester.pumpAndSettle();
-    expect(find.text('公開を選べる参加者'), findsNothing);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox());
-    store.dispose();
-  });
+      await tester.tap(find.byType(CupertinoSwitch).at(2));
+      await tester.pumpAndSettle();
+      expect(find.text('公開を選べる参加者'), findsOneWidget);
+      await tester.tap(find.byType(CupertinoSwitch).at(2));
+      await tester.pumpAndSettle();
+      expect(find.text('公開を選べる参加者'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      store.dispose();
+    },
+  );
 }

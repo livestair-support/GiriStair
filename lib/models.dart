@@ -398,9 +398,15 @@ class AppPreferences {
     if (theme is! String ||
         !const ['system', 'light', 'dark', 'stair'].contains(theme) ||
         enabled is! bool ||
-        minutes is! int || minutes < 0 || minutes > 10080 ||
-        hour is! int || hour < 0 || hour > 23 ||
-        minute is! int || minute < 0 || minute > 59) {
+        minutes is! int ||
+        minutes < 0 ||
+        minutes > 10080 ||
+        hour is! int ||
+        hour < 0 ||
+        hour > 23 ||
+        minute is! int ||
+        minute < 0 ||
+        minute > 59) {
       throw const FormatException('Invalid application preferences.');
     }
     return AppPreferences(

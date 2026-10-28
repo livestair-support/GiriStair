@@ -36,7 +36,8 @@ class ParticipantImportScreen extends StatefulWidget {
   final Future<String?> Function() readImages;
 
   @override
-  State<ParticipantImportScreen> createState() => _ParticipantImportScreenState();
+  State<ParticipantImportScreen> createState() =>
+      _ParticipantImportScreenState();
 }
 
 class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
@@ -80,7 +81,9 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
         ..addAll(parsed.map((name) => TextEditingController(text: name)));
       _selected
         ..clear()
-        ..addAll(parsed.map((name) => !entered.contains(playerSearchKey(name))));
+        ..addAll(
+          parsed.map((name) => !entered.contains(playerSearchKey(name))),
+        );
       _message = parsed.isEmpty ? '名前を読み取れませんでした。1行に1人ずつ入力してください。' : null;
     });
   }
@@ -98,13 +101,16 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
         setState(() => _message = '文字を読み取れませんでした。別の画像か、コピーした文章をお試しください。');
         return;
       }
-      _source.text = [_source.text.trim(), text.trim()]
-          .where((part) => part.isNotEmpty)
-          .join('\n');
+      _source.text = [
+        _source.text.trim(),
+        text.trim(),
+      ].where((part) => part.isNotEmpty).join('\n');
       _preview();
     } catch (_) {
       if (mounted) {
-        setState(() => _message = '画像を読み取れませんでした。写真へのアクセス設定を確認するか、文章を貼り付けてください。');
+        setState(
+          () => _message = '画像を読み取れませんでした。写真へのアクセス設定を確認するか、文章を貼り付けてください。',
+        );
       }
     } finally {
       if (mounted) setState(() => _reading = false);
@@ -189,7 +195,10 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
           if (_message != null)
             Padding(
               padding: const EdgeInsets.all(12),
-              child: Text(_message!, style: Theme.of(context).textTheme.bodySmall),
+              child: Text(
+                _message!,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ),
           if (_names.isNotEmpty)
             StairFormSection(
@@ -214,7 +223,8 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
                           activeColor: StairColors.action,
                           onChanged: _reading
                               ? null
-                              : (value) => setState(() => _selected[i] = value!),
+                              : (value) =>
+                                    setState(() => _selected[i] = value!),
                         ),
                         Expanded(
                           child: TextField(
@@ -225,7 +235,9 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
                             style: const TextStyle(fontSize: 17),
                             decoration: const InputDecoration(
                               isDense: true,
-                              contentPadding: EdgeInsets.symmetric(vertical: 10),
+                              contentPadding: EdgeInsets.symmetric(
+                                vertical: 10,
+                              ),
                             ),
                           ),
                         ),

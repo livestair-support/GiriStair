@@ -8,22 +8,29 @@ void main() {
     tester,
   ) async {
     List<String>? result;
-    await tester.pumpWidget(MaterialApp(
-      theme: stairTheme(Brightness.light),
-      home: Builder(builder: (context) => Scaffold(
-        body: TextButton(
-          onPressed: () async {
-            result = await Navigator.of(context).push<List<String>>(
-              MaterialPageRoute(builder: (_) => ParticipantImportScreen(
-                existingNames: const ['登録済み'],
-                readImages: () async => '参加者一覧\n1. 登録済み\n2. 読み間違い\n3. 新しい人',
-              )),
-            );
-          },
-          child: const Text('開く'),
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: stairTheme(Brightness.light),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () async {
+                result = await Navigator.of(context).push<List<String>>(
+                  MaterialPageRoute(
+                    builder: (_) => ParticipantImportScreen(
+                      existingNames: const ['登録済み'],
+                      readImages: () async =>
+                          '参加者一覧\n1. 登録済み\n2. 読み間違い\n3. 新しい人',
+                    ),
+                  ),
+                );
+              },
+              child: const Text('開く'),
+            ),
+          ),
         ),
-      )),
-    ));
+      ),
+    );
     await tester.tap(find.text('開く'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('participant-import-images')));
@@ -43,12 +50,14 @@ void main() {
   testWidgets('OCR failure leaves the text editable for copy and paste', (
     tester,
   ) async {
-    await tester.pumpWidget(MaterialApp(
-      theme: stairTheme(Brightness.light),
-      home: ParticipantImportScreen(
-        readImages: () async => throw StateError('Image unavailable'),
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: stairTheme(Brightness.light),
+        home: ParticipantImportScreen(
+          readImages: () async => throw StateError('Image unavailable'),
+        ),
       ),
-    ));
+    );
     await tester.tap(find.byKey(const ValueKey('participant-import-images')));
     await tester.pumpAndSettle();
     expect(find.textContaining('画像を読み取れませんでした'), findsOneWidget);

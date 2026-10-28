@@ -225,7 +225,10 @@ void main() {
     );
     await tester.pageBack();
     await tester.pumpAndSettle();
-    expect(tester.widget<TextFormField>(participant(0)).controller!.text, '入力済み');
+    expect(
+      tester.widget<TextFormField>(participant(0)).controller!.text,
+      '入力済み',
+    );
     expect(participant(1), findsNothing);
     await tester.pumpWidget(const SizedBox());
     store.dispose();

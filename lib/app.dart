@@ -23,7 +23,8 @@ class GiriStairApp extends StatefulWidget {
   State<GiriStairApp> createState() => _GiriStairAppState();
 }
 
-class _GiriStairAppState extends State<GiriStairApp> with WidgetsBindingObserver {
+class _GiriStairAppState extends State<GiriStairApp>
+    with WidgetsBindingObserver {
   late Future<void> _loading;
 
   @override
@@ -34,7 +35,8 @@ class _GiriStairAppState extends State<GiriStairApp> with WidgetsBindingObserver
     _loading = widget.store.load();
   }
 
-  void _refreshReminders() => unawaited(GiriNotifications.instance.sync(widget.store));
+  void _refreshReminders() =>
+      unawaited(GiriNotifications.instance.sync(widget.store));
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -53,60 +55,63 @@ class _GiriStairAppState extends State<GiriStairApp> with WidgetsBindingObserver
     return ListenableBuilder(
       listenable: widget.store,
       builder: (context, _) => MaterialApp(
-      title: 'GiriStair',
-      debugShowCheckedModeBanner: false,
-      locale: const Locale('ja'),
-      supportedLocales: const [Locale('ja')],
-      localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      theme: stairTheme(Brightness.light, warm: widget.store.preferences.theme == 'stair'),
-      darkTheme: stairTheme(Brightness.dark),
-      themeMode: switch (widget.store.preferences.theme) {
-        'system' => ThemeMode.system,
-        'dark' => ThemeMode.dark,
-        _ => ThemeMode.light,
-      },
-      home: FutureBuilder<void>(
-        future: _loading,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
-            );
-          }
-          if (snapshot.hasError) {
-            return Scaffold(
-              appBar: AppBar(title: const Text('GiriStair')),
-              body: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.folder_off_outlined, size: 48),
-                      const SizedBox(height: 16),
-                      const Text('記録を読み込めませんでした'),
-                      const SizedBox(height: 8),
-                      const Text(
-                        '保存済みのデータを保護するため、編集を停止しています。'
-                        'アプリを開き直すか、再読み込みを試してください。',
-                      ),
-                      const SizedBox(height: 20),
-                      FilledButton.icon(
-                        onPressed: () => setState(() {
-                          _loading = widget.store.load();
-                        }),
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('再読み込み'),
-                      ),
-                    ],
+        title: 'GiriStair',
+        debugShowCheckedModeBanner: false,
+        locale: const Locale('ja'),
+        supportedLocales: const [Locale('ja')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        theme: stairTheme(
+          Brightness.light,
+          warm: widget.store.preferences.theme == 'stair',
+        ),
+        darkTheme: stairTheme(Brightness.dark),
+        themeMode: switch (widget.store.preferences.theme) {
+          'system' => ThemeMode.system,
+          'dark' => ThemeMode.dark,
+          _ => ThemeMode.light,
+        },
+        home: FutureBuilder<void>(
+          future: _loading,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+            if (snapshot.hasError) {
+              return Scaffold(
+                appBar: AppBar(title: const Text('GiriStair')),
+                body: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(28),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.folder_off_outlined, size: 48),
+                        const SizedBox(height: 16),
+                        const Text('記録を読み込めませんでした'),
+                        const SizedBox(height: 8),
+                        const Text(
+                          '保存済みのデータを保護するため、編集を停止しています。'
+                          'アプリを開き直すか、再読み込みを試してください。',
+                        ),
+                        const SizedBox(height: 20),
+                        FilledButton.icon(
+                          onPressed: () => setState(() {
+                            _loading = widget.store.load();
+                          }),
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('再読み込み'),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          }
-          return _Home(store: widget.store);
-        },
-      ),
+              );
+            }
+            return _Home(store: widget.store);
+          },
+        ),
       ),
     );
   }
@@ -137,7 +142,7 @@ class _HomeState extends State<_Home> {
         Scaffold(
           appBar: const StairPageHeader(
             title: '一覧',
-            icon: CupertinoIcons.clock_arrow_circlepath,
+            icon: CupertinoIcons.clock,
             accent: StairColors.online,
           ),
           body: EventListScreen(store: widget.store),

@@ -18,7 +18,9 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
   final dark = brightness == Brightness.dark;
   final background = dark
       ? Colors.black
-      : warm ? const Color(0xFFFFF8F0) : const Color(0xFFF9F9FB);
+      : warm
+      ? const Color(0xFFFFF8F0)
+      : const Color(0xFFF9F9FB);
   final surface = dark ? const Color(0xFF1B1B1F) : Colors.white;
   final text = dark ? const Color(0xFFF2F2F7) : Colors.black;
   final secondaryText = dark
@@ -26,7 +28,10 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
       : const Color(0xFF8E8E93);
   // Use the same system typefaces as SwiftUI on iPhone. Android keeps its
   // platform font rather than downloading or bundling a different typeface.
-  final ios = const [TargetPlatform.iOS, TargetPlatform.macOS].contains(defaultTargetPlatform);
+  final ios = const [
+    TargetPlatform.iOS,
+    TargetPlatform.macOS,
+  ].contains(defaultTargetPlatform);
   final font = ios ? '.SF Pro Text' : null;
   final displayFont = ios ? '.SF Pro Display' : null;
   final scheme =
@@ -53,14 +58,17 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
     visualDensity: VisualDensity.standard,
     fontFamily: font,
     cupertinoOverrideTheme: CupertinoThemeData(
-      brightness: brightness, primaryColor: StairColors.action,
+      brightness: brightness,
+      primaryColor: StairColors.action,
     ),
     splashFactory: NoSplash.splashFactory,
     highlightColor: Colors.transparent,
-    pageTransitionsTheme: const PageTransitionsTheme(builders: {
-      TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-      TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-    }),
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+      },
+    ),
   );
   return base.copyWith(
     textTheme: base.textTheme.copyWith(

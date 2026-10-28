@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:cross_file/cross_file.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -92,18 +91,22 @@ class _ShareRecordsScreenState extends State<ShareRecordsScreen> {
         // A deleted/restored backup may no longer contain the selected year.
         final selectedYear = years.contains(_year) ? _year : null;
         final analytics = GiriAnalytics(events, year: selectedYear);
-        final listEvents = events
-            .where((event) => selectedYear == null ||
-                GiriAnalytics.dateOf(event)?.year == selectedYear)
-            .toList()
-          ..sort((a, b) {
-            final ad = GiriAnalytics.dateOf(a);
-            final bd = GiriAnalytics.dateOf(b);
-            if (ad == null && bd == null) return a.title.compareTo(b.title);
-            if (ad == null) return 1;
-            if (bd == null) return -1;
-            return ad.compareTo(bd);
-          });
+        final listEvents =
+            events
+                .where(
+                  (event) =>
+                      selectedYear == null ||
+                      GiriAnalytics.dateOf(event)?.year == selectedYear,
+                )
+                .toList()
+              ..sort((a, b) {
+                final ad = GiriAnalytics.dateOf(a);
+                final bd = GiriAnalytics.dateOf(b);
+                if (ad == null && bd == null) return a.title.compareTo(b.title);
+                if (ad == null) return 1;
+                if (bd == null) return -1;
+                return ad.compareTo(bd);
+              });
         final pages = math.max(1, (listEvents.length / 15).ceil());
         final page = math.min(_page, pages - 1);
         final shown = listEvents.skip(page * 15).take(15).toList();
@@ -121,11 +124,22 @@ class _ShareRecordsScreenState extends State<ShareRecordsScreen> {
                     groupValue: _list,
                     thumbColor: StairColors.action.withValues(alpha: 0.12),
                     children: const {
-                      false: Padding(padding: EdgeInsets.symmetric(horizontal: 10), child: Text('Summary')),
-                      true: Padding(padding: EdgeInsets.symmetric(horizontal: 10), child: Text('List')),
+                      false: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 10),
+                        child: Text('Summary'),
+                      ),
+                      true: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 10),
+                        child: Text('List'),
+                      ),
                     },
                     onValueChanged: (value) {
-                      if (value != null) setState(() { _list = value; _page = 0; });
+                      if (value != null) {
+                        setState(() {
+                          _list = value;
+                          _page = 0;
+                        });
+                      }
                     },
                   ),
                 ),
@@ -133,17 +147,35 @@ class _ShareRecordsScreenState extends State<ShareRecordsScreen> {
                   label: '期間',
                   value: selectedYear ?? 0,
                   items: {0: 'すべて', for (final year in years) year: '$year年'},
-                  onChanged: (value) => setState(() { _year = value == 0 ? null : value; _page = 0; }),
+                  onChanged: (value) => setState(() {
+                    _year = value == 0 ? null : value;
+                    _page = 0;
+                  }),
                 ),
-                _switch('会場名を表示', _showVenues, (value) => setState(() => _showVenues = value)),
-                _switch('戦績を表示', _showResults, (value) => setState(() => _showResults = value)),
+                _switch(
+                  '会場名を表示',
+                  _showVenues,
+                  (value) => setState(() => _showVenues = value),
+                ),
+                _switch(
+                  '戦績を表示',
+                  _showResults,
+                  (value) => setState(() => _showResults = value),
+                ),
                 if (!_list)
-                  _switch('参加者ランキングを表示', _showParticipants, (value) => setState(() => _showParticipants = value)),
+                  _switch(
+                    '参加者ランキングを表示',
+                    _showParticipants,
+                    (value) => setState(() => _showParticipants = value),
+                  ),
               ],
             ),
             const Padding(
               padding: EdgeInsets.fromLTRB(4, 8, 4, 10),
-              child: Text('下の画像を共有します。名前や会場名など、公開する内容を確認してください。', style: TextStyle(fontSize: 13)),
+              child: Text(
+                '下の画像を共有します。名前や会場名など、公開する内容を確認してください。',
+                style: TextStyle(fontSize: 13),
+              ),
             ),
             Center(
               child: ConstrainedBox(
@@ -155,16 +187,22 @@ class _ShareRecordsScreenState extends State<ShareRecordsScreen> {
                     child: Material(
                       type: MaterialType.transparency,
                       child: MediaQuery(
-                        data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+                        data: MediaQuery.of(
+                          context,
+                        ).copyWith(textScaler: TextScaler.noScaling),
                         child: _ShareImage(
-                        list: _list,
-                        analytics: analytics,
-                        events: shown,
-                        period: selectedYear == null ? 'すべての記録' : '$selectedYear年の記録',
-                        showVenues: _showVenues,
-                        showResults: _showResults,
-                        showParticipants: _showParticipants,
-                        pageLabel: _list && pages > 1 ? '${page + 1} / $pages' : null,
+                          list: _list,
+                          analytics: analytics,
+                          events: shown,
+                          period: selectedYear == null
+                              ? 'すべての記録'
+                              : '$selectedYear年の記録',
+                          showVenues: _showVenues,
+                          showResults: _showResults,
+                          showParticipants: _showParticipants,
+                          pageLabel: _list && pages > 1
+                              ? '${page + 1} / $pages'
+                              : null,
                         ),
                       ),
                     ),
@@ -176,9 +214,21 @@ class _ShareRecordsScreenState extends State<ShareRecordsScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  IconButton(tooltip: '前のページ', onPressed: page == 0 ? null : () => setState(() => _page = page - 1), icon: const Icon(CupertinoIcons.chevron_left)),
+                  IconButton(
+                    tooltip: '前のページ',
+                    onPressed: page == 0
+                        ? null
+                        : () => setState(() => _page = page - 1),
+                    icon: const Icon(CupertinoIcons.chevron_left),
+                  ),
                   Text('${page + 1} / $pages ページ'),
-                  IconButton(tooltip: '次のページ', onPressed: page + 1 == pages ? null : () => setState(() => _page = page + 1), icon: const Icon(CupertinoIcons.chevron_right)),
+                  IconButton(
+                    tooltip: '次のページ',
+                    onPressed: page + 1 == pages
+                        ? null
+                        : () => setState(() => _page = page + 1),
+                    icon: const Icon(CupertinoIcons.chevron_right),
+                  ),
                 ],
               ),
             const SizedBox(height: 16),
@@ -186,7 +236,13 @@ class _ShareRecordsScreenState extends State<ShareRecordsScreen> {
               builder: (buttonContext) => FilledButton.icon(
                 onPressed: _sharing ? null : () => _share(buttonContext),
                 icon: const Icon(CupertinoIcons.share),
-                label: Text(_sharing ? '画像を作成中…' : _list && pages > 1 ? 'このページの画像を共有' : '画像を共有'),
+                label: Text(
+                  _sharing
+                      ? '画像を作成中…'
+                      : _list && pages > 1
+                      ? 'このページの画像を共有'
+                      : '画像を共有',
+                ),
               ),
             ),
           ],
@@ -195,18 +251,34 @@ class _ShareRecordsScreenState extends State<ShareRecordsScreen> {
     ),
   );
 
-  Widget _switch(String label, bool value, ValueChanged<bool> onChanged) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-    child: Row(children: [
-      Expanded(child: Text(label, style: const TextStyle(fontSize: 17))),
-      const SizedBox(width: 8),
-      CupertinoSwitch(value: value, activeTrackColor: StairColors.settings, onChanged: onChanged),
-    ]),
-  );
+  Widget _switch(String label, bool value, ValueChanged<bool> onChanged) =>
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Row(
+          children: [
+            Expanded(child: Text(label, style: const TextStyle(fontSize: 17))),
+            const SizedBox(width: 8),
+            CupertinoSwitch(
+              value: value,
+              activeTrackColor: StairColors.settings,
+              onChanged: onChanged,
+            ),
+          ],
+        ),
+      );
 }
 
 class _ShareImage extends StatelessWidget {
-  const _ShareImage({required this.list, required this.analytics, required this.events, required this.period, required this.showVenues, required this.showResults, required this.showParticipants, this.pageLabel});
+  const _ShareImage({
+    required this.list,
+    required this.analytics,
+    required this.events,
+    required this.period,
+    required this.showVenues,
+    required this.showResults,
+    required this.showParticipants,
+    this.pageLabel,
+  });
 
   final bool list;
   final GiriAnalytics analytics;
@@ -225,41 +297,85 @@ class _ShareImage extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('GiriStair', style: TextStyle(fontSize: 15, color: StairColors.action, fontWeight: FontWeight.w700)),
+          const Text(
+            'GiriStair',
+            style: TextStyle(
+              fontSize: 15,
+              color: StairColors.action,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
           const SizedBox(height: 8),
-          Text(list ? '大喜利 List' : '大喜利 Summary', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700, letterSpacing: -0.6)),
+          Text(
+            list ? '大喜利 List' : '大喜利 Summary',
+            style: const TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.6,
+            ),
+          ),
           const SizedBox(height: 4),
-          Text(period, style: const TextStyle(fontSize: 13, color: Color(0xFF8E8E93))),
+          Text(
+            period,
+            style: const TextStyle(fontSize: 13, color: Color(0xFF8E8E93)),
+          ),
           const SizedBox(height: 16),
           if (list) ...[
             if (events.isEmpty) _empty(),
             for (final event in events) _event(event),
           ] else ...[
             StairSection(
-              title: '参加の記録', icon: CupertinoIcons.calendar, accent: StairColors.live,
-              child: Column(children: [
-                _stat('参加回数', '${analytics.attended.length} 回'),
-                _stat('生大喜利', '${analytics.live.length} 回'),
-                _stat('ネット大喜利', '${analytics.online.length} 回'),
-                _stat('大会', '${analytics.tournaments.length} 回'),
-              ]),
+              title: '参加の記録',
+              icon: CupertinoIcons.calendar,
+              accent: StairColors.live,
+              child: Column(
+                children: [
+                  _stat('参加回数', '${analytics.attended.length} 回'),
+                  _stat('生大喜利', '${analytics.live.length} 回'),
+                  _stat('ネット大喜利', '${analytics.online.length} 回'),
+                  _stat('大会', '${analytics.tournaments.length} 回'),
+                ],
+              ),
             ),
             if (showResults)
               StairSection(
-                title: '戦績', icon: CupertinoIcons.rosette, accent: StairColors.result,
-                child: Column(children: [
-                  _stat('結果を残した大会', '${analytics.resultCount} 回'),
-                  _stat('1位', '${analytics.firstPlaceCount} 回'),
-                  _stat('3位以内', '${analytics.podiumCount} 回'),
-                  const SizedBox(height: 6),
-                  const Text('順位を入力した大会を集計', style: TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
-                ]),
+                title: '戦績',
+                icon: CupertinoIcons.rosette,
+                accent: StairColors.result,
+                child: Column(
+                  children: [
+                    _stat('結果を残した大会', '${analytics.resultCount} 回'),
+                    _stat('1位', '${analytics.firstPlaceCount} 回'),
+                    _stat('3位以内', '${analytics.podiumCount} 回'),
+                    const SizedBox(height: 6),
+                    const Text(
+                      '順位を入力した大会を集計',
+                      style: TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
+                    ),
+                  ],
+                ),
               ),
-            if (showVenues) _ranking('よく行く会場', analytics.venues, CupertinoIcons.placemark, StairColors.venue),
-            if (showParticipants) _ranking('一緒に参加した人', analytics.participants, CupertinoIcons.person_2, StairColors.online),
+            if (showVenues)
+              _ranking(
+                'よく行く会場',
+                analytics.venues,
+                CupertinoIcons.placemark,
+                StairColors.venue,
+              ),
+            if (showParticipants)
+              _ranking(
+                '一緒に参加した人',
+                analytics.participants,
+                CupertinoIcons.person_2,
+                StairColors.online,
+              ),
           ],
           const SizedBox(height: 16),
-          Text(pageLabel == null ? 'GiriStair' : 'GiriStair  ·  $pageLabel', textAlign: TextAlign.right, style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
+          Text(
+            pageLabel == null ? 'GiriStair' : 'GiriStair  ·  $pageLabel',
+            textAlign: TextAlign.right,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
+          ),
         ],
       ),
     ),
@@ -267,32 +383,93 @@ class _ShareImage extends StatelessWidget {
 
   Widget _stat(String label, String value) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 6),
-    child: Row(children: [Expanded(child: Text(label, style: const TextStyle(fontSize: 15))), Text(value, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w600))]),
+    child: Row(
+      children: [
+        Expanded(child: Text(label, style: const TextStyle(fontSize: 15))),
+        Text(
+          value,
+          style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w600),
+        ),
+      ],
+    ),
   );
 
-  Widget _empty() => const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Text('記録はまだありません', textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: Color(0xFF8E8E93))));
+  Widget _empty() => const Padding(
+    padding: EdgeInsets.symmetric(vertical: 24),
+    child: Text(
+      '記録はまだありません',
+      textAlign: TextAlign.center,
+      style: TextStyle(fontSize: 14, color: Color(0xFF8E8E93)),
+    ),
+  );
 
-  Widget _ranking(String title, List<MapEntry<String,int>> ranking, IconData icon, Color accent) => StairSection(
-    title: title, icon: icon, accent: accent,
-    child: ranking.isEmpty ? _empty() : Column(children: [for (final entry in ranking.take(5)) _stat(entry.key, '${entry.value} 回')]),
+  Widget _ranking(
+    String title,
+    List<MapEntry<String, int>> ranking,
+    IconData icon,
+    Color accent,
+  ) => StairSection(
+    title: title,
+    icon: icon,
+    accent: accent,
+    child: ranking.isEmpty
+        ? _empty()
+        : Column(
+            children: [
+              for (final entry in ranking.take(5))
+                _stat(entry.key, '${entry.value} 回'),
+            ],
+          ),
   );
 
   Widget _event(GiriEvent event) {
     final date = GiriAnalytics.dateOf(event);
-    final status = switch (event.status) {EventStatus.planned => '参加予定', EventStatus.attended => '参加済み', EventStatus.canceled => 'キャンセル'};
+    final status = switch (event.status) {
+      EventStatus.planned => '参加予定',
+      EventStatus.attended => '参加済み',
+      EventStatus.canceled => 'キャンセル',
+    };
     return StairCard(
-      accent: event.kind == EventKind.live ? StairColors.live : StairColors.online,
+      accent: event.kind == EventKind.live
+          ? StairColors.live
+          : StairColors.online,
       padding: const EdgeInsets.all(12),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Text(date == null ? '日付未定  ·  $status' : '${date.year}/${date.month}/${date.day}  ·  $status', style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
-        const SizedBox(height: 3),
-        Text(event.title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-        if (showVenues && event.venue.trim().isNotEmpty) ...[const SizedBox(height: 3), Text(event.venue, style: const TextStyle(fontSize: 12, color: Color(0xFF66666D)))],
-        if (showResults && event.meetingType == MeetingType.tournament && (event.placement != null || event.resultText.trim().isNotEmpty)) ...[
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            date == null
+                ? '日付未定  ·  $status'
+                : '${date.year}/${date.month}/${date.day}  ·  $status',
+            style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
+          ),
           const SizedBox(height: 3),
-          Text([if (event.placement != null) '${event.placement}位', if (event.resultText.trim().isNotEmpty) event.resultText.trim()].join('  ·  '), style: const TextStyle(fontSize: 12, color: StairColors.result)),
+          Text(
+            event.title,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+          if (showVenues && event.venue.trim().isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              event.venue,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF66666D)),
+            ),
+          ],
+          if (showResults &&
+              event.meetingType == MeetingType.tournament &&
+              (event.placement != null ||
+                  event.resultText.trim().isNotEmpty)) ...[
+            const SizedBox(height: 3),
+            Text(
+              [
+                if (event.placement != null) '${event.placement}位',
+                if (event.resultText.trim().isNotEmpty) event.resultText.trim(),
+              ].join('  ·  '),
+              style: const TextStyle(fontSize: 12, color: StairColors.result),
+            ),
+          ],
         ],
-      ]),
+      ),
     );
   }
 }

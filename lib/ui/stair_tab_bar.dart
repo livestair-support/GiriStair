@@ -67,16 +67,20 @@ class StairTabBar extends StatelessWidget {
                           button: true,
                           selected: index == currentIndex,
                           onTap: () {
-                                  if (index != currentIndex) HapticFeedback.selectionClick();
-                                  onTap(index);
-                                },
+                            if (index != currentIndex) {
+                              HapticFeedback.selectionClick();
+                            }
+                            onTap(index);
+                          },
                           child: ExcludeSemantics(
                             child: Material(
                               color: Colors.transparent,
                               child: InkWell(
                                 borderRadius: BorderRadius.circular(36),
                                 onTap: () {
-                                  if (index != currentIndex) HapticFeedback.selectionClick();
+                                  if (index != currentIndex) {
+                                    HapticFeedback.selectionClick();
+                                  }
                                   onTap(index);
                                 },
                                 child: AnimatedContainer(

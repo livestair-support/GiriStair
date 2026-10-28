@@ -406,7 +406,10 @@ class _EventEditorState extends State<EventEditor> {
                             ? null
                             : () => Navigator.pop(
                                 context,
-                                history.map((player) => player.name).where(selected.contains).toList(),
+                                history
+                                    .map((player) => player.name)
+                                    .where(selected.contains)
+                                    .toList(),
                               ),
                         child: const Text('追加'),
                       ),
@@ -420,46 +423,58 @@ class _EventEditorState extends State<EventEditor> {
                       hintText: '名前・フリガナで検索',
                       prefixIcon: Icon(CupertinoIcons.search, size: 20),
                     ),
-                    onChanged: (value) => setSheetState(() => query = playerSearchKey(value)),
+                    onChanged: (value) =>
+                        setSheetState(() => query = playerSearchKey(value)),
                   ),
                 ),
                 const Divider(height: 1),
                 Expanded(
-                  child: Builder(builder: (context) {
-                    final visible = history.where((player) =>
-                        playerSearchKey('${player.name} ${player.furigana}').contains(query)).toList();
-                    return ListView.separated(
-                    itemCount: visible.length,
-                    separatorBuilder: (context, index) =>
-                        const Divider(height: 1, indent: 16),
-                    itemBuilder: (context, index) {
-                      final player = visible[index];
-                      final name = player.name;
-                      final checked = selected.contains(name);
-                      return ListTile(
-                        title: Text(
-                          name,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w400,
-                          ),
-                        ),
-                        subtitle: player.furigana.isEmpty ? null : Text(player.furigana),
-                        dense: true,
-                        trailing: Icon(
-                          checked ? Icons.check_circle : Icons.circle_outlined,
-                          color: checked
-                              ? StairColors.action
-                              : Theme.of(context).colorScheme.outline,
-                        ),
-                        selected: checked,
-                        onTap: () => setSheetState(() {
-                          if (!selected.add(name)) selected.remove(name);
-                        }),
+                  child: Builder(
+                    builder: (context) {
+                      final visible = history
+                          .where(
+                            (player) => playerSearchKey(
+                              '${player.name} ${player.furigana}',
+                            ).contains(query),
+                          )
+                          .toList();
+                      return ListView.separated(
+                        itemCount: visible.length,
+                        separatorBuilder: (context, index) =>
+                            const Divider(height: 1, indent: 16),
+                        itemBuilder: (context, index) {
+                          final player = visible[index];
+                          final name = player.name;
+                          final checked = selected.contains(name);
+                          return ListTile(
+                            title: Text(
+                              name,
+                              style: const TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w400,
+                              ),
+                            ),
+                            subtitle: player.furigana.isEmpty
+                                ? null
+                                : Text(player.furigana),
+                            dense: true,
+                            trailing: Icon(
+                              checked
+                                  ? Icons.check_circle
+                                  : Icons.circle_outlined,
+                              color: checked
+                                  ? StairColors.action
+                                  : Theme.of(context).colorScheme.outline,
+                            ),
+                            selected: checked,
+                            onTap: () => setSheetState(() {
+                              if (!selected.add(name)) selected.remove(name);
+                            }),
+                          );
+                        },
                       );
                     },
-                  );
-                  }),
+                  ),
                 ),
               ],
             ),
@@ -472,10 +487,14 @@ class _EventEditorState extends State<EventEditor> {
   }
 
   void _appendParticipants(List<String> names) {
-    final entered = _participants.map((controller) => playerSearchKey(controller.text)).toSet();
+    final entered = _participants
+        .map((controller) => playerSearchKey(controller.text))
+        .toSet();
     setState(() {
       for (final name in names) {
-        if (name.trim().isEmpty || !entered.add(playerSearchKey(name))) continue;
+        if (name.trim().isEmpty || !entered.add(playerSearchKey(name))) {
+          continue;
+        }
         final empty = _participants
             .where((controller) => controller.text.trim().isEmpty)
             .firstOrNull;
@@ -491,9 +510,13 @@ class _EventEditorState extends State<EventEditor> {
   Future<void> _importParticipants() async {
     FocusManager.instance.primaryFocus?.unfocus();
     final names = await Navigator.of(context).push<List<String>>(
-      MaterialPageRoute(builder: (_) => ParticipantImportScreen(
-        existingNames: _participants.map((controller) => controller.text.trim()).toList(),
-      )),
+      MaterialPageRoute(
+        builder: (_) => ParticipantImportScreen(
+          existingNames: _participants
+              .map((controller) => controller.text.trim())
+              .toList(),
+        ),
+      ),
     );
     if (!mounted || names == null) return;
     _appendParticipants(names);
@@ -508,10 +531,12 @@ class _EventEditorState extends State<EventEditor> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
         child: Row(
           children: [
-            Expanded(child: Text(
-              '${_participants.where((controller) => controller.text.trim().isNotEmpty).length}人',
-              style: Theme.of(context).textTheme.bodySmall,
-            )),
+            Expanded(
+              child: Text(
+                '${_participants.where((controller) => controller.text.trim().isNotEmpty).length}人',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
             TextButton.icon(
               key: const ValueKey('event-import-participants'),
               onPressed: _saving ? null : _importParticipants,
@@ -541,7 +566,9 @@ class _EventEditorState extends State<EventEditor> {
                     onChanged: (_) => setState(() {}),
                     onFieldSubmitted: (_) {
                       if (index == _participants.length - 1) {
-                        setState(() => _participants.add(TextEditingController()));
+                        setState(
+                          () => _participants.add(TextEditingController()),
+                        );
                       }
                       FocusScope.of(context).nextFocus();
                     },
@@ -560,9 +587,14 @@ class _EventEditorState extends State<EventEditor> {
                   if (_participants.length == 1 && value.text.isEmpty) {
                     return IconButton(
                       tooltip: 'プレイヤー一覧から選ぶ',
-                      constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                      constraints: const BoxConstraints(
+                        minWidth: 44,
+                        minHeight: 44,
+                      ),
                       padding: EdgeInsets.zero,
-                      style: IconButton.styleFrom(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                      style: IconButton.styleFrom(
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
                       onPressed: _saving ? null : _pickPastParticipants,
                       icon: const Icon(CupertinoIcons.person_2, size: 22),
                       color: Theme.of(
@@ -572,9 +604,14 @@ class _EventEditorState extends State<EventEditor> {
                   }
                   return IconButton(
                     tooltip: '参加者${index + 1}を削除',
-                    constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
+                    ),
                     padding: EdgeInsets.zero,
-                    style: IconButton.styleFrom(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                    style: IconButton.styleFrom(
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
                     onPressed: _saving
                         ? null
                         : () => setState(() {
@@ -658,8 +695,7 @@ class _EventEditorState extends State<EventEditor> {
           children: [
             const StairInfoButton(
               label: '登録',
-              message:
-                  '会の予定や参加記録を保存できます。参加者は文章や画像から一括追加できます。',
+              message: '会の予定や参加記録を保存できます。参加者は文章や画像から一括追加できます。',
             ),
             StairSaveButton(
               onPressed: value.text.trim().isEmpty || _saving ? null : _save,

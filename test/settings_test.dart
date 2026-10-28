@@ -21,14 +21,18 @@ void main() {
       buildSignature: '',
     );
     await store.load();
-    await tester.pumpWidget(MaterialApp(
-      theme: stairTheme(Brightness.light),
-      home: SettingsScreen(store: store),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: stairTheme(Brightness.light),
+        home: SettingsScreen(store: store),
+      ),
+    );
     await tester.pumpAndSettle();
   }
 
-  testWidgets('settings groups collapse and version belongs to support', (tester) async {
+  testWidgets('settings groups collapse and version belongs to support', (
+    tester,
+  ) async {
     final store = GiriStore(storage: MemoryGiriStorage());
     await openSettings(tester, store);
 
@@ -53,8 +57,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('バックアップを保存'), findsOneWidget);
     expect(find.text('バックアップから復元'), findsOneWidget);
-    expect(tester.getTopLeft(find.text('バージョン')).dy,
-        greaterThan(tester.getTopLeft(find.text('サポート・お問い合わせ')).dy));
+    expect(
+      tester.getTopLeft(find.text('バージョン')).dy,
+      greaterThan(tester.getTopLeft(find.text('サポート・お問い合わせ')).dy),
+    );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     store.dispose();

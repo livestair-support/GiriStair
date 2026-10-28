@@ -28,20 +28,19 @@ class GiriAnalytics {
       .toList(growable: false);
   int get firstPlaceCount =>
       ranked.where((event) => event.placement == 1).length;
-  int get podiumCount =>
-      ranked.where((event) => event.placement! <= 3).length;
+  int get podiumCount => ranked.where((event) => event.placement! <= 3).length;
   int get resultCount => tournaments
-      .where((event) =>
-          event.resultText.trim().isNotEmpty ||
-          (event.placement != null && event.placement! > 0))
+      .where(
+        (event) =>
+            event.resultText.trim().isNotEmpty ||
+            (event.placement != null && event.placement! > 0),
+      )
       .length;
 
-  List<MapEntry<String, int>> get venues => _counts(
-    live.map((event) => event.venue),
-  );
-  List<MapEntry<String, int>> get organizers => _counts(
-    attended.map((event) => event.organizer),
-  );
+  List<MapEntry<String, int>> get venues =>
+      _counts(live.map((event) => event.venue));
+  List<MapEntry<String, int>> get organizers =>
+      _counts(attended.map((event) => event.organizer));
   List<MapEntry<String, int>> get participants => _counts(
     live.expand(
       (event) => event.participants
@@ -61,7 +60,11 @@ class GiriAnalytics {
             ?.toLocal();
 
   static List<int> yearsOf(Iterable<GiriEvent> events) =>
-      events.map(dateOf).whereType<DateTime>().map((date) => date.year).toSet()
+      events
+          .map(dateOf)
+          .whereType<DateTime>()
+          .map((date) => date.year)
+          .toSet()
           .toList()
         ..sort((a, b) => b.compareTo(a));
 

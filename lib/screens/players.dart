@@ -20,21 +20,34 @@ class _PlayerDirectoryScreenState extends State<PlayerDirectoryScreen> {
   String _query = '';
 
   void _edit([GiriPlayer? player]) => Navigator.of(context).push<void>(
-    MaterialPageRoute(builder: (_) => _PlayerEditor(store: widget.store, player: player)),
+    MaterialPageRoute(
+      builder: (_) => _PlayerEditor(store: widget.store, player: player),
+    ),
   );
 
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: const Text('大喜利プレイヤー一覧'),
-      actions: [IconButton(tooltip: 'プレイヤーを追加', onPressed: _edit, icon: const Icon(CupertinoIcons.plus))],
+      actions: [
+        IconButton(
+          tooltip: 'プレイヤーを追加',
+          onPressed: _edit,
+          icon: const Icon(CupertinoIcons.plus),
+        ),
+      ],
     ),
     body: ListenableBuilder(
       listenable: widget.store,
       builder: (context, _) {
         final query = playerSearchKey(_query);
-        final players = widget.store.playerDirectory.where((player) =>
-          playerSearchKey(player.name).contains(query) || playerSearchKey(player.furigana).contains(query)).toList();
+        final players = widget.store.playerDirectory
+            .where(
+              (player) =>
+                  playerSearchKey(player.name).contains(query) ||
+                  playerSearchKey(player.furigana).contains(query),
+            )
+            .toList();
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
@@ -45,10 +58,16 @@ class _PlayerDirectoryScreenState extends State<PlayerDirectoryScreen> {
               accent: StairColors.online,
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
                   child: TextField(
                     onChanged: (value) => setState(() => _query = value),
-                    decoration: const InputDecoration(hintText: '名前・フリガナで検索', prefixIcon: Icon(CupertinoIcons.search, size: 19)),
+                    decoration: const InputDecoration(
+                      hintText: '名前・フリガナで検索',
+                      prefixIcon: Icon(CupertinoIcons.search, size: 19),
+                    ),
                   ),
                 ),
               ],
@@ -61,22 +80,48 @@ class _PlayerDirectoryScreenState extends State<PlayerDirectoryScreen> {
                 if (players.isEmpty)
                   Padding(
                     padding: const EdgeInsets.all(20),
-                    child: Text(query.isEmpty ? '参加者を登録すると、ここに名前が並びます。右上の＋からも追加できます。' : '一致するプレイヤーがいません。', style: Theme.of(context).textTheme.bodySmall),
+                    child: Text(
+                      query.isEmpty
+                          ? '参加者を登録すると、ここに名前が並びます。右上の＋からも追加できます。'
+                          : '一致するプレイヤーがいません。',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ),
                 for (final player in players)
                   InkWell(
                     onTap: () => _edit(player),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                      child: Row(children: [
-                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text(player.name),
-                          if (player.furigana.isNotEmpty)
-                            Text(player.furigana, style: Theme.of(context).textTheme.bodySmall),
-                        ])),
-                        const SizedBox(width: 8),
-                        Icon(CupertinoIcons.chevron_right, size: 15, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                      ]),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 9,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(player.name),
+                                if (player.furigana.isNotEmpty)
+                                  Text(
+                                    player.furigana,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Icon(
+                            CupertinoIcons.chevron_right,
+                            size: 15,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
               ],
@@ -100,7 +145,9 @@ class _PlayerEditor extends StatefulWidget {
 
 class _PlayerEditorState extends State<_PlayerEditor> {
   late final _name = TextEditingController(text: widget.player?.name ?? '');
-  late final _furigana = TextEditingController(text: widget.player?.furigana ?? '');
+  late final _furigana = TextEditingController(
+    text: widget.player?.furigana ?? '',
+  );
   bool _saving = false;
   String? _error;
 
@@ -112,19 +159,29 @@ class _PlayerEditorState extends State<_PlayerEditor> {
   }
 
   Future<void> _save() async {
-    setState(() { _saving = true; _error = null; });
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
     try {
-      await widget.store.savePlayer(GiriPlayer(
-        id: widget.player?.id ?? widget.store.newId(),
-        name: _name.text,
-        furigana: _furigana.text,
-      ));
+      await widget.store.savePlayer(
+        GiriPlayer(
+          id: widget.player?.id ?? widget.store.newId(),
+          name: _name.text,
+          furigana: _furigana.text,
+        ),
+      );
       if (!mounted) return;
       HapticFeedback.lightImpact();
       Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;
-      setState(() { _saving = false; _error = error is FormatException ? error.message : '保存できませんでした。もう一度お試しください。'; });
+      setState(() {
+        _saving = false;
+        _error = error is FormatException
+            ? error.message
+            : '保存できませんでした。もう一度お試しください。';
+      });
     }
   }
 
@@ -135,8 +192,15 @@ class _PlayerEditorState extends State<_PlayerEditor> {
         title: const Text('プレイヤーの登録情報を削除しますか？'),
         content: const Text('過去の会に記録した名前は残ります。過去の参加者は一覧にも引き続き表示されます。'),
         actions: [
-          CupertinoDialogAction(onPressed: () => Navigator.pop(context, false), child: const Text('キャンセル')),
-          CupertinoDialogAction(isDestructiveAction: true, onPressed: () => Navigator.pop(context, true), child: const Text('削除')),
+          CupertinoDialogAction(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('キャンセル'),
+          ),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('削除'),
+          ),
         ],
       ),
     );
@@ -148,7 +212,12 @@ class _PlayerEditorState extends State<_PlayerEditor> {
       HapticFeedback.mediumImpact();
       Navigator.of(context).pop();
     } catch (_) {
-      if (mounted) setState(() { _saving = false; _error = '削除できませんでした。もう一度お試しください。'; });
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = '削除できませんでした。もう一度お試しください。';
+        });
+      }
     }
   }
 
@@ -161,7 +230,10 @@ class _PlayerEditorState extends State<_PlayerEditor> {
           padding: const EdgeInsets.only(right: 12),
           child: ValueListenableBuilder(
             valueListenable: _name,
-            builder: (context, value, _) => StairSaveButton(onPressed: _saving || value.text.trim().isEmpty ? null : _save, saving: _saving),
+            builder: (context, value, _) => StairSaveButton(
+              onPressed: _saving || value.text.trim().isEmpty ? null : _save,
+              saving: _saving,
+            ),
           ),
         ),
       ],
@@ -176,21 +248,50 @@ class _PlayerEditorState extends State<_PlayerEditor> {
           children: [
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: TextField(controller: _name, enabled: !_saving, decoration: const InputDecoration(hintText: 'プレイヤー名 *'), textInputAction: TextInputAction.next),
+              child: TextField(
+                controller: _name,
+                enabled: !_saving,
+                decoration: const InputDecoration(hintText: 'プレイヤー名 *'),
+                textInputAction: TextInputAction.next,
+              ),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: TextField(controller: _furigana, enabled: !_saving, decoration: const InputDecoration(hintText: 'フリガナ'), textInputAction: TextInputAction.done, onSubmitted: (_) { if (!_saving && _name.text.trim().isNotEmpty) _save(); }),
+              child: TextField(
+                controller: _furigana,
+                enabled: !_saving,
+                decoration: const InputDecoration(hintText: 'フリガナ'),
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) {
+                  if (!_saving && _name.text.trim().isNotEmpty) _save();
+                },
+              ),
             ),
           ],
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Text('フリガナ順に並び、名前とフリガナの両方で検索できます。名前の変更は過去の参加記録にも反映されます。', style: Theme.of(context).textTheme.bodySmall),
+          child: Text(
+            'フリガナ順に並び、名前とフリガナの両方で検索できます。名前の変更は過去の参加記録にも反映されます。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ),
-        if (_error != null) Padding(padding: const EdgeInsets.all(16), child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ),
         if (widget.player != null && !widget.player!.id.startsWith('history:'))
-          TextButton(onPressed: _saving ? null : _delete, child: const Text('登録情報を削除', style: TextStyle(color: StairColors.action))),
+          TextButton(
+            onPressed: _saving ? null : _delete,
+            child: const Text(
+              '登録情報を削除',
+              style: TextStyle(color: StairColors.action),
+            ),
+          ),
       ],
     ),
   );

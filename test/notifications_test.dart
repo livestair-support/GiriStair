@@ -27,37 +27,40 @@ void main() {
   const enabled = AppPreferences(notificationsEnabled: true);
   final now = DateTime(2026, 10, 28, 8);
 
-  test('disabled, canceled, attended and elapsed reminders stay unscheduled', () {
-    final events = [
-      meeting('future', start: DateTime(2026, 10, 28, 12)),
-      meeting('past', start: DateTime(2026, 10, 28, 8, 30)),
-      meeting(
-        'canceled',
-        start: DateTime(2026, 10, 28, 12),
-        status: EventStatus.canceled,
-      ),
-      meeting(
-        'attended',
-        start: DateTime(2026, 10, 28, 12),
-        status: EventStatus.attended,
-      ),
-    ];
-    expect(
-      planGiriReminders(
+  test(
+    'disabled, canceled, attended and elapsed reminders stay unscheduled',
+    () {
+      final events = [
+        meeting('future', start: DateTime(2026, 10, 28, 12)),
+        meeting('past', start: DateTime(2026, 10, 28, 8, 30)),
+        meeting(
+          'canceled',
+          start: DateTime(2026, 10, 28, 12),
+          status: EventStatus.canceled,
+        ),
+        meeting(
+          'attended',
+          start: DateTime(2026, 10, 28, 12),
+          status: EventStatus.attended,
+        ),
+      ];
+      expect(
+        planGiriReminders(
+          events: events,
+          preferences: const AppPreferences(),
+          now: now,
+        ),
+        isEmpty,
+      );
+      final plan = planGiriReminders(
         events: events,
-        preferences: const AppPreferences(),
+        preferences: enabled,
         now: now,
-      ),
-      isEmpty,
-    );
-    final plan = planGiriReminders(
-      events: events,
-      preferences: enabled,
-      now: now,
-    );
-    expect(plan.map((item) => item.key), ['future:start']);
-    expect(plan.single.when, DateTime(2026, 10, 28, 11));
-  });
+      );
+      expect(plan.map((item) => item.key), ['future:start']);
+      expect(plan.single.when, DateTime(2026, 10, 28, 11));
+    },
+  );
 
   test('calendar-only meetings use the chosen local morning time', () {
     final plan = planGiriReminders(
@@ -105,16 +108,17 @@ void main() {
       'online:submission',
       'online:voting',
     });
-    expect(plan.every((item) => item.when == DateTime(2026, 10, 29, 22, 30)), isTrue);
+    expect(
+      plan.every((item) => item.when == DateTime(2026, 10, 29, 22, 30)),
+      isTrue,
+    );
   });
 
   test('iOS limit keeps the nearest 64 reminders in a stable order', () {
     final events = List.generate(
       80,
-      (index) => meeting(
-        'event$index',
-        start: now.add(Duration(hours: 82 - index)),
-      ),
+      (index) =>
+          meeting('event$index', start: now.add(Duration(hours: 82 - index))),
     );
     final plan = planGiriReminders(
       events: events,
