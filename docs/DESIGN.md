@@ -1,40 +1,40 @@
-# GiriStairの共通デザイン
+# LiveStairに合わせるUI仕様
 
-LiveStairの登録画面を基準に、Flutter側の共通部品を `lib/ui/stair_theme.dart`、ネイティブ風の選択操作を `lib/ui/stair_controls.dart`、下部タブを `lib/ui/stair_tab_bar.dart` にまとめています。
+基準はLiveStairのSwiftUI実装です。従来のGiriStairの値を正解とは扱いません。参照は [LiveStair 8431bb5](https://github.com/livestair-support/LiveStair/tree/8431bb50778d7b5f22f73226d3306f9e2f9f0d5e)。LiveStairは変更しません。調査結果と確認範囲は [照合記録](UI_PARITY_AUDIT.md) に残します。
 
-## 基本
+## 文字
 
-- 提示されたLiveStairの画面に合わせ、既定はライト表示です。背景は `#F9F9FB`、カードの地色は白。ダーク用の共通テーマも保持します。
-- iPhoneの本文・見出しはFlutter 3.44の正式なAppleシステムフォント指定 `CupertinoSystemText` / `CupertinoSystemDisplay` を使います。日本語は `Hiragino Sans` → `Hiragino Kaku Gothic ProN` の順に明示し、ロケールはja_JPに揃えます。入力欄・AppBar・Cupertinoダイアログ・共有画像でも同じ文字設定を保持します。本文・入力値・プレースホルダー・選択値は17pxのmedium（w500）を基本にし、見出しはbold（w700）にします。フォント名だけを変えて太さが変わらない修正は避けます。
-- 主な操作はピンク `#FF2D55`。
-- メイン画面は38pxの淡色アイコンと34pxの太字見出し。
-- カードは角丸20px、淡い色の背景と枠、左側に3pxのカラーライン。
-- セクション見出しは28pxのアイコン背景と18pxの太字。
-- 登録は大きな基本情報カードにまとめ、見出しと各行を端まで続く細い罫線で区切ります。テキストは全幅のプレースホルダー、選択行は左に15pxの灰色ラベル、右に選択値と矢印を置きます。画面が狭い場合や文字が大きい場合は縦並びにします。
-- 保存は見出しの右側に置き、タイトル未入力のときは無効にします。形式などは行の近くに開くチェック付きメニュー、日付はカレンダー、時刻はCupertinoのホイールを使い、キャンセル時は変更しません。
-- 参加者は別の青いカードで1人ずつ入力し、44pxのコンパクトな行で入力します。人数はセクション見出しの右に表示し、「文字一括」「OCR一括」を別のボタンにします。OCRは登録画面から直接画像選択へ進み、認識結果を確認・訂正・選択して追加します。プレイヤー名とフリガナで一覧からも選べます。
-- 下部は左右に余白のある半透明のカプセル型タブバー。未選択は黒いアイコン、選択中はピンクと淡い選択背景です。タブは登録・一覧・戦績・思考・設定を維持します。
+`StairTypography.role` で役割を分けます。iPhoneの `appFontSize` 倍率は1.0です。
 
-## 用途の色
+| 要素 | SwiftUIの指定 | GiriStair |
+| --- | --- | --- |
+| ページタイトル | 34 bold、標準design | pageTitle |
+| セクションタイトル | 18 bold、Rounded | sectionTitle |
+| 左ラベル | subheadline.medium（15） | formLabel |
+| 入力・placeholder・Picker値 | body（17 regular） | input / value |
+| 設定済み日付 | body.semibold（17） | dateValue |
+| 保存 | headline.bold（17） | saveButton |
+| 補助文字 | footnote（13）/caption（12） | footnote / caption |
 
-| 用途 | 色 |
-| --- | --- |
-| 登録・基本情報 | `#F0456E` |
-| 一覧・ネット大喜利 | `#6980A8` |
-| 会場 | `#40999C` |
-| 戦績・集計 | `#C28C47` |
-| 思考・メモ | `#6B9473` |
-| 設定 | `#946BB8` |
+本文を一律w500にしません。固定行高1.25も廃止し、自然なメトリクスを使います。通常のAppleフォントはFlutterの正式な `CupertinoSystemText` / `CupertinoSystemDisplay`、ロケールはja_JPです。iOS起動時にUIFont/CoreTextから取得した日本語fallbackとRounded descriptorの名前を使います。フォントファイルの同梱や私的なフォント名の推測はしません。AndroidへApple専用フォント名を強制しません。
 
-参考はLiveStairの `CommonUI.swift` 内の `AppSectionAccent`、`AppCardSectionTitle`、`appTintedCard`、`MainTabTitleHeader` と、登録画面の入力行です。テーマは端末・ライト・ダーク・GiriStair（暖色）から選択し、再起動後も保持します。設定は共有ページ・集計・一覧・デフォルト設定・通知・データ管理・サポートのカードで構成し、バージョンはサポートの最後に表示します。
+## Form・カード
 
-投稿期間の判定、メモの保持、登録・編集・削除の動作を維持します。開催日だけの記録については `docs/SPEC.md` の `eventDate` を使います。
+登録はEventBasicEditorのFormを基準に、最小行高48、行内余白は上下8・左右16、セクション間隔14、先頭余白8です。拡大文字では高さを伸ばします。参加者だけは多数入力用の既存44行を維持します。
 
-## 条件選択と説明文
+セクション見出しは28のbadge・glyph14 semibold・文字18 bold Rounded。登録badgeの背景はアクセント色の0.12、汎用は0.14です。メイン見出しは38のbadge・glyph19 boldと34 boldの文字、余白は左右18・上8・下14、保存は44高です。
 
-- 一覧・戦績・思考・共有などの条件や種類の選択は、左にラベル、右に選択値と小さな上下矢印を置く `StairMenuRow` を使います。値を押すとチェック付きメニューが開き、外を押して閉じたときは変更しません。絞り込みにチップやボタン群を並べず、LiveStairの該当画面の形を優先します。
-- 一覧・戦績・思考の画面冒頭や空状態に、機能を説明するキャプションは付けません。空のときは「記録がありません」など状態を短く表示します。記録そのものの内容・日付・結果・件数、保存や削除の確認は維持します。
+用途色は `StairColors` にまとめます。カードは淡いtint、continuousの角丸、細い枠、左3のアクセントです。Form行の区切り線は左右16、見出し直下は全幅です。OSが描くFormの正確な曲率はRoundedSuperellipseで近似します。時刻は70×32・モノスペース数字、未定操作との境界に短い縦線を置きます。
 
-## iPhoneの操作感
+キーボードで画面をリサイズし、入力を保持します。下部タブを隠したときは末尾余白を縮めます。編集画面は44高のナビゲーションと別の大きな見出しを使います。
 
-画面遷移はCupertinoのスライドと戻るジェスチャー、スクロールはCupertinoの物理特性を使います。選択メニュー・日付・時刻・確認はCupertinoの操作に揃え、Materialの波紋やAndroid式カレンダーを表示しません。保存完了はLiveStairと同様、触覚と一覧への遷移で知らせ、黒いSnackBarを出しません。エラーやコピー結果は短い共通メッセージで表示します。
+## iPhoneの標準部品
+
+- タブは実際のUITabBarControllerです。独自カプセルや選択pillをFlutterで描きません。SF Symbols・文字・背景・選択形状・アニメーション・safe areaはOSが決定します。iOS 26の外観はiOS 26 SDK以降でリンクしたビルドで確認します。
+- Pickerは右側に実際のUIButton/UIMenuを置き、ラベル・ⓘとは別のタップ領域にします。チェック・位置・開閉・キャンセルをOSへ任せます。外側で閉じても値を変えません。参加状況だけselection feedbackを付けます。
+- 時刻はcompact UIDatePickerです。未定を押しただけで架空の時刻を保存しません。投稿・投票日時はnative wheelと確定・キャンセルを使います。
+- 日付はLiveStair独自カレンダーをFlutterで合わせ、日を押して確定します。月・年移動、未定への解除、外側タップのキャンセルを用意します。
+- badgeのアイコンは端末のSF Symbolsを実際に描画して使い、非iOS・未対応アイコンはFlutterへfallbackします。
+- 5タブ、IndexedStackの状態保持、各画面の機能を維持します。Androidと広い画面はCupertinoTabBarへfallbackします。
+
+保存データ・集計ロジックは変更しません。近似箇所と検証範囲は照合記録に明記します。

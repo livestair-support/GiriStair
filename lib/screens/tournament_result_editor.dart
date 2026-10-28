@@ -49,7 +49,7 @@ class TournamentResultEditor extends StatelessWidget {
       onChanged: onChanged,
       maxLines: maxLines,
       keyboardType: number ? TextInputType.number : null,
-      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w500),
+      style: StairTypography.role(StairTextRole.input),
       decoration: InputDecoration(
         hintText: hint,
         suffixText: number ? '位' : null,

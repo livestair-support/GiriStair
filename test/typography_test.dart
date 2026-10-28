@@ -89,7 +89,7 @@ void main() {
       );
       expect(
         paragraph(tester, find.text('通常会')).text.style!.fontWeight,
-        FontWeight.w500,
+        FontWeight.w400,
       );
       final editable = tester.state<EditableTextState>(
         find.descendant(
@@ -97,10 +97,10 @@ void main() {
           matching: find.byType(EditableText),
         ),
       );
-      expect(editable.renderEditable.text!.style!.fontWeight, FontWeight.w500);
+      expect(editable.renderEditable.text!.style!.fontWeight, FontWeight.w400);
       expect(
         paragraph(tester, find.text('会・大会名 *')).text.style!.fontWeight,
-        FontWeight.w500,
+        FontWeight.w400,
       );
 
       await tester.tap(find.byType(StairMenuRow<MeetingType>));
