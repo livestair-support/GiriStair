@@ -92,13 +92,19 @@ class _ThinkingScreenState extends State<ThinkingScreen>
                 accent: StairColors.memo,
                 children: [
                   ListTile(
-                    leading: const StairIconBadge(icon: Icons.edit_note_outlined, accent: StairColors.memo),
+                    leading: const StairIconBadge(
+                      icon: Icons.edit_note_outlined,
+                      accent: StairColors.memo,
+                    ),
                     title: const Text('回答メモ'),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => _create(NoteKind.answers),
                   ),
                   ListTile(
-                    leading: const StairIconBadge(icon: Icons.lightbulb_outline, accent: StairColors.memo),
+                    leading: const StairIconBadge(
+                      icon: Icons.lightbulb_outline,
+                      accent: StairColors.memo,
+                    ),
                     title: const Text('お題を作る'),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => _create(NoteKind.prompts),
@@ -179,8 +185,14 @@ class _ThinkingScreenState extends State<ThinkingScreen>
                     label: 'メモの種類',
                     accent: StairColors.memo,
                     value: _filter?.index ?? -1,
-                    items: {-1: 'すべて', for (final kind in NoteKind.values) kind.index: _kindLabel(kind)},
-                    onChanged: (value) => setState(() => _filter = value < 0 ? null : NoteKind.values[value]),
+                    items: {
+                      -1: 'すべて',
+                      for (final kind in NoteKind.values)
+                        kind.index: _kindLabel(kind),
+                    },
+                    onChanged: (value) => setState(
+                      () => _filter = value < 0 ? null : NoteKind.values[value],
+                    ),
                   ),
                 ],
               ),
@@ -634,11 +646,17 @@ class _ThoughtEditorState extends State<_ThoughtEditor> {
                     label: '種類',
                     accent: StairColors.memo,
                     value: _kind,
-                    items: {for (final kind in NoteKind.values) kind: _kindLabel(kind)},
+                    items: {
+                      for (final kind in NoteKind.values)
+                        kind: _kindLabel(kind),
+                    },
                     onChanged: (value) => setState(() => _kind = value),
                   ),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 4,
+                    ),
                     child: Semantics(
                       label: 'タイトル',
                       child: TextField(
@@ -657,7 +675,13 @@ class _ThoughtEditorState extends State<_ThoughtEditor> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          Expanded(child: Text(_eventById(widget.store, _eventId)?.title ?? '関連づけなし', textAlign: TextAlign.end)),
+                          Expanded(
+                            child: Text(
+                              _eventById(widget.store, _eventId)?.title ??
+                                  '関連づけなし',
+                              textAlign: TextAlign.end,
+                            ),
+                          ),
                           const SizedBox(width: 8),
                           const Icon(Icons.chevron_right, size: 20),
                         ],

@@ -84,7 +84,9 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   accent: StairColors.result,
                   value: _kind?.index ?? -1,
                   items: const {-1: 'すべて', 0: '生大喜利', 1: 'ネット大喜利'},
-                  onChanged: (value) => setState(() => _kind = value < 0 ? null : EventKind.values[value]),
+                  onChanged: (value) => setState(
+                    () => _kind = value < 0 ? null : EventKind.values[value],
+                  ),
                 ),
                 StairMenuRow<_ResultFilter>(
                   key: const ValueKey('results-result-filter'),

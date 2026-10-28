@@ -170,7 +170,9 @@ class StairMenuRow<T> extends StatelessWidget {
                 textAlign: TextAlign.right,
                 style: TextStyle(
                   fontSize: 17,
-                  fontWeight: accent == null ? FontWeight.w400 : FontWeight.w500,
+                  fontWeight: accent == null
+                      ? FontWeight.w400
+                      : FontWeight.w500,
                   color: onChanged == null
                       ? Theme.of(context).disabledColor
                       : Theme.of(context).colorScheme.onSurface,

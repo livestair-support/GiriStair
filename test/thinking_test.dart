@@ -197,13 +197,15 @@ void main() {
     await store.load();
     final now = DateTime.now();
     for (final kind in NoteKind.values) {
-      await store.saveNote(ThoughtNote(
-        id: kind.name,
-        title: '保存した${kind.name}',
-        kind: kind,
-        createdAt: now,
-        updatedAt: now,
-      ));
+      await store.saveNote(
+        ThoughtNote(
+          id: kind.name,
+          title: '保存した${kind.name}',
+          kind: kind,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
     }
     await _showThinking(tester, store);
     expect(find.byType(ChoiceChip), findsNothing);
@@ -213,14 +215,28 @@ void main() {
     await tester.ensureVisible(filter);
     await tester.tap(filter);
     await tester.pumpAndSettle();
-    await tester.tap(find.descendant(of: find.byType(CupertinoButton), matching: find.text('お題')).last);
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byType(CupertinoButton),
+            matching: find.text('お題'),
+          )
+          .last,
+    );
     await tester.pumpAndSettle();
     expect(find.text('保存したprompts'), findsOneWidget);
     expect(find.text('保存したanswers'), findsNothing);
     expect(find.text('保存したfree'), findsNothing);
     await tester.tap(filter);
     await tester.pumpAndSettle();
-    await tester.tap(find.descendant(of: find.byType(CupertinoButton), matching: find.text('すべて')).last);
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byType(CupertinoButton),
+            matching: find.text('すべて'),
+          )
+          .last,
+    );
     await tester.pumpAndSettle();
     expect(find.text('保存したanswers'), findsOneWidget);
     expect(find.text('保存したfree'), findsOneWidget);
@@ -238,7 +254,14 @@ void main() {
     expect(find.byType(StairMenuRow<NoteKind>), findsOneWidget);
     await tester.tap(kindMenu);
     await tester.pumpAndSettle();
-    await tester.tap(find.descendant(of: find.byType(CupertinoButton), matching: find.text('お題')).last);
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byType(CupertinoButton),
+            matching: find.text('お題'),
+          )
+          .last,
+    );
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, '種類を変えたメモ');
     await tester.enterText(find.byType(TextField).at(1), '保存する本文');
@@ -249,5 +272,4 @@ void main() {
     expect(store.notes.single.body, '保存する本文');
     expect(tester.takeException(), isNull);
   });
-
 }

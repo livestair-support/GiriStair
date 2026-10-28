@@ -107,7 +107,10 @@ class _EventListScreenState extends State<EventListScreen> {
                 onChanged: (value) => setState(() => _upcomingOnly = value),
               ),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
                 child: TextField(
                   key: const ValueKey('list-search'),
                   decoration: const InputDecoration(
@@ -157,9 +160,7 @@ class _EventListScreenState extends State<EventListScreen> {
                   ),
                   const SizedBox(height: 14),
                   Text(
-                    widget.store.events.isEmpty
-                        ? '記録がありません'
-                        : '該当する記録がありません',
+                    widget.store.events.isEmpty ? '記録がありません' : '該当する記録がありません',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ],
