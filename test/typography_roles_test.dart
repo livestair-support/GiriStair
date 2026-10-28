@@ -53,38 +53,77 @@ void main() {
     );
   });
 
-  test('device-resolved faces preserve rounded design and Japanese weight', () {
+  test('device families preserve rounded design and requested Japanese weight', () {
     StairTypography.configureNativeFonts({
       'sectionTitle': {
-        'latinPostscriptName': 'DeviceRoundedBold',
-        'japanesePostscriptName': 'DeviceJapaneseRoundedBold',
+        'latinFamilyName': 'Device Rounded',
+        'japaneseFamilyName': 'Device Japanese Rounded',
+        'latinPostscriptName': 'DeviceRounded-Bold',
+        'japanesePostscriptName': 'DeviceJapaneseRounded-Bold',
       },
-      'input': {'japanesePostscriptName': 'DeviceJapaneseRegular'},
-      'saveButton': {'japanesePostscriptName': 'DeviceJapaneseBold'},
+      'input': {
+        'latinFamilyName': 'Device System',
+        'japaneseFamilyName': 'Device Japanese',
+        'japanesePostscriptName': 'DeviceJapanese-Regular',
+      },
+      'saveButton': {
+        'latinFamilyName': 'Device System',
+        'japaneseFamilyName': 'Device Japanese',
+        'japanesePostscriptName': 'DeviceJapanese-Bold',
+      },
+      'pageTitle': {
+        'latinFamilyName': 'Device System',
+        'japaneseFamilyName': 'Device Japanese',
+      },
     });
     final section = StairTypography.role(
       StairTextRole.sectionTitle,
       platform: TargetPlatform.iOS,
     );
-    expect(section.fontFamily, 'DeviceRoundedBold');
-    expect(section.fontFamilyFallback, ['DeviceJapaneseRoundedBold']);
+    expect(section.fontFamily, 'Device Rounded');
+    expect(section.fontFamilyFallback, ['Device Japanese Rounded']);
+    final input = StairTypography.role(
+      StairTextRole.input,
+      platform: TargetPlatform.iOS,
+    );
+    expect(input.fontFamily, 'Device System');
+    expect(input.fontFamilyFallback, ['Device Japanese']);
+    expect(input.fontWeight, FontWeight.w400);
+    final bold = StairTypography.style(
+      const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+      platform: TargetPlatform.iOS,
+    );
+    expect(bold.fontFamily, 'Device System');
+    expect(bold.fontFamilyFallback, ['Device Japanese']);
+    expect(bold.fontWeight, FontWeight.w700);
+    final page = StairTypography.role(
+      StairTextRole.pageTitle,
+      platform: TargetPlatform.iOS,
+    );
+    expect(page.fontFamily, 'CupertinoSystemDisplay');
+    expect(page.fontFamilyFallback, ['Device Japanese']);
+  });
+
+  test('PostScript-only metadata does not masquerade as a font family', () {
+    StairTypography.configureNativeFonts({
+      'input': {
+        'latinPostscriptName': 'DeviceSystem-Regular',
+        'japanesePostscriptName': 'DeviceJapanese-Regular',
+      },
+    });
     final input = StairTypography.role(
       StairTextRole.input,
       platform: TargetPlatform.iOS,
     );
     expect(input.fontFamily, 'CupertinoSystemText');
-    expect(input.fontFamilyFallback, ['DeviceJapaneseRegular']);
-    final bold = StairTypography.style(
-      const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-      platform: TargetPlatform.iOS,
-    );
-    expect(bold.fontFamilyFallback, ['DeviceJapaneseBold']);
-    expect(bold.fontWeight, FontWeight.w700);
+    expect(input.fontFamilyFallback, ['Hiragino Sans', 'Hiragino Kaku Gothic ProN']);
   });
 
   test('iOS font metadata never imposes Apple fonts on Android', () {
     StairTypography.configureNativeFonts({
       'sectionTitle': {
+        'latinFamilyName': 'Device Rounded',
+        'japaneseFamilyName': 'Device Japanese Rounded',
         'latinPostscriptName': 'DeviceRoundedBold',
         'japanesePostscriptName': 'DeviceJapaneseRoundedBold',
       },

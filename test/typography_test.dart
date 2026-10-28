@@ -68,6 +68,53 @@ Widget japaneseApp(Widget screen) => MaterialApp(
 
 void main() {
   testWidgets(
+    'device family names reach rendered registration labels and inputs',
+    (tester) async {
+      configureIPhone(tester);
+      StairTypography.configureNativeFonts({
+        for (final role in StairTextRole.values)
+          role.name: {
+            'latinFamilyName': role == StairTextRole.sectionTitle
+                ? 'Device Rounded'
+                : 'Device System',
+            'japaneseFamilyName': 'Device Japanese',
+            'latinPostscriptName': 'UnusedFace-Regular',
+            'japanesePostscriptName': 'UnusedJapaneseFace-Regular',
+          },
+      });
+      addTearDown(() => StairTypography.configureNativeFonts({}));
+      final store = GiriStore(storage: MemoryGiriStorage());
+      await store.load();
+      await tester.pumpWidget(japaneseApp(EventEditor(store: store)));
+      await tester.pumpAndSettle();
+
+      final heading = paragraph(tester, find.text('基本情報')).text.style!;
+      expect(heading.fontFamily, 'Device Rounded');
+      expect(heading.fontFamilyFallback, ['Device Japanese']);
+      expect(heading.fontWeight, FontWeight.w700);
+      final label = paragraph(tester, find.text('会の種類')).text.style!;
+      expect(label.fontFamily, 'Device System');
+      expect(label.fontFamilyFallback, ['Device Japanese']);
+      expect(label.fontWeight, FontWeight.w500);
+      final editable = tester.state<EditableTextState>(
+        find.descendant(
+          of: find.byKey(const ValueKey('event-title')),
+          matching: find.byType(EditableText),
+        ),
+      );
+      final input = editable.renderEditable.text!.style!;
+      expect(input.fontFamily, 'Device System');
+      expect(input.fontFamilyFallback, ['Device Japanese']);
+      expect(input.fontWeight, FontWeight.w400);
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(const SizedBox());
+      store.dispose();
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
     'registration input, menu and Cupertino help keep Japanese fonts',
     (tester) async {
       configureIPhone(tester);

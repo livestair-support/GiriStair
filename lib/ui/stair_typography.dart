@@ -22,7 +22,7 @@ enum StairTextRole {
 }
 
 /// SF covers Latin characters. Native UIFont/CoreText metadata supplies the
-/// matching Japanese face and the rounded design when running on an iPhone.
+/// matching Japanese family and rounded design when running on an iPhone.
 abstract final class StairTypography {
   static const locale = Locale('ja', 'JP');
   static const _japaneseGothic = ['Hiragino Sans', 'Hiragino Kaku Gothic ProN'];
@@ -31,8 +31,8 @@ abstract final class StairTypography {
   static bool _apple(TargetPlatform platform) =>
       platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
 
-  /// The iOS adapter resolves these names from the device's actual UIFont
-  /// descriptors. No private PostScript name is guessed or bundled in Dart.
+  /// The iOS adapter resolves these families from the device's actual UIFont
+  /// descriptors. No private font name is guessed or bundled in Dart.
   /// Missing metadata keeps the documented Flutter Apple font cascade.
   static void configureNativeFonts(Map<String, dynamic> fonts) {
     _nativeFonts = {
@@ -158,19 +158,25 @@ abstract final class StairTypography {
     final target = platform ?? defaultTargetPlatform;
     final selectedRole = role ?? _roleFor(original);
     final metadata = _apple(target) ? _nativeFonts[selectedRole.name] : null;
-    final roundedName = metadata?['latinPostscriptName'];
-    final japaneseName = metadata?['japanesePostscriptName'];
+    final latinFamily = metadata?['latinFamilyName'];
+    final japaneseFamily = metadata?['japaneseFamilyName'];
+    final hasLatinFamily = latinFamily != null && latinFamily.isNotEmpty;
+    String? family;
+    if (usesRoundedDesign(selectedRole) && hasLatinFamily) {
+      family = latinFamily;
+    } else if (display || (original.fontSize ?? 0) >= 20) {
+      family = displayFamily(target);
+    } else {
+      family = hasLatinFamily ? latinFamily : bodyFamily(target);
+    }
+    // Skia's CoreText manager matches kCTFontFamilyNameAttribute, not a
+    // PostScript face name. Keep the role's requested weight for that family.
+    // Retaining the Latin system family first also prevents a Japanese
+    // fallback family from becoming the font for Latin text.
     return original.copyWith(
-      fontFamily:
-          usesRoundedDesign(selectedRole) &&
-              roundedName != null &&
-              roundedName.isNotEmpty
-          ? roundedName
-          : display || (original.fontSize ?? 0) >= 20
-          ? displayFamily(target)
-          : bodyFamily(target),
-      fontFamilyFallback: japaneseName != null && japaneseName.isNotEmpty
-          ? [japaneseName]
+      fontFamily: family,
+      fontFamilyFallback: japaneseFamily != null && japaneseFamily.isNotEmpty
+          ? [japaneseFamily]
           : fallback(target),
       locale: locale,
     );

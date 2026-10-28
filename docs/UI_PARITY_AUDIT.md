@@ -7,7 +7,7 @@
 | 対象 | LiveStairの実装 | GiriStairの差と対応 |
 | --- | --- | --- |
 | 字体 | AppCardSectionTitleは18 bold Rounded、MainTabTitleLabelは34 bold。入力・Pickerにfont上書きなし | 一律w500を廃止し、regular/medium/semibold/boldを役割で分離。Roundedは端末descriptorを使用 |
-| 日本語 | SwiftUIシステムフォントcascade | 固定Hiragino familyから、UIFont/CoreTextで実際の日本語faceを取得する方式へ。Flutter側のface解決は実描画も確認が必要 |
+| 日本語 | SwiftUIシステムフォントcascade | UIFont/CoreTextで実際の日本語familyを取得し、役割別weightで指定。PostScript名をfamilyとして渡す誤りを修正。Flutter側の実描画も確認が必要 |
 | 行高 | editorRowInsets上下8・左右16、defaultMinListRowHeight48、section gap14、top margin8 | 独自vertical5/min38、cardmargin7とscrolltop4から参照値へ |
 | 見出し・保存 | MainTabTitleHeader左右18・上8・下14、保存17 bold/44高 | 保存tap boxにより見出しが高かった。44へ揃え、登録と編集のナビゲーションを区別 |
 | Formの境界 | listRowInsetsを使うseparator | 全行全幅だった線を左右16へ。continuous cornerを近似 |
@@ -17,6 +17,8 @@
 | 非iOS | 対象外 | Appleフォント強制を除去。native UIはiOSの起動確認後だけ有効化 |
 
 主な根拠はCommonUIのAppCardSectionTitle/AppSectionCardModifier/MainTabTitleLabel/MainTabTitleHeaderと、EventBasicEditorのeditorRowInsets/editorCardSectionHeader/editorFieldLabel/basicSection/categoryPicker/attendancePicker/dateRow/EventEditorTimePickerButton/EventDateCalendarPickerViewです。
+
+字体の解決経路も固定Flutter SDKのengineと、DEPSで固定された[SkiaのCoreText manager](https://github.com/google/skia/blob/e9ed4fc9f1544c58d8a9347c1fc9471d8dd7c465/src/ports/SkFontMgr_mac_ct.cpp#L337)で確認しました。SkParagraphの[family照合](https://github.com/google/skia/blob/e9ed4fc9f1544c58d8a9347c1fc9471d8dd7c465/modules/skparagraph/src/FontCollection.cpp#L185)はfamily名を要求します。本文・Rounded・日本語に端末のfamily名を使い、weightは別に渡します。本文のLatin system familyを日本語より先に置き、Displayはengine登録済みのproxyを維持します。family情報がない場合、PostScript名で代用せず既存の標準fallbackに戻します。テストは描画へ届くstyleも検査しますが、実際のグリフ一致を証明するものではありません。
 
 ## 合わせられるものと残る差
 

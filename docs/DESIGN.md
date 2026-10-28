@@ -16,7 +16,9 @@
 | 保存 | headline.bold（17） | saveButton |
 | 補助文字 | footnote（13）/caption（12） | footnote / caption |
 
-本文を一律w500にしません。固定行高1.25も廃止し、自然なメトリクスを使います。通常のAppleフォントはFlutterの正式な `CupertinoSystemText` / `CupertinoSystemDisplay`、ロケールはja_JPです。iOS起動時にUIFont/CoreTextから取得した日本語fallbackとRounded descriptorの名前を使います。フォントファイルの同梱や私的なフォント名の推測はしません。AndroidへApple専用フォント名を強制しません。
+本文を一律w500にしません。固定行高1.25も廃止し、自然なメトリクスを使います。ロケールはja_JPです。iOS起動時にUIFont/CoreTextから取得した本文・日本語fallback・Roundedの**family名**を使い、役割ごとのweightを指定します。ページタイトルなどDisplayはFlutterが登録する `CupertinoSystemDisplay` を維持します。端末情報がない場合はFlutterの標準 `CupertinoSystemText` / `CupertinoSystemDisplay` と日本語familyへ退避します。
+
+SkiaのCoreText照合は `kCTFontFamilyNameAttribute` を必須条件にするため、PostScriptのface名をfamily欄へ渡しません（[固定SDKに対応する実装](https://github.com/google/skia/blob/e9ed4fc9f1544c58d8a9347c1fc9471d8dd7c465/src/ports/SkFontMgr_mac_ct.cpp#L337)）。Latin用system familyを先に置き、日本語fallbackが英数字の第一候補になるのを防ぎます。フォントファイルの同梱や私的なフォント名の推測はしません。AndroidへApple専用フォント名を強制しません。
 
 ## Form・カード
 
