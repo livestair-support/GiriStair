@@ -1,0 +1,42 @@
+name: Flutter checks
+on:
+  pull_request:
+  push:
+    branches: ['codex/**']
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.0'
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Format
+        id: format
+        run: |
+          dart format lib test
+          git diff --exit-code -- lib test
+      - name: Analyze
+        if: success() || failure()
+        run: flutter analyze --fatal-infos
+      - name: Test
+        if: success() || failure()
+        run: flutter test
+      - name: Native project configuration
+        if: success() || failure()
+        run: python3 -m unittest discover -s .ci -p 'test_*.py'
+      - name: Dependency lock and formatting patch
+        if: always()
+        run: |
+          git diff -- pubspec.lock lib test > validation.patch
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-patch
+          path: validation.patch

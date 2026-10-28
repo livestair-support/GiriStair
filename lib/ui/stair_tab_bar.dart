@@ -1,6 +1,8 @@
 import 'dart:ui';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'stair_theme.dart';
 
@@ -16,11 +18,11 @@ class StairTabBar extends StatelessWidget {
   final ValueChanged<int> onTap;
 
   static const _tabs = [
-    (Icons.add_circle, '登録'),
-    (Icons.watch_later, '一覧'),
+    (CupertinoIcons.add_circled_solid, '登録'),
+    (CupertinoIcons.clock_fill, '一覧'),
     (Icons.emoji_events, '戦績'),
-    (Icons.edit_note, '思考'),
-    (Icons.settings, '設定'),
+    (CupertinoIcons.text_badge_checkmark, '思考'),
+    (CupertinoIcons.gear_solid, '設定'),
   ];
 
   @override
@@ -64,13 +66,19 @@ class StairTabBar extends StatelessWidget {
                           label: _tabs[index].$2,
                           button: true,
                           selected: index == currentIndex,
-                          onTap: () => onTap(index),
+                          onTap: () {
+                                  if (index != currentIndex) HapticFeedback.selectionClick();
+                                  onTap(index);
+                                },
                           child: ExcludeSemantics(
                             child: Material(
                               color: Colors.transparent,
                               child: InkWell(
                                 borderRadius: BorderRadius.circular(36),
-                                onTap: () => onTap(index),
+                                onTap: () {
+                                  if (index != currentIndex) HapticFeedback.selectionClick();
+                                  onTap(index);
+                                },
                                 child: AnimatedContainer(
                                   duration: const Duration(milliseconds: 180),
                                   constraints: const BoxConstraints(

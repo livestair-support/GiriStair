@@ -1,7 +1,9 @@
 import 'dart:math' as math;
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'stair_theme.dart';
 
@@ -24,28 +26,80 @@ class StairMenuRow<T> extends StatelessWidget {
 
   Future<void> _choose(BuildContext context) async {
     FocusScope.of(context).unfocus();
-    final selected = await showCupertinoModalPopup<T>(
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final origin = box.localToGlobal(Offset.zero);
+    final screen = MediaQuery.sizeOf(context);
+    final padding = MediaQuery.paddingOf(context);
+    final width = math.min(250.0, screen.width - 32);
+    final rowHeight = math.max(44.0, MediaQuery.textScalerOf(context).scale(17) + 20);
+    final height = math.min(items.length * rowHeight + 16,
+        screen.height - padding.vertical - 32);
+    final top = origin.dy.clamp(padding.top + 12,
+        math.max(padding.top + 12, screen.height - padding.bottom - height - 12));
+    final left = (origin.dx + box.size.width - width - 16)
+        .clamp(16.0, screen.width - width - 16);
+    final selected = await showGeneralDialog<T>(
       context: context,
-      builder: (context) => _cupertinoTheme(
-        context,
-        CupertinoActionSheet(
-          title: Text(label),
-          actions: [
-            for (final item in items.entries)
-              CupertinoActionSheetAction(
-                isDefaultAction: item.key == value,
-                onPressed: () => Navigator.of(context).pop(item.key),
-                child: Text(item.value),
+      barrierDismissible: true,
+      barrierLabel: 'メニューを閉じる',
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 180),
+      transitionBuilder: (context, animation, secondaryAnimation, child) =>
+          FadeTransition(opacity: animation, child: child),
+      pageBuilder: (context, animation, secondaryAnimation) => Stack(
+        children: [
+          Positioned(
+            left: left, top: top, width: width, height: height,
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.14),
+                    blurRadius: 28, offset: const Offset(0, 10))],
               ),
-          ],
-          cancelButton: CupertinoActionSheetAction(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('キャンセル'),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(28),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+                  child: Material(
+                    color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.94),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(28),
+                      side: BorderSide(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.15), width: 0.5),
+                    ),
+                    child: ListView(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      shrinkWrap: true,
+                      children: [
+                        for (final item in items.entries)
+                          Semantics(
+                            selected: item.key == value,
+                            child: CupertinoButton(
+                              padding: const EdgeInsets.symmetric(horizontal: 20),
+                              minimumSize: Size(0, rowHeight),
+                              onPressed: () => Navigator.of(context).pop(item.key),
+                              child: Row(children: [
+                                SizedBox(width: 24, child: item.key == value
+                                    ? Icon(CupertinoIcons.check_mark, size: 18, color: Theme.of(context).colorScheme.onSurface) : null),
+                                const SizedBox(width: 4),
+                                Expanded(child: Text(item.value, style: Theme.of(context).textTheme.bodyLarge)),
+                              ]),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
-    if (context.mounted && selected != null) onChanged?.call(selected);
+    if (context.mounted && selected != null && selected != value) {
+      HapticFeedback.selectionClick();
+      onChanged?.call(selected);
+    }
   }
 
   @override
@@ -110,14 +164,13 @@ class StairDateRow extends StatelessWidget {
   Future<void> _choose(BuildContext context) async {
     final current = value ?? DateTime.now();
     final local = dateOnly ? current : current.toLocal();
-    final selected = await _showPicker(
-      context,
-      label: label,
-      initial: dateOnly ? DateTime(local.year, local.month, local.day) : local,
-      mode: dateOnly
-          ? CupertinoDatePickerMode.date
-          : CupertinoDatePickerMode.dateAndTime,
-    );
+    final selected = dateOnly
+        ? await showDialog<_DateSelection>(
+            context: context,
+            builder: (context) => _CalendarDialog(label: label, initial: local),
+          )
+        : await _showPicker(context, label: label, initial: local,
+            mode: CupertinoDatePickerMode.dateAndTime);
     if (context.mounted && selected != null) {
       final date = selected.value;
       onChanged?.call(
@@ -226,7 +279,7 @@ class StairTimeButton extends StatelessWidget {
       children: [
         Text(
           label,
-          style: TextStyle(fontSize: 17, color: scheme.onSurfaceVariant),
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: scheme.onSurfaceVariant),
         ),
         Semantics(
           label: label,
@@ -284,7 +337,7 @@ class StairInfoButton extends StatelessWidget {
   Widget build(BuildContext context) => IconButton(
     tooltip: '$labelの説明',
     padding: EdgeInsets.zero,
-    constraints: const BoxConstraints(minWidth: 36, minHeight: 44),
+    constraints: const BoxConstraints(minWidth: 30, minHeight: 32),
     icon: const Icon(
       Icons.info_outline_rounded,
       size: 15,
@@ -304,6 +357,62 @@ class StairInfoButton extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    ),
+  );
+}
+
+/// Calendar presentation used by LiveStair's date rows. The selected date stays
+/// local to the dialog until Done, so dismissing never changes the record.
+class _CalendarDialog extends StatefulWidget {
+  const _CalendarDialog({required this.label, required this.initial});
+  final String label;
+  final DateTime initial;
+  @override
+  State<_CalendarDialog> createState() => _CalendarDialogState();
+}
+
+class _CalendarDialogState extends State<_CalendarDialog> {
+  late DateTime _selection = widget.initial;
+  @override
+  Widget build(BuildContext context) => Dialog(
+    insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 380),
+      child: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+            child: Row(children: [
+              Expanded(child: Text(widget.label, style: Theme.of(context).textTheme.titleMedium)),
+              CupertinoButton(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                onPressed: () => Navigator.pop(context),
+                child: const Text('キャンセル', style: TextStyle(fontSize: 15)),
+              ),
+            ]),
+          ),
+          CalendarDatePicker(
+            initialDate: _selection,
+            firstDate: DateTime(math.min(1900, _selection.year)),
+            lastDate: DateTime(math.max(2200, _selection.year), 12, 31),
+            onDateChanged: (date) => setState(() => _selection = date),
+          ),
+          const Divider(height: 1),
+          Row(children: [
+            CupertinoButton(
+              onPressed: () => Navigator.pop(context, const _DateSelection(null)),
+              child: const Text('未定に戻す', style: TextStyle(fontSize: 15)),
+            ),
+            const Spacer(),
+            CupertinoButton(
+              onPressed: () => Navigator.pop(context, _DateSelection(_selection)),
+              child: const Text('完了', style: TextStyle(fontWeight: FontWeight.w600)),
+            ),
+          ]),
+        ]),
       ),
     ),
   );

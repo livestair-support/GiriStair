@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -7,6 +10,7 @@ import 'screens/results.dart';
 import 'screens/settings.dart';
 import 'screens/thinking.dart';
 import 'store.dart';
+import 'notifications.dart';
 import 'ui/stair_theme.dart';
 import 'ui/stair_tab_bar.dart';
 
@@ -19,26 +23,48 @@ class GiriStairApp extends StatefulWidget {
   State<GiriStairApp> createState() => _GiriStairAppState();
 }
 
-class _GiriStairAppState extends State<GiriStairApp> {
+class _GiriStairAppState extends State<GiriStairApp> with WidgetsBindingObserver {
   late Future<void> _loading;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    widget.store.addListener(_refreshReminders);
     _loading = widget.store.load();
+  }
+
+  void _refreshReminders() => unawaited(GiriNotifications.instance.sync(widget.store));
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshReminders();
+  }
+
+  @override
+  void dispose() {
+    widget.store.removeListener(_refreshReminders);
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return ListenableBuilder(
+      listenable: widget.store,
+      builder: (context, _) => MaterialApp(
       title: 'GiriStair',
       debugShowCheckedModeBanner: false,
       locale: const Locale('ja'),
       supportedLocales: const [Locale('ja')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      theme: stairTheme(Brightness.light),
+      theme: stairTheme(Brightness.light, warm: widget.store.preferences.theme == 'stair'),
       darkTheme: stairTheme(Brightness.dark),
-      themeMode: ThemeMode.light,
+      themeMode: switch (widget.store.preferences.theme) {
+        'system' => ThemeMode.system,
+        'dark' => ThemeMode.dark,
+        _ => ThemeMode.light,
+      },
       home: FutureBuilder<void>(
         future: _loading,
         builder: (context, snapshot) {
@@ -81,6 +107,7 @@ class _GiriStairAppState extends State<GiriStairApp> {
           return _Home(store: widget.store);
         },
       ),
+      ),
     );
   }
 }
@@ -109,8 +136,8 @@ class _HomeState extends State<_Home> {
         ),
         Scaffold(
           appBar: const StairPageHeader(
-            title: '大喜利一覧',
-            icon: Icons.history,
+            title: '一覧',
+            icon: CupertinoIcons.clock_arrow_circlepath,
             accent: StairColors.online,
           ),
           body: EventListScreen(store: widget.store),

@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,9 +14,11 @@ abstract final class StairColors {
   static const settings = Color(0xFF946BB8);
 }
 
-ThemeData stairTheme(Brightness brightness) {
+ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
   final dark = brightness == Brightness.dark;
-  final background = dark ? Colors.black : const Color(0xFFF9F9FB);
+  final background = dark
+      ? Colors.black
+      : warm ? const Color(0xFFFFF8F0) : const Color(0xFFF9F9FB);
   final surface = dark ? const Color(0xFF1B1B1F) : Colors.white;
   final text = dark ? const Color(0xFFF2F2F7) : Colors.black;
   final secondaryText = dark
@@ -23,7 +26,7 @@ ThemeData stairTheme(Brightness brightness) {
       : const Color(0xFF8E8E93);
   // Use the same system typefaces as SwiftUI on iPhone. Android keeps its
   // platform font rather than downloading or bundling a different typeface.
-  final ios = defaultTargetPlatform == TargetPlatform.iOS;
+  final ios = const [TargetPlatform.iOS, TargetPlatform.macOS].contains(defaultTargetPlatform);
   final font = ios ? '.SF Pro Text' : null;
   final displayFont = ios ? '.SF Pro Display' : null;
   final scheme =
@@ -49,7 +52,15 @@ ThemeData stairTheme(Brightness brightness) {
     scaffoldBackgroundColor: background,
     visualDensity: VisualDensity.standard,
     fontFamily: font,
-    fontFamilyFallback: ios ? const ['Hiragino Sans'] : null,
+    cupertinoOverrideTheme: CupertinoThemeData(
+      brightness: brightness, primaryColor: StairColors.action,
+    ),
+    splashFactory: NoSplash.splashFactory,
+    highlightColor: Colors.transparent,
+    pageTransitionsTheme: const PageTransitionsTheme(builders: {
+      TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+      TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+    }),
   );
   return base.copyWith(
     textTheme: base.textTheme.copyWith(
@@ -70,10 +81,14 @@ ThemeData stairTheme(Brightness brightness) {
       ),
       bodyLarge: base.textTheme.bodyLarge?.copyWith(
         fontSize: 17,
+        height: 1.25,
+        fontWeight: FontWeight.w400,
         letterSpacing: 0,
       ),
       bodyMedium: base.textTheme.bodyMedium?.copyWith(
         fontSize: 17,
+        height: 1.25,
+        fontWeight: FontWeight.w400,
         letterSpacing: 0,
       ),
       bodySmall: base.textTheme.bodySmall?.copyWith(
@@ -171,8 +186,8 @@ ThemeData stairTheme(Brightness brightness) {
       iconColor: secondaryText,
       titleTextStyle: TextStyle(
         color: text,
-        fontSize: 16,
-        fontWeight: FontWeight.w600,
+        fontSize: 17,
+        fontWeight: FontWeight.w400,
       ),
       subtitleTextStyle: TextStyle(
         color: secondaryText,
@@ -231,7 +246,7 @@ class StairPageHeader extends StatelessWidget implements PreferredSizeWidget {
   final Widget? leading;
 
   @override
-  Size get preferredSize => const Size.fromHeight(76);
+  Size get preferredSize => const Size.fromHeight(66);
 
   @override
   Widget build(BuildContext context) => AnnotatedRegion<SystemUiOverlayStyle>(
@@ -289,7 +304,7 @@ class StairCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final tint = Color.alphaBlend(
-      accent.withValues(alpha: dark ? 0.10 : 0.045),
+      accent.withValues(alpha: dark ? 0.10 : 0.065),
       Theme.of(context).colorScheme.surface,
     );
     return Padding(
@@ -300,7 +315,7 @@ class StairCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(20),
           side: BorderSide(
             color: accent.withValues(alpha: dark ? 0.28 : 0.18),
-            width: 0.5,
+            width: 0.65,
           ),
         ),
         clipBehavior: Clip.antiAlias,
@@ -447,8 +462,8 @@ class StairFormRow extends StatelessWidget {
               child: Text(
                 label,
                 style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w400,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ),
@@ -460,7 +475,7 @@ class StairFormRow extends StatelessWidget {
             constraints.maxWidth < 270 ||
             MediaQuery.textScalerOf(context).scale(17) > 22;
         return ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 40),
+          constraints: const BoxConstraints(minHeight: 38),
           child: stacked
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
