@@ -26,6 +26,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
   DateTime _eventDate(GiriEvent event) =>
       event.startsAt ??
+      (event.kind == EventKind.live ? event.eventDate : null) ??
       event.votingEnd ??
       event.submissionEnd ??
       event.createdAt;
@@ -68,7 +69,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
           };
         }).toList()..sort((a, b) => _eventDate(b).compareTo(_eventDate(a)));
         return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
           children: [
             Text(
               '大会の結果や順位を、記録から追記できます。',
@@ -227,11 +228,13 @@ class _ResultsScreenState extends State<ResultsScreen> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          formatEventDate(
-                            event.startsAt ??
-                                event.votingEnd ??
-                                event.submissionEnd,
-                          ),
+                          event.kind == EventKind.live
+                              ? formatLiveEventDate(event)
+                              : formatEventDate(
+                                  event.startsAt ??
+                                      event.votingEnd ??
+                                      event.submissionEnd,
+                                ),
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         const Divider(height: 24),

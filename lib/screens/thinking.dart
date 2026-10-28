@@ -83,7 +83,7 @@ class _ThinkingScreenState extends State<ThinkingScreen>
                 ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
           return ListView(
-            padding: const EdgeInsets.fromLTRB(18, 0, 18, 32),
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 120),
             children: [
               StairCard(
                 accent: StairColors.memo,

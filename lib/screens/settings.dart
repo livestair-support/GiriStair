@@ -17,7 +17,7 @@ class SettingsScreen extends StatelessWidget {
       accent: StairColors.settings,
     ),
     body: ListView(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
       children: [
         StairSection(
           title: '記録を振り返る',

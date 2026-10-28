@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -9,6 +8,7 @@ import 'screens/settings.dart';
 import 'screens/thinking.dart';
 import 'store.dart';
 import 'ui/stair_theme.dart';
+import 'ui/stair_tab_bar.dart';
 
 class GiriStairApp extends StatefulWidget {
   const GiriStairApp({super.key, required this.store});
@@ -38,7 +38,7 @@ class _GiriStairAppState extends State<GiriStairApp> {
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
       theme: stairTheme(Brightness.light),
       darkTheme: stairTheme(Brightness.dark),
-      themeMode: ThemeMode.system,
+      themeMode: ThemeMode.light,
       home: FutureBuilder<void>(
         future: _loading,
         builder: (context, snapshot) {
@@ -99,23 +99,17 @@ class _HomeState extends State<_Home> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
+    extendBody: true,
     body: IndexedStack(
       index: _selected,
       children: [
-        Scaffold(
-          appBar: const StairPageHeader(
-            title: '登録',
-            icon: Icons.add_circle,
-            accent: StairColors.live,
-          ),
-          body: EventEditor(
-            store: widget.store,
-            onSaved: () => setState(() => _selected = 1),
-          ),
+        EventEditor(
+          store: widget.store,
+          onSaved: () => setState(() => _selected = 1),
         ),
         Scaffold(
           appBar: const StairPageHeader(
-            title: '一覧',
+            title: '大喜利一覧',
             icon: Icons.history,
             accent: StairColors.online,
           ),
@@ -126,45 +120,11 @@ class _HomeState extends State<_Home> {
         SettingsScreen(store: widget.store),
       ],
     ),
-    bottomNavigationBar: CupertinoTabBar(
-      currentIndex: _selected,
-      onTap: (index) => setState(() => _selected = index),
-      activeColor: StairColors.action,
-      inactiveColor: Theme.of(context).colorScheme.onSurfaceVariant,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      border: Border(
-        top: BorderSide(
-          color: Theme.of(context).colorScheme.outlineVariant,
-          width: 0.5,
-        ),
-      ),
-      items: const [
-        BottomNavigationBarItem(
-          icon: Icon(Icons.add_circle_outline),
-          activeIcon: Icon(Icons.add_circle),
-          label: '登録',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.history_outlined),
-          activeIcon: Icon(Icons.history),
-          label: '一覧',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.emoji_events_outlined),
-          activeIcon: Icon(Icons.emoji_events),
-          label: '戦績',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.edit_note_outlined),
-          activeIcon: Icon(Icons.edit_note),
-          label: '思考',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.settings_outlined),
-          activeIcon: Icon(Icons.settings),
-          label: '設定',
-        ),
-      ],
-    ),
+    bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
+        ? null
+        : StairTabBar(
+            currentIndex: _selected,
+            onTap: (index) => setState(() => _selected = index),
+          ),
   );
 }
