@@ -401,11 +401,11 @@ class StairInfoButton extends StatelessWidget {
       context: context,
       builder: (context) => _cupertinoTheme(
         context,
-        CupertinoAlertDialog(
+        StairCupertinoAlertDialog(
           title: Text(label),
           content: Text(message),
           actions: [
-            CupertinoDialogAction(
+            StairCupertinoDialogAction(
               onPressed: () => Navigator.of(context).pop(),
               child: const Text('閉じる'),
             ),
@@ -588,7 +588,7 @@ class _DatePickerSheetState extends State<_DatePickerSheet> {
 }
 
 Widget _cupertinoTheme(BuildContext context, Widget child) => CupertinoTheme(
-  data: CupertinoThemeData(
+  data: CupertinoTheme.of(context).copyWith(
     brightness: Theme.of(context).brightness,
     primaryColor: StairColors.action,
   ),

@@ -5,7 +5,7 @@ LiveStairの登録画面を基準に、Flutter側の共通部品を `lib/ui/stai
 ## 基本
 
 - 提示されたLiveStairの画面に合わせ、既定はライト表示です。背景は `#F9F9FB`、カードの地色は白。ダーク用の共通テーマも保持します。
-- iPhoneの本文はSF Pro Text、見出しはSF Pro Display、日本語はシステム書体を使います。本文・入力値は17pxの標準ウェイトを基本にします。
+- iPhoneの本文・見出しはFlutter 3.44の正式なAppleシステムフォント指定 `CupertinoSystemText` / `CupertinoSystemDisplay` を使います。日本語は `Hiragino Sans` → `Hiragino Kaku Gothic ProN` の順に明示し、ロケールはja_JPに揃えます。入力欄・AppBar・Cupertinoダイアログ・共有画像でも同じ文字設定を保持します。本文・入力値は17pxの標準ウェイトを基本にします。
 - 主な操作はピンク `#FF2D55`。
 - メイン画面は38pxの淡色アイコンと34pxの太字見出し。
 - カードは角丸20px、淡い色の背景と枠、左側に3pxのカラーライン。

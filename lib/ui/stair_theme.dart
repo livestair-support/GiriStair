@@ -3,6 +3,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'stair_typography.dart';
+export 'stair_typography.dart';
+
 /// Shared visual language, taken from LiveStair's default/system theme.
 abstract final class StairColors {
   static const action = Color(0xFFFF2D55);
@@ -28,12 +31,8 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
       : const Color(0xFF8E8E93);
   // Use the same system typefaces as SwiftUI on iPhone. Android keeps its
   // platform font rather than downloading or bundling a different typeface.
-  final ios = const [
-    TargetPlatform.iOS,
-    TargetPlatform.macOS,
-  ].contains(defaultTargetPlatform);
-  final font = ios ? '.SF Pro Text' : null;
-  final displayFont = ios ? '.SF Pro Display' : null;
+  final font = StairTypography.bodyFamily(defaultTargetPlatform);
+  final displayFont = StairTypography.displayFamily(defaultTargetPlatform);
   final scheme =
       ColorScheme.fromSeed(
         seedColor: StairColors.action,
@@ -57,6 +56,7 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
     scaffoldBackgroundColor: background,
     visualDensity: VisualDensity.standard,
     fontFamily: font,
+    fontFamilyFallback: StairTypography.fallback(defaultTargetPlatform),
     cupertinoOverrideTheme: CupertinoThemeData(
       brightness: brightness,
       primaryColor: StairColors.action,
@@ -70,13 +70,13 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
       },
     ),
   );
-  return base.copyWith(
+  return StairTypography.theme(base.copyWith(
     textTheme: base.textTheme.copyWith(
       headlineLarge: base.textTheme.headlineLarge?.copyWith(
         fontFamily: displayFont,
         fontSize: 34,
         fontWeight: FontWeight.w700,
-        letterSpacing: -0.8,
+        letterSpacing: const CupertinoTextThemeData().navLargeTitleTextStyle.letterSpacing,
       ),
       titleLarge: base.textTheme.titleLarge?.copyWith(
         fontSize: 20,
@@ -126,7 +126,7 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
     ),
     dividerTheme: DividerThemeData(
-      color: scheme.outlineVariant,
+      color: (dark ? Colors.white : Colors.black).withValues(alpha: dark ? 0.14 : 0.12),
       thickness: 0.5,
     ),
     inputDecorationTheme: InputDecorationTheme(
@@ -210,7 +210,7 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
       elevation: 2,
     ),
     snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
-  );
+  ));
 }
 
 class StairIconBadge extends StatelessWidget {
@@ -312,7 +312,7 @@ class StairCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final tint = Color.alphaBlend(
-      accent.withValues(alpha: dark ? 0.10 : 0.065),
+      accent.withValues(alpha: dark ? 0.08 : 0.075),
       Theme.of(context).colorScheme.surface,
     );
     return Padding(
@@ -322,7 +322,7 @@ class StairCard extends StatelessWidget {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
           side: BorderSide(
-            color: accent.withValues(alpha: dark ? 0.28 : 0.18),
+            color: accent.withValues(alpha: dark ? 0.20 : 0.28),
             width: 0.65,
           ),
         ),
@@ -399,7 +399,7 @@ class StairSection extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: StairSectionTitle(title: title, icon: icon, accent: accent),
         ),
-        Divider(height: 0.5, color: accent.withValues(alpha: 0.22)),
+        Divider(height: 0.5, color: Theme.of(context).dividerTheme.color),
         Padding(padding: const EdgeInsets.all(16), child: child),
       ],
     ),
@@ -436,7 +436,7 @@ class StairFormSection extends StatelessWidget {
           Divider(
             height: 0.5,
             thickness: 0.5,
-            color: accent.withValues(alpha: 0.24),
+            color: Theme.of(context).dividerTheme.color,
           ),
           child,
         ],
