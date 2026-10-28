@@ -87,7 +87,8 @@ private final class StairTabBarView: NSObject,
       ("一覧", "clock.fill"),
       ("戦績", "trophy.fill"),
       ("思考", "checklist"),
-      ("設定", "gearshape")
+      // SwiftUI TabView applies the filled symbol variant to its tab labels.
+      ("設定", "gearshape.fill")
     ]
     controller.viewControllers = items.enumerated().map { index, item in
       let child = UIViewController()
