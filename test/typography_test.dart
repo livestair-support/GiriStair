@@ -70,79 +70,78 @@ Widget japaneseApp(Widget screen) => MaterialApp(
 );
 
 void main() {
-  testWidgets('registration input, menu and Cupertino help keep Japanese fonts', (
-    tester,
-  ) async {
-    configureIPhone(tester);
-    final store = GiriStore(storage: MemoryGiriStorage());
-    await store.load();
-    await tester.pumpWidget(japaneseApp(EventEditor(store: store)));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'registration input, menu and Cupertino help keep Japanese fonts',
+    (tester) async {
+      configureIPhone(tester);
+      final store = GiriStore(storage: MemoryGiriStorage());
+      await store.load();
+      await tester.pumpWidget(japaneseApp(EventEditor(store: store)));
+      await tester.pumpAndSettle();
 
-    expectJapaneseText(tester, find.text('登録'), display: true);
-    expectJapaneseText(tester, find.text('基本情報'));
-    expectJapaneseText(tester, find.text('会の種類'));
-    expectJapaneseText(tester, find.text('会・大会名 *'));
-    expectJapaneseInput(
-      tester,
-      find.byKey(const ValueKey('event-title')),
-    );
+      expectJapaneseText(tester, find.text('登録'), display: true);
+      expectJapaneseText(tester, find.text('基本情報'));
+      expectJapaneseText(tester, find.text('会の種類'));
+      expectJapaneseText(tester, find.text('会・大会名 *'));
+      expectJapaneseInput(tester, find.byKey(const ValueKey('event-title')));
 
-    await tester.tap(find.byType(StairMenuRow<MeetingType>));
-    await tester.pumpAndSettle();
-    expectJapaneseText(tester, find.text('大会'));
-    await tester.tap(find.text('大会'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byType(StairMenuRow<MeetingType>));
+      await tester.pumpAndSettle();
+      expectJapaneseText(tester, find.text('大会'));
+      await tester.tap(find.text('大会'));
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('形式の説明'));
-    await tester.pumpAndSettle();
-    final dialog = find.byWidgetPredicate(
-      (widget) => widget is CupertinoAlertDialog,
-    );
-    expect(dialog, findsOneWidget);
-    final textWidgets = find.descendant(
-      of: dialog,
-      matching: find.byType(Text),
-    );
-    expect(textWidgets, findsAtLeastNWidgets(3));
-    for (final element in textWidgets.evaluate()) {
-      expectJapaneseText(tester, find.byWidget(element.widget));
-    }
-    expect(tester.takeException(), isNull);
+      await tester.tap(find.byTooltip('形式の説明'));
+      await tester.pumpAndSettle();
+      final dialog = find.byWidgetPredicate(
+        (widget) => widget is CupertinoAlertDialog,
+      );
+      expect(dialog, findsOneWidget);
+      final textWidgets = find.descendant(
+        of: dialog,
+        matching: find.byType(Text),
+      );
+      expect(textWidgets, findsAtLeastNWidgets(3));
+      for (final element in textWidgets.evaluate()) {
+        expectJapaneseText(tester, find.byWidget(element.widget));
+      }
+      expect(tester.takeException(), isNull);
 
-    await tester.pumpWidget(const SizedBox());
-    store.dispose();
-  });
+      await tester.pumpWidget(const SizedBox());
+      store.dispose();
+    },
+  );
 
-  testWidgets('player navigation, search and save use the Japanese font stack', (
-    tester,
-  ) async {
-    configureIPhone(tester);
-    final store = GiriStore(storage: MemoryGiriStorage());
-    await store.load();
-    await store.savePlayer(
-      const GiriPlayer(id: 'player', name: '参加者の名前', furigana: 'さんかしゃ'),
-    );
-    await tester.pumpWidget(japaneseApp(PlayerDirectoryScreen(store: store)));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'player navigation, search and save use the Japanese font stack',
+    (tester) async {
+      configureIPhone(tester);
+      final store = GiriStore(storage: MemoryGiriStorage());
+      await store.load();
+      await store.savePlayer(
+        const GiriPlayer(id: 'player', name: '参加者の名前', furigana: 'さんかしゃ'),
+      );
+      await tester.pumpWidget(japaneseApp(PlayerDirectoryScreen(store: store)));
+      await tester.pumpAndSettle();
 
-    expectJapaneseText(tester, find.text('大喜利プレイヤー一覧'));
-    expectJapaneseText(tester, find.text('参加者の名前'));
-    expectJapaneseText(tester, find.text('さんかしゃ'));
-    expectJapaneseText(tester, find.text('名前・フリガナで検索'));
-    expectJapaneseInput(tester, find.byType(TextField));
+      expectJapaneseText(tester, find.text('大喜利プレイヤー一覧'));
+      expectJapaneseText(tester, find.text('参加者の名前'));
+      expectJapaneseText(tester, find.text('さんかしゃ'));
+      expectJapaneseText(tester, find.text('名前・フリガナで検索'));
+      expectJapaneseInput(tester, find.byType(TextField));
 
-    await tester.tap(find.byTooltip('プレイヤーを追加'));
-    await tester.pumpAndSettle();
-    expectJapaneseText(tester, find.text('プレイヤーを追加'));
-    expectJapaneseText(tester, find.text('プレイヤー名 *'));
-    expectJapaneseText(tester, find.text('保存'));
-    expectJapaneseInput(tester, find.byType(TextField).first);
-    expect(tester.takeException(), isNull);
+      await tester.tap(find.byTooltip('プレイヤーを追加'));
+      await tester.pumpAndSettle();
+      expectJapaneseText(tester, find.text('プレイヤーを追加'));
+      expectJapaneseText(tester, find.text('プレイヤー名 *'));
+      expectJapaneseText(tester, find.text('保存'));
+      expectJapaneseInput(tester, find.byType(TextField).first);
+      expect(tester.takeException(), isNull);
 
-    await tester.pumpWidget(const SizedBox());
-    store.dispose();
-  });
+      await tester.pumpWidget(const SizedBox());
+      store.dispose();
+    },
+  );
 
   testWidgets('shared-image preview and its controls retain Japanese fonts', (
     tester,

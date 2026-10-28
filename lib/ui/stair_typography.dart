@@ -55,39 +55,49 @@ abstract final class StairTypography {
 
   static ButtonStyle _button(ButtonStyle? original) =>
       (original ?? const ButtonStyle()).copyWith(
-        textStyle: WidgetStateProperty.resolveWith((states) => style(
-          original?.textStyle?.resolve(states) ?? const TextStyle(),
-        )),
+        textStyle: WidgetStateProperty.resolveWith(
+          (states) =>
+              style(original?.textStyle?.resolve(states) ?? const TextStyle()),
+        ),
       );
 
   /// Component themes can replace inherited TextStyles. Apply the same stack
   /// to those styles as well as the body, including Cupertino's inherit:false
   /// picker and navigation styles.
   static ThemeData theme(ThemeData original) {
-    final cupertino = original.cupertinoOverrideTheme ?? const CupertinoThemeData();
+    final cupertino = MaterialBasedCupertinoThemeData(materialTheme: original);
     final text = cupertino.textTheme;
     final input = original.inputDecorationTheme;
     return original.copyWith(
       textTheme: _textTheme(original.textTheme),
       primaryTextTheme: _textTheme(original.primaryTextTheme),
-      cupertinoOverrideTheme: cupertino.copyWith(textTheme: text.copyWith(
-        textStyle: style(text.textStyle),
-        actionTextStyle: style(text.actionTextStyle),
-        actionSmallTextStyle: style(text.actionSmallTextStyle),
-        tabLabelTextStyle: style(text.tabLabelTextStyle),
-        navTitleTextStyle: style(text.navTitleTextStyle),
-        navLargeTitleTextStyle: style(text.navLargeTitleTextStyle),
-        navActionTextStyle: style(text.navActionTextStyle),
-        pickerTextStyle: style(text.pickerTextStyle),
-        dateTimePickerTextStyle: style(text.dateTimePickerTextStyle),
-      )),
+      cupertinoOverrideTheme: cupertino.copyWith(
+        textTheme: text.copyWith(
+          textStyle: style(text.textStyle),
+          actionTextStyle: style(text.actionTextStyle),
+          actionSmallTextStyle: style(text.actionSmallTextStyle),
+          tabLabelTextStyle: style(text.tabLabelTextStyle),
+          navTitleTextStyle: style(text.navTitleTextStyle),
+          navLargeTitleTextStyle: style(text.navLargeTitleTextStyle),
+          navActionTextStyle: style(text.navActionTextStyle),
+          pickerTextStyle: style(text.pickerTextStyle),
+          dateTimePickerTextStyle: style(text.dateTimePickerTextStyle),
+        ),
+      ),
       appBarTheme: original.appBarTheme.copyWith(
-        titleTextStyle: style(original.appBarTheme.titleTextStyle ?? original.textTheme.titleLarge!),
-        toolbarTextStyle: style(original.appBarTheme.toolbarTextStyle ?? original.textTheme.bodyMedium!),
+        titleTextStyle: style(
+          original.appBarTheme.titleTextStyle ?? original.textTheme.titleLarge!,
+        ),
+        toolbarTextStyle: style(
+          original.appBarTheme.toolbarTextStyle ??
+              original.textTheme.bodyMedium!,
+        ),
       ),
       inputDecorationTheme: input.copyWith(
         labelStyle: style(input.labelStyle ?? const TextStyle()),
-        floatingLabelStyle: style(input.floatingLabelStyle ?? const TextStyle()),
+        floatingLabelStyle: style(
+          input.floatingLabelStyle ?? const TextStyle(),
+        ),
         hintStyle: style(input.hintStyle ?? const TextStyle()),
         helperStyle: style(input.helperStyle ?? const TextStyle()),
         errorStyle: style(input.errorStyle ?? const TextStyle()),
@@ -96,15 +106,36 @@ abstract final class StairTypography {
         counterStyle: style(input.counterStyle ?? const TextStyle()),
       ),
       listTileTheme: original.listTileTheme.copyWith(
-        titleTextStyle: style(original.listTileTheme.titleTextStyle ?? original.textTheme.bodyLarge!),
-        subtitleTextStyle: style(original.listTileTheme.subtitleTextStyle ?? original.textTheme.bodySmall!),
-        leadingAndTrailingTextStyle: style(original.listTileTheme.leadingAndTrailingTextStyle ?? original.textTheme.bodySmall!),
+        titleTextStyle: style(
+          original.listTileTheme.titleTextStyle ??
+              original.textTheme.bodyLarge!,
+        ),
+        subtitleTextStyle: style(
+          original.listTileTheme.subtitleTextStyle ??
+              original.textTheme.bodySmall!,
+        ),
+        leadingAndTrailingTextStyle: style(
+          original.listTileTheme.leadingAndTrailingTextStyle ??
+              original.textTheme.bodySmall!,
+        ),
       ),
-      chipTheme: original.chipTheme.copyWith(labelStyle: style(original.chipTheme.labelStyle ?? original.textTheme.labelLarge!)),
-      textButtonTheme: TextButtonThemeData(style: _button(original.textButtonTheme.style)),
-      filledButtonTheme: FilledButtonThemeData(style: _button(original.filledButtonTheme.style)),
-      outlinedButtonTheme: OutlinedButtonThemeData(style: _button(original.outlinedButtonTheme.style)),
-      elevatedButtonTheme: ElevatedButtonThemeData(style: _button(original.elevatedButtonTheme.style)),
+      chipTheme: original.chipTheme.copyWith(
+        labelStyle: style(
+          original.chipTheme.labelStyle ?? original.textTheme.labelLarge!,
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: _button(original.textButtonTheme.style),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: _button(original.filledButtonTheme.style),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: _button(original.outlinedButtonTheme.style),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: _button(original.elevatedButtonTheme.style),
+      ),
     );
   }
 }
@@ -132,9 +163,9 @@ class StairCupertinoAlertDialog extends CupertinoAlertDialog {
     super.scrollController,
     super.actionScrollController,
   }) : super(
-    title: title == null ? null : _JapaneseDialogText(child: title),
-    content: content == null ? null : _JapaneseDialogText(child: content),
-  );
+         title: title == null ? null : _JapaneseDialogText(child: title),
+         content: content == null ? null : _JapaneseDialogText(child: content),
+       );
 }
 
 class StairCupertinoDialogAction extends CupertinoDialogAction {
