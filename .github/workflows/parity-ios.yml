@@ -9,7 +9,7 @@ permissions:
   contents: read
 jobs:
   iphone-preview:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -24,10 +24,12 @@ jobs:
       - name: Prepare native project
         run: python3 .ci/prepare_project.py
       - name: Build real iPhone simulator app
-        run: >-
-          flutter build ios --simulator --debug
-          --target=tool/parity_preview.dart
-          --dart-define=PARITY_TAB=0
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/iphone-parity
+          flutter build ios --simulator --debug --verbose \
+            --target=tool/parity_preview.dart \
+            --dart-define=PARITY_TAB=0 2>&1 | tee artifacts/iphone-parity/build.log
       - name: Capture Japanese iPhone registration screen
         run: >-
           python3 .ci/parity_ios.py capture

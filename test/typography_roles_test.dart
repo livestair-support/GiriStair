@@ -10,9 +10,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: stairTheme(Brightness.dark),
-        home: const Scaffold(
-          body: Column(children: [Text('本文'), TextField()]),
-        ),
+        home: const Scaffold(body: Column(children: [Text('本文'), TextField()])),
       ),
     );
     final paragraph = tester.renderObject<RenderParagraph>(
