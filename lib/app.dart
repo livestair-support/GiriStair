@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -7,6 +8,7 @@ import 'screens/results.dart';
 import 'screens/settings.dart';
 import 'screens/thinking.dart';
 import 'store.dart';
+import 'ui/stair_theme.dart';
 
 class GiriStairApp extends StatefulWidget {
   const GiriStairApp({super.key, required this.store});
@@ -28,43 +30,15 @@ class _GiriStairAppState extends State<GiriStairApp> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = ColorScheme.fromSeed(
-      seedColor: const Color(0xFFA44559),
-      surface: const Color(0xFFFCF9F6),
-    );
     return MaterialApp(
       title: 'GiriStair',
       debugShowCheckedModeBanner: false,
       locale: const Locale('ja'),
       supportedLocales: const [Locale('ja')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: colors,
-        scaffoldBackgroundColor: const Color(0xFFF8F4F0),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFFF8F4F0),
-          surfaceTintColor: Colors.transparent,
-          centerTitle: false,
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 15,
-          ),
-        ),
-        cardTheme: CardThemeData(
-          elevation: 0,
-          color: Colors.white,
-          margin: const EdgeInsets.symmetric(vertical: 6),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-        ),
-      ),
+      theme: stairTheme(Brightness.light),
+      darkTheme: stairTheme(Brightness.dark),
+      themeMode: ThemeMode.system,
       home: FutureBuilder<void>(
         future: _loading,
         builder: (context, snapshot) {
@@ -129,14 +103,22 @@ class _HomeState extends State<_Home> {
       index: _selected,
       children: [
         Scaffold(
-          appBar: AppBar(title: const Text('登録')),
+          appBar: const StairPageHeader(
+            title: '登録',
+            icon: Icons.add_circle,
+            accent: StairColors.live,
+          ),
           body: EventEditor(
             store: widget.store,
             onSaved: () => setState(() => _selected = 1),
           ),
         ),
         Scaffold(
-          appBar: AppBar(title: const Text('GiriStair')),
+          appBar: const StairPageHeader(
+            title: '一覧',
+            icon: Icons.history,
+            accent: StairColors.online,
+          ),
           body: EventListScreen(store: widget.store),
         ),
         ResultsScreen(store: widget.store),
@@ -144,33 +126,42 @@ class _HomeState extends State<_Home> {
         SettingsScreen(store: widget.store),
       ],
     ),
-    bottomNavigationBar: NavigationBar(
-      selectedIndex: _selected,
-      onDestinationSelected: (index) => setState(() => _selected = index),
-      destinations: const [
-        NavigationDestination(
+    bottomNavigationBar: CupertinoTabBar(
+      currentIndex: _selected,
+      onTap: (index) => setState(() => _selected = index),
+      activeColor: StairColors.action,
+      inactiveColor: Theme.of(context).colorScheme.onSurfaceVariant,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      border: Border(
+        top: BorderSide(
+          color: Theme.of(context).colorScheme.outlineVariant,
+          width: 0.5,
+        ),
+      ),
+      items: const [
+        BottomNavigationBarItem(
           icon: Icon(Icons.add_circle_outline),
-          selectedIcon: Icon(Icons.add_circle),
+          activeIcon: Icon(Icons.add_circle),
           label: '登録',
         ),
-        NavigationDestination(
-          icon: Icon(Icons.view_agenda_outlined),
-          selectedIcon: Icon(Icons.view_agenda),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.history_outlined),
+          activeIcon: Icon(Icons.history),
           label: '一覧',
         ),
-        NavigationDestination(
+        BottomNavigationBarItem(
           icon: Icon(Icons.emoji_events_outlined),
-          selectedIcon: Icon(Icons.emoji_events),
+          activeIcon: Icon(Icons.emoji_events),
           label: '戦績',
         ),
-        NavigationDestination(
+        BottomNavigationBarItem(
           icon: Icon(Icons.edit_note_outlined),
-          selectedIcon: Icon(Icons.edit_note),
+          activeIcon: Icon(Icons.edit_note),
           label: '思考',
         ),
-        NavigationDestination(
+        BottomNavigationBarItem(
           icon: Icon(Icons.settings_outlined),
-          selectedIcon: Icon(Icons.settings),
+          activeIcon: Icon(Icons.settings),
           label: '設定',
         ),
       ],

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../ui/stair_theme.dart';
 import 'event_editor.dart';
 import 'event_list.dart';
 
@@ -30,24 +31,23 @@ class _ResultsScreenState extends State<ResultsScreen> {
       event.createdAt;
 
   Widget _count(String label, int value) => Expanded(
-    child: Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('$value', style: Theme.of(context).textTheme.headlineMedium),
-            const SizedBox(height: 4),
-            Text(label, style: Theme.of(context).textTheme.labelLarge),
-          ],
-        ),
-      ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 5),
+        Text('$value 件', style: Theme.of(context).textTheme.titleMedium),
+      ],
     ),
   );
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('戦績')),
+    appBar: const StairPageHeader(
+      title: '戦績',
+      icon: Icons.emoji_events_outlined,
+      accent: StairColors.result,
+    ),
     body: ListenableBuilder(
       listenable: widget.store,
       builder: (context, _) {
@@ -68,88 +68,116 @@ class _ResultsScreenState extends State<ResultsScreen> {
           };
         }).toList()..sort((a, b) => _eventDate(b).compareTo(_eventDate(a)));
         return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
           children: [
             Text(
-              '一戦ずつ、残していく。',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 8),
-            const Text('大会の結果を振り返る場所。記録を開いて、結果や順位を追記できます。'),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
-                ChoiceChip(
-                  label: const Text('すべて'),
-                  selected: _kind == null,
-                  onSelected: (_) => setState(() => _kind = null),
-                ),
-                ChoiceChip(
-                  label: const Text('生大喜利'),
-                  selected: _kind == EventKind.live,
-                  onSelected: (_) => setState(() => _kind = EventKind.live),
-                ),
-                ChoiceChip(
-                  label: const Text('ネット大喜利'),
-                  selected: _kind == EventKind.online,
-                  onSelected: (_) => setState(() => _kind = EventKind.online),
-                ),
-              ],
+              '大会の結果や順位を、記録から追記できます。',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 10),
-            Row(
-              children: [
-                _count('結果入力済み', recorded),
-                const SizedBox(width: 10),
-                _count('結果未入力', tournaments.length - recorded),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
-                for (final filter in _ResultFilter.values)
-                  ChoiceChip(
-                    label: Text(switch (filter) {
-                      _ResultFilter.all => 'すべての結果',
-                      _ResultFilter.recorded => '結果あり',
-                      _ResultFilter.unrecorded => '未入力',
-                    }),
-                    selected: _filter == filter,
-                    onSelected: (_) => setState(() => _filter = filter),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (events.isEmpty)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Column(
+            StairSection(
+              title: '表示する大会',
+              icon: Icons.tune,
+              accent: StairColors.result,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
                     children: [
-                      const Icon(Icons.emoji_events_outlined, size: 40),
-                      const SizedBox(height: 14),
-                      Text(
-                        tournaments.isEmpty ? '大会の記録はこれから' : '該当する結果がありません',
-                        style: Theme.of(context).textTheme.titleMedium,
+                      ChoiceChip(
+                        label: const Text('すべて'),
+                        selected: _kind == null,
+                        onSelected: (_) => setState(() => _kind = null),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        tournaments.isEmpty
-                            ? '「登録」で大会を選ぶと、ここに参加予定や結果が並びます。'
-                            : '結果の絞り込みを変えてみてください。',
-                        textAlign: TextAlign.center,
+                      ChoiceChip(
+                        label: const Text('生大喜利'),
+                        selected: _kind == EventKind.live,
+                        onSelected: (_) =>
+                            setState(() => _kind = EventKind.live),
+                      ),
+                      ChoiceChip(
+                        label: const Text('ネット大喜利'),
+                        selected: _kind == EventKind.online,
+                        onSelected: (_) =>
+                            setState(() => _kind = EventKind.online),
                       ),
                     ],
                   ),
+                  const Divider(height: 24),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      for (final filter in _ResultFilter.values)
+                        ChoiceChip(
+                          label: Text(switch (filter) {
+                            _ResultFilter.all => 'すべての結果',
+                            _ResultFilter.recorded => '結果あり',
+                            _ResultFilter.unrecorded => '未入力',
+                          }),
+                          selected: _filter == filter,
+                          onSelected: (_) => setState(() => _filter = filter),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            StairCard(
+              accent: StairColors.result,
+              child: Row(
+                children: [
+                  _count('結果入力済み', recorded),
+                  const SizedBox(width: 16),
+                  _count('結果未入力', tournaments.length - recorded),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            StairSectionTitle(
+              title: '大会の記録',
+              icon: Icons.emoji_events_outlined,
+              accent: StairColors.result,
+              trailing: Text(
+                '${events.length}件',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+            const SizedBox(height: 6),
+            if (events.isEmpty)
+              StairCard(
+                accent: StairColors.result,
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    const StairIconBadge(
+                      icon: Icons.emoji_events_outlined,
+                      accent: StairColors.result,
+                      size: 38,
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      tournaments.isEmpty ? '大会の記録はこれから' : '該当する結果がありません',
+                      style: Theme.of(context).textTheme.titleMedium,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      tournaments.isEmpty
+                          ? '「登録」で大会を選ぶと、ここに参加予定や結果が並びます。'
+                          : '結果の絞り込みを変えてみてください。',
+                      style: Theme.of(context).textTheme.bodySmall,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
               ),
             for (final event in events)
-              Card(
-                clipBehavior: Clip.antiAlias,
+              StairCard(
+                accent: StairColors.result,
+                padding: EdgeInsets.zero,
                 child: InkWell(
                   onTap: () => Navigator.of(context).push<void>(
                     MaterialPageRoute(
@@ -160,37 +188,42 @@ class _ResultsScreenState extends State<ResultsScreen> {
                     ),
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.all(18),
+                    padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            Icon(
-                              event.kind == EventKind.live
+                            StairIconBadge(
+                              icon: event.kind == EventKind.live
                                   ? Icons.groups_outlined
                                   : Icons.language,
-                              size: 18,
+                              accent: event.kind == EventKind.live
+                                  ? StairColors.live
+                                  : StairColors.online,
                             ),
-                            const SizedBox(width: 8),
+                            const SizedBox(width: 9),
                             Expanded(
                               child: Text(
                                 event.kind == EventKind.live
                                     ? '生大喜利'
                                     : 'ネット大喜利',
-                                style: Theme.of(context).textTheme.labelMedium,
+                                style: Theme.of(context).textTheme.bodySmall,
                               ),
                             ),
-                            Text(
-                              eventStatusLabel(event.status),
-                              style: Theme.of(context).textTheme.labelMedium,
+                            Flexible(
+                              child: Text(
+                                eventStatusLabel(event.status),
+                                style: Theme.of(context).textTheme.bodySmall,
+                                textAlign: TextAlign.end,
+                              ),
                             ),
                           ],
                         ),
                         const SizedBox(height: 12),
                         Text(
                           event.title,
-                          style: Theme.of(context).textTheme.titleLarge,
+                          style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const SizedBox(height: 6),
                         Text(
@@ -199,21 +232,38 @@ class _ResultsScreenState extends State<ResultsScreen> {
                                 event.votingEnd ??
                                 event.submissionEnd,
                           ),
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
-                        const SizedBox(height: 14),
-                        Text(
-                          _hasResult(event)
-                              ? [
-                                  if (event.placement != null)
-                                    '${event.placement}位',
-                                  if (event.resultText.trim().isNotEmpty)
-                                    event.resultText,
-                                ].join(' · ')
-                              : '結果を入力する',
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
+                        const Divider(height: 24),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _hasResult(event)
+                                    ? [
+                                        if (event.placement != null)
+                                          '${event.placement}位',
+                                        if (event.resultText.trim().isNotEmpty)
+                                          event.resultText,
+                                      ].join(' · ')
+                                    : '結果を入力する',
+                                style: TextStyle(
+                                  color: _hasResult(event)
+                                      ? Theme.of(context).colorScheme.onSurface
+                                      : StairColors.action,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Icon(
+                              Icons.chevron_right,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                              size: 20,
+                            ),
+                          ],
                         ),
                       ],
                     ),
