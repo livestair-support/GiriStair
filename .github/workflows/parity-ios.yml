@@ -25,8 +25,22 @@ jobs:
         run: python3 .ci/prepare_project.py
       - name: Build real iPhone simulator app
         run: |
-          set -o pipefail
+          set -euo pipefail
           mkdir -p artifacts/iphone-parity
+          # Preview-only architecture; production/TestFlight settings are untouched.
+          cat > "$RUNNER_TEMP/giristair-preview.xcconfig" <<'PREVIEW_CONFIG'
+          ARCHS = x86_64
+          ONLY_ACTIVE_ARCH = YES
+          PREVIEW_CONFIG
+          export XCODE_XCCONFIG_FILE="$RUNNER_TEMP/giristair-preview.xcconfig"
+          flutter build ios --simulator --debug --config-only \
+            --target=tool/parity_preview.dart --dart-define=PARITY_TAB=0
+          # The mixed SPM/Pods build graph omits the aggregate framework target.
+          # Build it explicitly in the same output directory before linking Runner.
+          xcrun xcodebuild -project ios/Pods/Pods.xcodeproj -target Pods-Runner \
+            -configuration Debug -sdk iphonesimulator \
+            BUILD_DIR="$PWD/build/ios" SYMROOT="$PWD/build/ios" \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee artifacts/iphone-parity/pods-build.log
           flutter build ios --simulator --debug --verbose \
             --target=tool/parity_preview.dart \
             --dart-define=PARITY_TAB=0 2>&1 | tee artifacts/iphone-parity/build.log
