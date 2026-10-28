@@ -1,0 +1,383 @@
+import 'package:flutter/material.dart';
+
+import '../models.dart';
+import '../store.dart';
+import 'event_editor.dart';
+
+class EventListScreen extends StatefulWidget {
+  const EventListScreen({required this.store, super.key});
+
+  final GiriStore store;
+
+  @override
+  State<EventListScreen> createState() => _EventListScreenState();
+}
+
+class _EventListScreenState extends State<EventListScreen> {
+  String _query = '';
+  EventKind? _kind;
+  EventStatus? _status;
+  bool _upcomingOnly = false;
+
+  DateTime? _relevantDate(GiriEvent event, DateTime now) {
+    if (event.kind == EventKind.live) return event.endsAt ?? event.startsAt;
+    final deadlines = [
+      event.submissionEnd,
+      event.votingEnd,
+    ].whereType<DateTime>().toList()..sort();
+    final upcoming = deadlines.where((date) => !date.isBefore(now));
+    if (upcoming.isNotEmpty) return upcoming.first;
+    return deadlines.isEmpty ? null : deadlines.last;
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: widget.store,
+    builder: (context, _) {
+      final now = DateTime.now();
+      final events =
+          widget.store.events.where((event) {
+            if (_kind != null && event.kind != _kind) return false;
+            if (_status != null && event.status != _status) return false;
+            if (_upcomingOnly) {
+              if (event.status != EventStatus.planned) return false;
+              final date = _relevantDate(event, now);
+              if (date != null && date.isBefore(now)) return false;
+            }
+            final searchable = [
+              event.title,
+              event.organizer,
+              event.venue,
+              ...event.participants,
+            ].join(' ').toLowerCase();
+            return searchable.contains(_query.toLowerCase());
+          }).toList()..sort((a, b) {
+            // Upcoming online deadlines and live dates are presented together.
+            final aDate = _relevantDate(a, now);
+            final bDate = _relevantDate(b, now);
+            if (aDate == null && bDate == null) {
+              return b.createdAt.compareTo(a.createdAt);
+            }
+            if (aDate == null) return 1;
+            if (bDate == null) return -1;
+            return _upcomingOnly
+                ? aDate.compareTo(bDate)
+                : bDate.compareTo(aDate);
+          });
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
+        children: [
+          Text('あなたの大喜利記録', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          Text('${widget.store.events.length}件の予定と記録'),
+          const SizedBox(height: 20),
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: false, label: Text('すべての記録')),
+              ButtonSegment(value: true, label: Text('予定・締切')),
+            ],
+            selected: {_upcomingOnly},
+            onSelectionChanged: (value) =>
+                setState(() => _upcomingOnly = value.first),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            decoration: const InputDecoration(
+              hintText: 'タイトル・会場・主催者・参加者で検索',
+              prefixIcon: Icon(Icons.search),
+            ),
+            onChanged: (value) => setState(() => _query = value.trim()),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              ChoiceChip(
+                label: const Text('すべて'),
+                selected: _kind == null,
+                onSelected: (_) => setState(() => _kind = null),
+              ),
+              ChoiceChip(
+                label: const Text('生大喜利'),
+                selected: _kind == EventKind.live,
+                onSelected: (_) => setState(() => _kind = EventKind.live),
+              ),
+              ChoiceChip(
+                label: const Text('ネット大喜利'),
+                selected: _kind == EventKind.online,
+                onSelected: (_) => setState(() => _kind = EventKind.online),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              ChoiceChip(
+                label: const Text('全ての状態'),
+                selected: _status == null,
+                onSelected: (_) => setState(() => _status = null),
+              ),
+              for (final status in EventStatus.values)
+                ChoiceChip(
+                  label: Text(eventStatusLabel(status)),
+                  selected: _status == status,
+                  onSelected: (_) => setState(() => _status = status),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (events.isEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  children: [
+                    const Icon(Icons.event_note_outlined, size: 40),
+                    const SizedBox(height: 14),
+                    Text(
+                      widget.store.events.isEmpty
+                          ? '最初の一席を残しましょう'
+                          : '該当する記録がありません',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      widget.store.events.isEmpty
+                          ? '「登録」タブから参加予定や過去の記録を追加できます。'
+                          : '検索条件や絞り込みを変えてみてください。',
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          for (final event in events)
+            Card(
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) => EventDetailScreen(
+                      store: widget.store,
+                      eventId: event.id,
+                    ),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            event.kind == EventKind.live
+                                ? Icons.groups_outlined
+                                : Icons.language,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '${event.kind == EventKind.live ? '生大喜利' : 'ネット大喜利'}'
+                              ' · ${event.meetingType == MeetingType.tournament ? '大会' : '通常会'}',
+                              style: Theme.of(context).textTheme.labelMedium,
+                            ),
+                          ),
+                          Text(
+                            eventStatusLabel(event.status),
+                            style: Theme.of(context).textTheme.labelMedium,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        event.title,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 8),
+                      if (event.kind == EventKind.live) ...[
+                        Text(formatEventDate(event.startsAt)),
+                        if (event.venue.isNotEmpty) Text(event.venue),
+                      ] else ...[
+                        if (event.submissionEnd != null)
+                          Text('投稿締切 ${formatEventDate(event.submissionEnd)}'),
+                        if (event.votingEnd != null)
+                          Text('投票締切 ${formatEventDate(event.votingEnd)}'),
+                        if (event.submissionEnd == null &&
+                            event.votingEnd == null)
+                          const Text('スケジュール未設定'),
+                      ],
+                      if (event.resultText.isNotEmpty ||
+                          event.placement != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          [
+                            if (event.placement != null) '${event.placement}位',
+                            if (event.resultText.isNotEmpty) event.resultText,
+                          ].join(' · '),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
+    },
+  );
+}
+
+class EventDetailScreen extends StatefulWidget {
+  const EventDetailScreen({
+    required this.store,
+    required this.eventId,
+    super.key,
+  });
+
+  final GiriStore store;
+  final String eventId;
+
+  @override
+  State<EventDetailScreen> createState() => _EventDetailScreenState();
+}
+
+class _EventDetailScreenState extends State<EventDetailScreen> {
+  bool _deleting = false;
+
+  Future<void> _delete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('この記録を削除しますか？'),
+        content: const Text('参加記録は削除されます。ひもづいている思考メモは独立したメモとして残ります。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('削除する'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _deleting = true);
+    try {
+      await widget.store.deleteEvent(widget.eventId);
+      if (mounted) Navigator.of(context).pop();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('削除できませんでした。もう一度お試しください。')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
+  Widget _line(String label, String value) => Padding(
+    padding: const EdgeInsets.only(bottom: 18),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 4),
+        SelectableText(value.isEmpty ? '未入力' : value),
+      ],
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: widget.store,
+    builder: (context, _) {
+      final matches = widget.store.events.where(
+        (event) => event.id == widget.eventId,
+      );
+      final event = matches.isEmpty ? null : matches.first;
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('参加記録'),
+          actions: [
+            if (event != null)
+              IconButton(
+                tooltip: '編集する',
+                onPressed: _deleting
+                    ? null
+                    : () => Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          builder: (context) => Scaffold(
+                            appBar: AppBar(title: const Text('記録を編集')),
+                            body: EventEditor(
+                              store: widget.store,
+                              event: event,
+                              onSaved: () => Navigator.of(context).pop(),
+                            ),
+                          ),
+                        ),
+                      ),
+                icon: const Icon(Icons.edit_outlined),
+              ),
+          ],
+        ),
+        body: event == null
+            ? const Center(child: Text('この記録は削除されています。'))
+            : ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  Text(
+                    event.title,
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    '${event.kind == EventKind.live ? '生大喜利' : 'ネット大喜利'} · '
+                    '${event.meetingType == MeetingType.tournament ? '大会' : '通常会'} · '
+                    '${eventStatusLabel(event.status)}',
+                  ),
+                  const SizedBox(height: 28),
+                  _line('主催者', event.organizer),
+                  if (event.kind == EventKind.live) ...[
+                    _line('会場', event.venue),
+                    _line('開始', formatEventDate(event.startsAt)),
+                    _line('終了', formatEventDate(event.endsAt)),
+                    _line('参加者', event.participants.join('、')),
+                  ] else ...[
+                    _line('サイトURL', event.siteUrl),
+                    _line('投稿開始', formatEventDate(event.submissionStart)),
+                    _line('投稿締切', formatEventDate(event.submissionEnd)),
+                    _line('投票開始', formatEventDate(event.votingStart)),
+                    _line('投票締切', formatEventDate(event.votingEnd)),
+                  ],
+                  if (event.meetingType == MeetingType.tournament) ...[
+                    _line('結果', event.resultText),
+                    _line(
+                      '順位',
+                      event.placement == null ? '' : '${event.placement}位',
+                    ),
+                  ],
+                  _line('振り返り・メモ', event.memo),
+                  const SizedBox(height: 16),
+                  OutlinedButton.icon(
+                    onPressed: _deleting ? null : _delete,
+                    icon: const Icon(Icons.delete_outline),
+                    label: Text(_deleting ? '削除中…' : 'この記録を削除'),
+                  ),
+                ],
+              ),
+      );
+    },
+  );
+}
