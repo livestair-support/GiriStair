@@ -574,12 +574,11 @@ class StairFieldRow extends StatelessWidget {
       final stacked =
           multiline ||
           constraints.maxWidth < 260 ||
-          MediaQuery.textScalerOf(context).scale(14) > 20;
+          MediaQuery.textScalerOf(context).scale(15) > 20;
       final labelWidget = Text(
         label,
-        style: TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w500,
+        style: StairTypography.role(
+          StairTextRole.formLabel,
           color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       );
