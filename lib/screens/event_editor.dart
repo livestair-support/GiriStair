@@ -633,7 +633,7 @@ class _EventEditorState extends State<EventEditor> {
                       isDense: true,
                       constraints: const BoxConstraints(minHeight: 44),
                       hintText: index == 0 ? '参加者名' : '参加者名を入力',
-                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 8),
                     ),
                   ),
                 ),

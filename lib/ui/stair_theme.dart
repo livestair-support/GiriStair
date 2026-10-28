@@ -85,14 +85,22 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
   return StairTypography.theme(
     base.copyWith(
       textTheme: base.textTheme.copyWith(
-        headlineLarge: StairTypography.role(StairTextRole.pageTitle),
+        headlineLarge: StairTypography.role(
+          StairTextRole.pageTitle,
+        ).copyWith(color: text),
         titleLarge: base.textTheme.titleLarge?.copyWith(
           fontSize: 20,
           fontWeight: FontWeight.w700,
         ),
-        titleMedium: StairTypography.role(StairTextRole.sectionTitle),
-        bodyLarge: StairTypography.role(StairTextRole.input),
-        bodyMedium: StairTypography.role(StairTextRole.input),
+        titleMedium: StairTypography.role(
+          StairTextRole.sectionTitle,
+        ).copyWith(color: text),
+        bodyLarge: StairTypography.role(
+          StairTextRole.input,
+        ).copyWith(color: text),
+        bodyMedium: StairTypography.role(
+          StairTextRole.input,
+        ).copyWith(color: text),
         bodySmall: StairTypography.role(
           StairTextRole.footnote,
         ).copyWith(color: secondaryText),
@@ -135,9 +143,7 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
         labelStyle: StairTypography.role(
           StairTextRole.input,
         ).copyWith(color: secondaryText),
-        hintStyle: StairTypography.role(
-          StairTextRole.input,
-        ).copyWith(
+        hintStyle: StairTypography.role(StairTextRole.input).copyWith(
           color: dark
               ? CupertinoColors.placeholderText.darkColor
               : CupertinoColors.placeholderText.color,
@@ -241,7 +247,8 @@ class StairIconBadge extends StatelessWidget {
     height: size,
     decoration: ShapeDecoration(
       color: accent.withValues(
-        alpha: backgroundOpacity ??
+        alpha:
+            backgroundOpacity ??
             (size == 38 && Theme.of(context).brightness == Brightness.dark
                 ? 0.20
                 : 0.14),
@@ -620,7 +627,9 @@ class StairSaveButton extends StatelessWidget {
         backgroundColor: Theme.of(context).colorScheme.surface,
         disabledForegroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
         side: BorderSide(
-          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.10),
+          color: Theme.of(
+            context,
+          ).colorScheme.onSurface.withValues(alpha: 0.10),
           width: 1,
         ),
         minimumSize: const Size(0, 44),

@@ -14,7 +14,7 @@ final class StairNativeControls: NSObject, FlutterPlugin {
   static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(
       name: "giristair/native-controls", binaryMessenger: registrar.messenger())
-    let plugin = StairNativeControls(presenter: registrar.viewController())
+    let plugin = StairNativeControls(presenter: registrar.viewController)
     registrar.addMethodCallDelegate(plugin, channel: channel)
     registrar.register(
       StairNativeMenuFactory(messenger: registrar.messenger()),

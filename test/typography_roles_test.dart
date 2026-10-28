@@ -1,8 +1,31 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:giristair/ui/stair_typography.dart';
+import 'package:giristair/ui/stair_theme.dart';
 
 void main() {
+  testWidgets('dark body and editable text retain a visible foreground', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: stairTheme(Brightness.dark),
+        home: const Scaffold(
+          body: Column(children: [Text('本文'), TextField()]),
+        ),
+      ),
+    );
+    final paragraph = tester.renderObject<RenderParagraph>(
+      find.descendant(of: find.text('本文'), matching: find.byType(RichText)),
+    );
+    expect(paragraph.text.style!.color, Colors.white);
+    expect(
+      tester.widget<EditableText>(find.byType(EditableText)).style.color,
+      Colors.white,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   tearDown(() => StairTypography.configureNativeFonts({}));
 
   test('LiveStair roles keep regular inputs distinct from medium labels', () {
