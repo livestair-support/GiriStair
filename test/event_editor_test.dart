@@ -163,8 +163,8 @@ void main() {
     await tester.pumpWidget(editor(store));
     await enter(tester, find.byKey(const ValueKey('event-title')), '今回の会');
     await enter(tester, participant(0), '一人目');
-    await tester.ensureVisible(find.text('履歴から選ぶ'));
-    await tester.tap(find.text('履歴から選ぶ'));
+    await tester.ensureVisible(find.text('一覧から選ぶ'));
+    await tester.tap(find.text('一覧から選ぶ'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('先輩'));
     await tester.pumpAndSettle();
@@ -174,6 +174,62 @@ void main() {
 
     final event = store.events.singleWhere((event) => event.title == '今回の会');
     expect(event.participants, ['一人目', '先輩']);
+    await tester.pumpWidget(const SizedBox());
+    store.dispose();
+  });
+
+  testWidgets('bulk import keeps entered names and adds a 70-player roster', (
+    tester,
+  ) async {
+    final store = GiriStore(storage: MemoryGiriStorage());
+    await store.load();
+    await tester.pumpWidget(editor(store));
+    await enter(tester, find.byKey(const ValueKey('event-title')), '70人の会');
+    await enter(tester, participant(0), '先に入力した人');
+    final bulk = find.byKey(const ValueKey('event-import-participants'));
+    await tester.ensureVisible(bulk);
+    await tester.tap(bulk);
+    await tester.pumpAndSettle();
+    final names = ['先に入力した人', ...List.generate(69, (i) => '参加者${i + 1}')];
+    await tester.enterText(
+      find.byKey(const ValueKey('participant-import-source')),
+      names.join('\n'),
+    );
+    await tester.tap(find.byKey(const ValueKey('participant-import-preview')));
+    await tester.pumpAndSettle();
+    expect(find.text('69人を追加'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('participant-import-apply')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('event-participant-69')), findsOneWidget);
+    await save(tester);
+    expect(store.events.single.participants, names);
+    expect(store.playerDirectory, hasLength(70));
+    await tester.pumpWidget(const SizedBox());
+    store.dispose();
+  });
+
+  testWidgets('canceling bulk import leaves the participant draft intact', (
+    tester,
+  ) async {
+    final store = GiriStore(storage: MemoryGiriStorage());
+    await store.load();
+    await tester.pumpWidget(editor(store));
+    await enter(tester, participant(0), '入力済み');
+    final bulk = find.byKey(const ValueKey('event-import-participants'));
+    await tester.ensureVisible(bulk);
+    await tester.tap(bulk);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('participant-import-source')),
+      '追加しない人',
+    );
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextFormField>(participant(0)).controller!.text,
+      '入力済み',
+    );
+    expect(participant(1), findsNothing);
     await tester.pumpWidget(const SizedBox());
     store.dispose();
   });

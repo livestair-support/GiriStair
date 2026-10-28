@@ -3,5 +3,5 @@
   "display_name": "GiriStair",
   "organization": "com.livestair",
   "bundle_id": "com.livestair.giristair",
-  "minimum_ios": "15.0"
+  "minimum_ios": "15.5"
 }

@@ -19,6 +19,12 @@ Future<void> openDatePicker(WidgetTester tester) async {
 }
 
 void selectPickerDate(WidgetTester tester, DateTime date) {
+  if (find.byType(CalendarDatePicker).evaluate().isNotEmpty) {
+    tester
+        .widget<CalendarDatePicker>(find.byType(CalendarDatePicker))
+        .onDateChanged(date);
+    return;
+  }
   // Simulate a wheel selection. The wheel itself is provided by Flutter;
   // these tests verify when GiriStair commits that draft to the form.
   tester
@@ -62,7 +68,7 @@ void main() {
       selectPickerDate(tester, DateTime(2026, 11, 3));
       await tester.tapAt(const Offset(20, 20));
       await tester.pumpAndSettle();
-      expect(find.byType(CupertinoDatePicker), findsNothing);
+      expect(find.byType(CalendarDatePicker), findsNothing);
       expect(value, original);
       expect(changes, isEmpty);
 
@@ -157,7 +163,8 @@ void main() {
 
     await tester.tap(find.byType(StairMenuRow<String>));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('キャンセル'));
+    expect(find.byType(CupertinoActionSheet), findsNothing);
+    await tester.tapAt(const Offset(2, 2));
     await tester.pumpAndSettle();
     expect(value, 'live');
     expect(changes, isEmpty);

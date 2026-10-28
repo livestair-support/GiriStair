@@ -68,5 +68,7 @@
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>参加者一覧の画像を選び、名前を読み取るために写真を使用します。</string>
 </dict>
 </plist>

@@ -317,3 +317,104 @@ T _enumValue<T extends Enum>(List<T> values, Object? value, String key) {
   }
   throw FormatException('Unsupported $key: $value');
 }
+
+/// A reusable player profile. Events continue to store names for compatibility.
+class GiriPlayer {
+  const GiriPlayer({required this.id, required this.name, this.furigana = ''});
+
+  final String id;
+  final String name;
+  final String furigana;
+
+  GiriPlayer copyWith({String? name, String? furigana}) => GiriPlayer(
+    id: id,
+    name: name ?? this.name,
+    furigana: furigana ?? this.furigana,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'furigana': furigana,
+  };
+
+  factory GiriPlayer.fromJson(Map<String, dynamic> json) {
+    final id = _requiredString(json, 'id');
+    final name = _requiredString(json, 'name');
+    if (id.trim().isEmpty || name.trim().isEmpty) {
+      throw const FormatException('A player needs an ID and name.');
+    }
+    return GiriPlayer(
+      id: id,
+      name: name,
+      furigana: _optionalString(json, 'furigana'),
+    );
+  }
+}
+
+class AppPreferences {
+  const AppPreferences({
+    this.theme = 'light',
+    this.notificationsEnabled = false,
+    this.reminderMinutes = 60,
+    this.reminderHour = 9,
+    this.reminderMinute = 0,
+  });
+
+  final String theme;
+  final bool notificationsEnabled;
+  final int reminderMinutes;
+  final int reminderHour;
+  final int reminderMinute;
+
+  AppPreferences copyWith({
+    String? theme,
+    bool? notificationsEnabled,
+    int? reminderMinutes,
+    int? reminderHour,
+    int? reminderMinute,
+  }) => AppPreferences(
+    theme: theme ?? this.theme,
+    notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
+    reminderMinutes: reminderMinutes ?? this.reminderMinutes,
+    reminderHour: reminderHour ?? this.reminderHour,
+    reminderMinute: reminderMinute ?? this.reminderMinute,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'theme': theme,
+    'notificationsEnabled': notificationsEnabled,
+    'reminderMinutes': reminderMinutes,
+    'reminderHour': reminderHour,
+    'reminderMinute': reminderMinute,
+  };
+
+  factory AppPreferences.fromJson(Map<String, dynamic> json) {
+    final theme = json['theme'] ?? 'light';
+    final enabled = json['notificationsEnabled'] ?? false;
+    final minutes = json['reminderMinutes'] ?? 60;
+    final hour = json['reminderHour'] ?? 9;
+    final minute = json['reminderMinute'] ?? 0;
+    if (theme is! String ||
+        !const ['system', 'light', 'dark', 'stair'].contains(theme) ||
+        enabled is! bool ||
+        minutes is! int ||
+        minutes < 0 ||
+        minutes > 10080 ||
+        hour is! int ||
+        hour < 0 ||
+        hour > 23 ||
+        minute is! int ||
+        minute < 0 ||
+        minute > 59) {
+      throw const FormatException('Invalid application preferences.');
+    }
+    return AppPreferences(
+      theme: theme,
+      notificationsEnabled: enabled,
+      reminderMinutes: minutes,
+      reminderHour: hour,
+      reminderMinute: minute,
+    );
+  }
+}

@@ -1,10 +1,13 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models.dart';
+import '../participant_import.dart';
 import '../store.dart';
 import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
+import 'participant_import.dart';
 
 /// Registration form shared by the registration tab and event editing routes.
 class EventEditor extends StatefulWidget {
@@ -218,6 +221,7 @@ class _EventEditorState extends State<EventEditor> {
     setState(() => _saving = true);
     try {
       await widget.store.saveEvent(event);
+      HapticFeedback.lightImpact();
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -248,7 +252,7 @@ class _EventEditorState extends State<EventEditor> {
     String? suffixText,
     FormFieldValidator<String>? validator,
   }) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+    padding: const EdgeInsets.symmetric(horizontal: 16),
     child: Semantics(
       label: label,
       child: TextFormField(
@@ -261,8 +265,10 @@ class _EventEditorState extends State<EventEditor> {
         textInputAction: textInputAction,
         style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w400),
         decoration: InputDecoration(
+          isDense: true,
           hintText: label,
           suffixText: suffixText,
+          constraints: const BoxConstraints(minHeight: 48),
           contentPadding: const EdgeInsets.symmetric(vertical: 12),
         ),
         validator: validator,
@@ -340,22 +346,18 @@ class _EventEditorState extends State<EventEditor> {
   Future<void> _pickPastParticipants() async {
     FocusManager.instance.primaryFocus?.unfocus();
     final entered = _participants
-        .map((controller) => controller.text.trim())
+        .map((controller) => playerSearchKey(controller.text))
         .toSet();
-    final history =
-        widget.store.events
-            .expand((event) => event.participants)
-            .map((name) => name.trim())
-            .where((name) => name.isNotEmpty && !entered.contains(name))
-            .toSet()
-            .toList()
-          ..sort();
+    final history = widget.store.playerDirectory
+        .where((player) => !entered.contains(playerSearchKey(player.name)))
+        .toList();
+    var query = '';
     if (history.isEmpty) {
       await showCupertinoDialog<void>(
         context: context,
         builder: (context) => CupertinoAlertDialog(
-          title: const Text('過去の参加者'),
-          content: const Text('記録に保存した参加者がここに表示されます。今回は名前を入力して追加してください。'),
+          title: const Text('プレイヤーを選ぶ'),
+          content: const Text('設定の「大喜利プレイヤー一覧」に登録した人や、過去の参加者を選べます。'),
           actions: [
             CupertinoDialogAction(
               onPressed: () => Navigator.pop(context),
@@ -391,7 +393,7 @@ class _EventEditorState extends State<EventEditor> {
                       ),
                       const Expanded(
                         child: Text(
-                          '過去の参加者',
+                          'プレイヤーを選ぶ',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 17,
@@ -404,40 +406,72 @@ class _EventEditorState extends State<EventEditor> {
                             ? null
                             : () => Navigator.pop(
                                 context,
-                                history.where(selected.contains).toList(),
+                                history
+                                    .map((player) => player.name)
+                                    .where(selected.contains)
+                                    .toList(),
                               ),
                         child: const Text('追加'),
                       ),
                     ],
                   ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: TextField(
+                    decoration: const InputDecoration(
+                      hintText: '名前・フリガナで検索',
+                      prefixIcon: Icon(CupertinoIcons.search, size: 20),
+                    ),
+                    onChanged: (value) =>
+                        setSheetState(() => query = playerSearchKey(value)),
+                  ),
+                ),
                 const Divider(height: 1),
                 Expanded(
-                  child: ListView.separated(
-                    itemCount: history.length,
-                    separatorBuilder: (context, index) =>
-                        const Divider(height: 1, indent: 16),
-                    itemBuilder: (context, index) {
-                      final name = history[index];
-                      final checked = selected.contains(name);
-                      return ListTile(
-                        title: Text(
-                          name,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w400,
-                          ),
-                        ),
-                        trailing: Icon(
-                          checked ? Icons.check_circle : Icons.circle_outlined,
-                          color: checked
-                              ? StairColors.action
-                              : Theme.of(context).colorScheme.outline,
-                        ),
-                        selected: checked,
-                        onTap: () => setSheetState(() {
-                          if (!selected.add(name)) selected.remove(name);
-                        }),
+                  child: Builder(
+                    builder: (context) {
+                      final visible = history
+                          .where(
+                            (player) => playerSearchKey(
+                              '${player.name} ${player.furigana}',
+                            ).contains(query),
+                          )
+                          .toList();
+                      return ListView.separated(
+                        itemCount: visible.length,
+                        separatorBuilder: (context, index) =>
+                            const Divider(height: 1, indent: 16),
+                        itemBuilder: (context, index) {
+                          final player = visible[index];
+                          final name = player.name;
+                          final checked = selected.contains(name);
+                          return ListTile(
+                            title: Text(
+                              name,
+                              style: const TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w400,
+                              ),
+                            ),
+                            subtitle: player.furigana.isEmpty
+                                ? null
+                                : Text(player.furigana),
+                            dense: true,
+                            trailing: Icon(
+                              checked
+                                  ? Icons.check_circle
+                                  : Icons.circle_outlined,
+                              color: checked
+                                  ? StairColors.action
+                                  : Theme.of(context).colorScheme.outline,
+                            ),
+                            selected: checked,
+                            onTap: () => setSheetState(() {
+                              if (!selected.add(name)) selected.remove(name);
+                            }),
+                          );
+                        },
                       );
                     },
                   ),
@@ -449,8 +483,18 @@ class _EventEditorState extends State<EventEditor> {
       ),
     );
     if (!mounted || result == null) return;
+    _appendParticipants(result);
+  }
+
+  void _appendParticipants(List<String> names) {
+    final entered = _participants
+        .map((controller) => playerSearchKey(controller.text))
+        .toSet();
     setState(() {
-      for (final name in result) {
+      for (final name in names) {
+        if (name.trim().isEmpty || !entered.add(playerSearchKey(name))) {
+          continue;
+        }
         final empty = _participants
             .where((controller) => controller.text.trim().isEmpty)
             .firstOrNull;
@@ -463,14 +507,48 @@ class _EventEditorState extends State<EventEditor> {
     });
   }
 
+  Future<void> _importParticipants() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final names = await Navigator.of(context).push<List<String>>(
+      MaterialPageRoute(
+        builder: (_) => ParticipantImportScreen(
+          existingNames: _participants
+              .map((controller) => controller.text.trim())
+              .toList(),
+        ),
+      ),
+    );
+    if (!mounted || names == null) return;
+    _appendParticipants(names);
+  }
+
   Widget _participantsSection() => StairFormSection(
     title: '参加者',
-    icon: Icons.people_outline,
+    icon: CupertinoIcons.person_2,
     accent: StairColors.online,
     children: [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                '${_participants.where((controller) => controller.text.trim().isNotEmpty).length}人',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+            TextButton.icon(
+              key: const ValueKey('event-import-participants'),
+              onPressed: _saving ? null : _importParticipants,
+              icon: const Icon(CupertinoIcons.doc_text_viewfinder, size: 19),
+              label: const Text('文章・画像から一括追加'),
+            ),
+          ],
+        ),
+      ),
       for (var index = 0; index < _participants.length; index++)
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 3, 8, 3),
+          padding: const EdgeInsets.fromLTRB(16, 0, 4, 0),
           child: Row(
             children: [
               Expanded(
@@ -485,9 +563,20 @@ class _EventEditorState extends State<EventEditor> {
                       fontWeight: FontWeight.w400,
                     ),
                     textInputAction: TextInputAction.next,
+                    onChanged: (_) => setState(() {}),
+                    onFieldSubmitted: (_) {
+                      if (index == _participants.length - 1) {
+                        setState(
+                          () => _participants.add(TextEditingController()),
+                        );
+                      }
+                      FocusScope.of(context).nextFocus();
+                    },
                     decoration: InputDecoration(
+                      isDense: true,
+                      constraints: const BoxConstraints(minHeight: 44),
                       hintText: index == 0 ? '参加者名' : '参加者名を入力',
-                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
                     ),
                   ),
                 ),
@@ -497,9 +586,17 @@ class _EventEditorState extends State<EventEditor> {
                 builder: (context, value, child) {
                   if (_participants.length == 1 && value.text.isEmpty) {
                     return IconButton(
-                      tooltip: '過去の参加者から選ぶ',
+                      tooltip: 'プレイヤー一覧から選ぶ',
+                      constraints: const BoxConstraints(
+                        minWidth: 44,
+                        minHeight: 44,
+                      ),
+                      padding: EdgeInsets.zero,
+                      style: IconButton.styleFrom(
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
                       onPressed: _saving ? null : _pickPastParticipants,
-                      icon: const Icon(Icons.people_outline, size: 22),
+                      icon: const Icon(CupertinoIcons.person_2, size: 22),
                       color: Theme.of(
                         context,
                       ).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
@@ -507,6 +604,14 @@ class _EventEditorState extends State<EventEditor> {
                   }
                   return IconButton(
                     tooltip: '参加者${index + 1}を削除',
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
+                    ),
+                    padding: EdgeInsets.zero,
+                    style: IconButton.styleFrom(
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
                     onPressed: _saving
                         ? null
                         : () => setState(() {
@@ -516,7 +621,7 @@ class _EventEditorState extends State<EventEditor> {
                               _participants.add(TextEditingController());
                             }
                           }),
-                    icon: const Icon(Icons.remove_circle_outline, size: 22),
+                    icon: const Icon(CupertinoIcons.minus_circle, size: 22),
                     color: StairColors.action,
                   );
                 },
@@ -541,7 +646,7 @@ class _EventEditorState extends State<EventEditor> {
                 foregroundColor: StairColors.action,
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
               ),
-              icon: const Icon(Icons.add_circle_outline, size: 23),
+              icon: const Icon(CupertinoIcons.plus_circle, size: 23),
               label: const Text(
                 '参加者を追加',
                 style: TextStyle(fontSize: 17, fontWeight: FontWeight.w400),
@@ -553,7 +658,7 @@ class _EventEditorState extends State<EventEditor> {
                 foregroundColor: StairColors.action,
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
               ),
-              child: const Text('履歴から選ぶ', style: TextStyle(fontSize: 13)),
+              child: const Text('一覧から選ぶ', style: TextStyle(fontSize: 13)),
             ),
           ],
         ),
@@ -579,8 +684,8 @@ class _EventEditorState extends State<EventEditor> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: StairPageHeader(
-      title: widget.event == null ? '大喜利登録' : '記録を編集',
-      icon: widget.event == null ? Icons.add : Icons.edit_outlined,
+      title: widget.event == null ? '登録' : '記録を編集',
+      icon: widget.event == null ? CupertinoIcons.add : CupertinoIcons.pencil,
       accent: StairColors.live,
       leading: widget.event == null ? null : const BackButton(),
       trailing: ValueListenableBuilder<TextEditingValue>(
@@ -589,9 +694,8 @@ class _EventEditorState extends State<EventEditor> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const StairInfoButton(
-              label: '大喜利登録',
-              message:
-                  '会の予定や参加記録を保存できます。タイトル以外は後から追加できます。参加者は1人ずつ入力し、大会の結果は会が終わってから追記できます。',
+              label: '登録',
+              message: '会の予定や参加記録を保存できます。参加者は文章や画像から一括追加できます。',
             ),
             StairSaveButton(
               onPressed: value.text.trim().isEmpty || _saving ? null : _save,
@@ -611,7 +715,7 @@ class _EventEditorState extends State<EventEditor> {
           children: [
             StairFormSection(
               title: '基本情報',
-              icon: Icons.tune,
+              icon: CupertinoIcons.slider_horizontal_3,
               accent: StairColors.live,
               children: [
                 StairMenuRow<EventKind>(
@@ -781,7 +885,7 @@ class _EventEditorState extends State<EventEditor> {
               ),
             StairFormSection(
               title: '振り返り',
-              icon: Icons.notes_outlined,
+              icon: CupertinoIcons.text_alignleft,
               accent: StairColors.memo,
               children: [
                 _textField(
