@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models.dart';
 import '../store.dart';
 import '../ui/stair_theme.dart';
+import '../ui/stair_controls.dart';
 
 /// The writing desk: current online submissions and an enduring note library.
 class ThinkingScreen extends StatefulWidget {
@@ -85,40 +86,24 @@ class _ThinkingScreenState extends State<ThinkingScreen>
           return ListView(
             padding: const EdgeInsets.fromLTRB(18, 0, 18, 120),
             children: [
-              StairCard(
+              StairFormSection(
+                title: 'メモを作成',
+                icon: Icons.edit_note_outlined,
                 accent: StairColors.memo,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '回答やお題の下書きを残せます。',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        FilledButton.icon(
-                          onPressed: () => _create(NoteKind.answers),
-                          icon: const Icon(Icons.edit_note_outlined, size: 18),
-                          label: const Text('回答メモ'),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: () => _create(NoteKind.prompts),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: StairColors.memo,
-                            side: BorderSide(
-                              color: StairColors.memo.withValues(alpha: 0.4),
-                            ),
-                          ),
-                          icon: const Icon(Icons.lightbulb_outline, size: 18),
-                          label: const Text('お題を作る'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                children: [
+                  ListTile(
+                    leading: const StairIconBadge(icon: Icons.edit_note_outlined, accent: StairColors.memo),
+                    title: const Text('回答メモ'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _create(NoteKind.answers),
+                  ),
+                  ListTile(
+                    leading: const StairIconBadge(icon: Icons.lightbulb_outline, accent: StairColors.memo),
+                    title: const Text('お題を作る'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _create(NoteKind.prompts),
+                  ),
+                ],
               ),
               const SizedBox(height: 20),
               StairSectionTitle(
@@ -136,7 +121,6 @@ class _ThinkingScreenState extends State<ThinkingScreen>
                   icon: Icons.event_note_outlined,
                   accent: StairColors.online,
                   message: '投稿期間中のネット大喜利はありません',
-                  detail: '登録で投稿の開始・締切を設定すると、ここに表示されます。',
                 ),
               for (final event in activeEvents)
                 StairCard(
@@ -185,21 +169,19 @@ class _ThinkingScreenState extends State<ThinkingScreen>
                 ),
               ),
               const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 6,
+              StairFormSection(
+                title: '表示条件',
+                icon: Icons.tune,
+                accent: StairColors.memo,
                 children: [
-                  ChoiceChip(
-                    label: const Text('すべて'),
-                    selected: _filter == null,
-                    onSelected: (_) => setState(() => _filter = null),
+                  StairMenuRow<int>(
+                    key: const ValueKey('thinking-note-filter'),
+                    label: 'メモの種類',
+                    accent: StairColors.memo,
+                    value: _filter?.index ?? -1,
+                    items: {-1: 'すべて', for (final kind in NoteKind.values) kind.index: _kindLabel(kind)},
+                    onChanged: (value) => setState(() => _filter = value < 0 ? null : NoteKind.values[value]),
                   ),
-                  for (final kind in NoteKind.values)
-                    ChoiceChip(
-                      label: Text(_kindLabel(kind)),
-                      selected: _filter == kind,
-                      onSelected: (_) => setState(() => _filter = kind),
-                    ),
                 ],
               ),
               const SizedBox(height: 10),
@@ -209,7 +191,6 @@ class _ThinkingScreenState extends State<ThinkingScreen>
                   message: _filter == null
                       ? 'まだメモがありません'
                       : '${_kindLabel(_filter!)}はまだありません',
-                  detail: '思いついた回答やお題を、1行ずつ書き留めてみましょう。',
                 ),
               for (final note in notes)
                 _NoteCard(
@@ -272,7 +253,6 @@ class _EventThoughtsScreen extends StatelessWidget {
                 const _EmptyCard(
                   icon: Icons.event_busy_outlined,
                   message: 'この会は削除されています',
-                  detail: '保存したメモは「思考」のメモ一覧から開けます。',
                 )
               else ...[
                 if (event.submissionStart != null &&
@@ -302,7 +282,6 @@ class _EventThoughtsScreen extends StatelessWidget {
                   const _EmptyCard(
                     icon: Icons.edit_note_outlined,
                     message: 'この会のメモはまだありません',
-                    detail: '「回答メモ」から、回答の候補を書き始められます。',
                   ),
                 for (final note in notes)
                   _NoteCard(key: ValueKey(note.id), store: store, note: note),
@@ -621,7 +600,6 @@ class _ThoughtEditorState extends State<_ThoughtEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final event = _eventById(widget.store, _eventId);
     return PopScope<bool>(
       canPop: _allowExit || (!_dirty && !_saving),
       onPopInvokedWithResult: (didPop, _) {
@@ -646,72 +624,47 @@ class _ThoughtEditorState extends State<_ThoughtEditor> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(18, 8, 18, 36),
             children: [
-              StairSection(
-                title: 'メモの種類',
-                icon: Icons.category_outlined,
-                accent: StairColors.memo,
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [
-                    for (final kind in NoteKind.values)
-                      ChoiceChip(
-                        label: Text(_kindLabel(kind)),
-                        avatar: Icon(_kindIcon(kind), size: 18),
-                        selected: _kind == kind,
-                        onSelected: (_) => setState(() => _kind = kind),
-                      ),
-                  ],
-                ),
-              ),
-              StairSection(
+              StairFormSection(
                 title: '基本情報',
                 icon: Icons.notes_outlined,
                 accent: StairColors.memo,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    StairFieldRow(
+                children: [
+                  StairMenuRow<NoteKind>(
+                    key: const ValueKey('thought-editor-kind'),
+                    label: '種類',
+                    accent: StairColors.memo,
+                    value: _kind,
+                    items: {for (final kind in NoteKind.values) kind: _kindLabel(kind)},
+                    onChanged: (value) => setState(() => _kind = value),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    child: Semantics(
                       label: 'タイトル',
-                      multiline: true,
-                      child: Semantics(
-                        label: 'タイトル',
-                        child: TextField(
-                          controller: _title,
-                          maxLength: 120,
-                          textInputAction: TextInputAction.next,
-                          decoration: const InputDecoration(
-                            hintText: '省略すると本文の1行目を使います',
-                          ),
-                        ),
+                      child: TextField(
+                        controller: _title,
+                        maxLength: 120,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(hintText: 'タイトル（任意）'),
                       ),
                     ),
-                    const Divider(height: 1),
-                    StairFieldRow(
+                  ),
+                  InkWell(
+                    key: const ValueKey('thought-editor-event'),
+                    onTap: _chooseEvent,
+                    child: StairFormRow(
                       label: '関連する会',
-                      multiline: true,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(8),
-                        onTap: _chooseEvent,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          child: Row(
-                            children: [
-                              Expanded(child: Text(event?.title ?? '関連づけなし')),
-                              const SizedBox(width: 8),
-                              Icon(
-                                Icons.expand_more,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                            ],
-                          ),
-                        ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Expanded(child: Text(_eventById(widget.store, _eventId)?.title ?? '関連づけなし', textAlign: TextAlign.end)),
+                          const SizedBox(width: 8),
+                          const Icon(Icons.chevron_right, size: 20),
+                        ],
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
               StairSection(
                 title: _kind == NoteKind.prompts ? 'お題の候補' : 'メモ',
@@ -727,9 +680,9 @@ class _ThoughtEditorState extends State<_ThoughtEditor> {
                     textCapitalization: TextCapitalization.sentences,
                     decoration: InputDecoration(
                       hintText: switch (_kind) {
-                        NoteKind.answers => '回答の候補を1行ずつ。\n思いつくままに書いてみましょう。',
-                        NoteKind.prompts => '主催会で使いたいお題や、そのアイデアを1行ずつ。',
-                        NoteKind.free => '気づきや振り返り、あとで考えたいこと。',
+                        NoteKind.answers => '回答を入力',
+                        NoteKind.prompts => 'お題を入力',
+                        NoteKind.free => 'メモを入力',
                       },
                       alignLabelWithHint: true,
                     ),
@@ -754,13 +707,11 @@ class _EmptyCard extends StatelessWidget {
   const _EmptyCard({
     required this.icon,
     required this.message,
-    required this.detail,
     this.accent = StairColors.memo,
   });
 
   final IconData icon;
   final String message;
-  final String detail;
   final Color accent;
 
   @override
@@ -771,8 +722,6 @@ class _EmptyCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           StairSectionTitle(title: message, icon: icon, accent: accent),
-          const SizedBox(height: 10),
-          Text(detail, style: Theme.of(context).textTheme.bodySmall),
         ],
       ),
     );

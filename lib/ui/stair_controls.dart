@@ -16,6 +16,7 @@ class StairMenuRow<T> extends StatelessWidget {
     required this.items,
     this.onChanged,
     this.info,
+    this.accent,
   });
 
   final String label;
@@ -23,6 +24,7 @@ class StairMenuRow<T> extends StatelessWidget {
   final Map<T, String> items;
   final ValueChanged<T>? onChanged;
   final String? info;
+  final Color? accent;
 
   Future<void> _choose(BuildContext context) async {
     FocusScope.of(context).unfocus();
@@ -168,7 +170,7 @@ class StairMenuRow<T> extends StatelessWidget {
                 textAlign: TextAlign.right,
                 style: TextStyle(
                   fontSize: 17,
-                  fontWeight: FontWeight.w400,
+                  fontWeight: accent == null ? FontWeight.w400 : FontWeight.w500,
                   color: onChanged == null
                       ? Theme.of(context).disabledColor
                       : Theme.of(context).colorScheme.onSurface,
@@ -177,11 +179,11 @@ class StairMenuRow<T> extends StatelessWidget {
             ),
             const SizedBox(width: 4),
             Icon(
-              Icons.unfold_more_rounded,
-              size: 19,
+              CupertinoIcons.chevron_up_chevron_down,
+              size: 13,
               color: onChanged == null
                   ? Theme.of(context).disabledColor
-                  : Theme.of(context).colorScheme.onSurface,
+                  : accent ?? Theme.of(context).colorScheme.onSurface,
             ),
           ],
         ),

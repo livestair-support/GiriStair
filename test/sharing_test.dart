@@ -104,4 +104,35 @@ void main() {
       store.dispose();
     },
   );
+  testWidgets('image kind menu switches previews and resets the list page', (tester) async {
+    final store = await makeStore(count: 16);
+    await showScreen(tester, store, list: true);
+    expect(find.byType(CupertinoSlidingSegmentedControl<bool>), findsNothing);
+    await tester.scrollUntilVisible(find.byTooltip('次のページ'), 500);
+    await tester.tap(find.byTooltip('次のページ'));
+    await tester.pumpAndSettle();
+    expect(find.text('会15'), findsOneWidget);
+
+    Future<void> chooseImage(String kind) async {
+      final menu = find.byKey(const ValueKey('share-image-kind'));
+      await tester.ensureVisible(menu);
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(kind).last);
+      await tester.pumpAndSettle();
+    }
+
+    await chooseImage('Summary');
+    expect(find.text('大喜利 Summary'), findsOneWidget);
+    expect(find.byTooltip('次のページ'), findsNothing);
+    await chooseImage('List');
+    expect(find.text('大喜利 List'), findsOneWidget);
+    expect(find.text('会0'), findsOneWidget);
+    expect(find.text('会15'), findsNothing);
+    expect(find.text('1 / 2 ページ'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    store.dispose();
+  });
+
 }
