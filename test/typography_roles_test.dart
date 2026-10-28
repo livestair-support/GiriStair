@@ -53,7 +53,7 @@ void main() {
     );
   });
 
-  test('device families preserve rounded design and requested Japanese weight', () {
+  test('device families preserve rounded design and Japanese weights', () {
     StairTypography.configureNativeFonts({
       'sectionTitle': {
         'latinFamilyName': 'Device Rounded',
@@ -116,7 +116,10 @@ void main() {
       platform: TargetPlatform.iOS,
     );
     expect(input.fontFamily, 'CupertinoSystemText');
-    expect(input.fontFamilyFallback, ['Hiragino Sans', 'Hiragino Kaku Gothic ProN']);
+    expect(input.fontFamilyFallback, [
+      'Hiragino Sans',
+      'Hiragino Kaku Gothic ProN',
+    ]);
   });
 
   test('iOS font metadata never imposes Apple fonts on Android', () {
