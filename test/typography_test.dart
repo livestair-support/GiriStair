@@ -53,10 +53,8 @@ void expectJapaneseInput(WidgetTester tester, Finder field) {
 }
 
 void configureIPhone(WidgetTester tester) {
-  debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(430, 1800);
-  addTearDown(() => debugDefaultTargetPlatformOverride = null);
   addTearDown(tester.view.resetDevicePixelRatio);
   addTearDown(tester.view.resetPhysicalSize);
 }
@@ -110,6 +108,7 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       store.dispose();
     },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
 
   testWidgets(
@@ -141,37 +140,40 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       store.dispose();
     },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
 
-  testWidgets('shared-image preview and its controls retain Japanese fonts', (
-    tester,
-  ) async {
-    configureIPhone(tester);
-    final store = GiriStore(storage: MemoryGiriStorage());
-    await store.load();
-    await store.saveEvent(
-      GiriEvent(
-        id: 'event',
-        title: '日本語の大喜利会',
-        kind: EventKind.live,
-        meetingType: MeetingType.casual,
-        createdAt: DateTime(2026, 10, 28),
-        eventDate: DateTime(2026, 10, 28),
-        status: EventStatus.attended,
-        venue: '日本語の会場',
-      ),
-    );
-    await tester.pumpWidget(japaneseApp(ShareRecordsScreen(store: store)));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'shared-image preview and its controls retain Japanese fonts',
+    (tester) async {
+      configureIPhone(tester);
+      final store = GiriStore(storage: MemoryGiriStorage());
+      await store.load();
+      await store.saveEvent(
+        GiriEvent(
+          id: 'event',
+          title: '日本語の大喜利会',
+          kind: EventKind.live,
+          meetingType: MeetingType.casual,
+          createdAt: DateTime(2026, 10, 28),
+          eventDate: DateTime(2026, 10, 28),
+          status: EventStatus.attended,
+          venue: '日本語の会場',
+        ),
+      );
+      await tester.pumpWidget(japaneseApp(ShareRecordsScreen(store: store)));
+      await tester.pumpAndSettle();
 
-    expectJapaneseText(tester, find.text('共有ページ'));
-    expectJapaneseText(tester, find.text('期間'));
-    expectJapaneseText(tester, find.text('参加の記録'));
-    expectJapaneseText(tester, find.text('日本語の会場'));
-    expectJapaneseText(tester, find.text('画像を共有'));
-    expect(tester.takeException(), isNull);
+      expectJapaneseText(tester, find.text('共有ページ'));
+      expectJapaneseText(tester, find.text('期間'));
+      expectJapaneseText(tester, find.text('参加の記録'));
+      expectJapaneseText(tester, find.text('日本語の会場'));
+      expectJapaneseText(tester, find.text('画像を共有'));
+      expect(tester.takeException(), isNull);
 
-    await tester.pumpWidget(const SizedBox());
-    store.dispose();
-  });
+      await tester.pumpWidget(const SizedBox());
+      store.dispose();
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
 }
