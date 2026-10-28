@@ -23,6 +23,12 @@ jobs:
       - run: flutter pub get
       - name: Prepare native project
         run: python3 .ci/prepare_project.py
+      - name: Start iPhone simulator while the app builds
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/iphone-parity
+          python3 -u .ci/parity_ios.py prepare-simulator \
+            --output artifacts/iphone-parity 2>&1 | tee artifacts/iphone-parity/prepare-simulator.log
       - name: Build real iPhone simulator app
         run: |
           set -euo pipefail
@@ -37,18 +43,27 @@ jobs:
             --target=tool/parity_preview.dart --dart-define=PARITY_TAB=0
           # The mixed SPM/Pods build graph omits the aggregate framework target.
           # Build it explicitly in the same output directory before linking Runner.
-          xcrun xcodebuild -project ios/Pods/Pods.xcodeproj -target Pods-Runner \
+          if ! xcrun xcodebuild -project ios/Pods/Pods.xcodeproj -target Pods-Runner \
             -configuration Debug -sdk iphonesimulator \
             BUILD_DIR="$PWD/build/ios" SYMROOT="$PWD/build/ios" \
-            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee artifacts/iphone-parity/pods-build.log
-          flutter build ios --simulator --debug --verbose \
+            CODE_SIGNING_ALLOWED=NO build > artifacts/iphone-parity/pods-build.log 2>&1; then
+            tail -n 160 artifacts/iphone-parity/pods-build.log
+            exit 1
+          fi
+          tail -n 12 artifacts/iphone-parity/pods-build.log
+          if ! flutter build ios --simulator --debug --verbose \
             --target=tool/parity_preview.dart \
-            --dart-define=PARITY_TAB=0 2>&1 | tee artifacts/iphone-parity/build.log
+            --dart-define=PARITY_TAB=0 > artifacts/iphone-parity/build.log 2>&1; then
+            tail -n 160 artifacts/iphone-parity/build.log
+            exit 1
+          fi
+          tail -n 12 artifacts/iphone-parity/build.log
       - name: Capture Japanese iPhone registration screen
-        run: >-
-          python3 .ci/parity_ios.py capture
-          --app build/ios/iphonesimulator/Runner.app
-          --output artifacts/iphone-parity
+        run: |
+          set -euo pipefail
+          python3 -u .ci/parity_ios.py capture \
+            --app build/ios/iphonesimulator/Runner.app \
+            --output artifacts/iphone-parity 2>&1 | tee artifacts/iphone-parity/capture.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

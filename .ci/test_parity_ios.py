@@ -1,6 +1,10 @@
+from contextlib import redirect_stderr, redirect_stdout
+import io
+import subprocess
 import unittest
+from unittest.mock import patch
 
-from parity_ios import choose_phone
+from parity_ios import choose_phone, run, start_phone
 
 
 class SimulatorSelectionTest(unittest.TestCase):
@@ -34,6 +38,27 @@ class SimulatorSelectionTest(unittest.TestCase):
                     {"name": "iPhone 17", "isAvailable": False},
                 ],
             }})
+
+    def test_does_not_boot_a_phone_already_booting_or_booted(self):
+        with patch("parity_ios.run") as command:
+            start_phone({"state": "Booting", "udid": "phone"})
+            start_phone({"state": "Booted", "udid": "phone"})
+            command.assert_not_called()
+            start_phone({"state": "Shutdown", "udid": "phone"})
+            command.assert_called_once_with("xcrun", "simctl", "boot", "phone")
+
+    def test_timeout_preserves_boot_progress_and_failure_stderr(self):
+        error = subprocess.TimeoutExpired(
+            ["xcrun", "simctl", "bootstatus"], 600,
+            output=b"Waiting for SpringBoard", stderr=b"Simulator diagnostic",
+        )
+        output = io.StringIO()
+        with patch("parity_ios.subprocess.run", side_effect=error):
+            with redirect_stdout(io.StringIO()), redirect_stderr(output):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    run("xcrun", "simctl", "bootstatus", timeout=600)
+        self.assertIn("Waiting for SpringBoard", output.getvalue())
+        self.assertIn("Simulator diagnostic", output.getvalue())
 
 
 if __name__ == "__main__":

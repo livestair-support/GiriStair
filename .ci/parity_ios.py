@@ -9,7 +9,9 @@ import json
 from pathlib import Path
 import plistlib
 import re
+import shlex
 import subprocess
+import sys
 import time
 
 
@@ -67,9 +69,39 @@ def choose_phone(devices: dict) -> tuple[str, dict]:
 
 
 def run(*arguments: str, timeout: int = 180) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        list(arguments), check=True, capture_output=True, text=True, timeout=timeout
-    )
+    print(f"$ {shlex.join(arguments)} (timeout {timeout}s)", flush=True)
+    try:
+        return subprocess.run(
+            list(arguments), check=True, capture_output=True, text=True, timeout=timeout
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        # TimeoutExpired may retain bytes even with text=True. Preserve the
+        # simulator's boot progress instead of losing it behind a traceback.
+        for stream in (error.stdout, error.stderr):
+            if stream:
+                text = stream.decode("utf-8", errors="replace") if isinstance(stream, bytes) else stream
+                print(text, file=sys.stderr, flush=True)
+        raise
+
+
+def available_phone(output: Path, listing_name: str) -> tuple[str, dict]:
+    output.mkdir(parents=True, exist_ok=True)
+    listing = run("xcrun", "simctl", "list", "devices", "available", "--json").stdout
+    (output / listing_name).write_text(listing, encoding="utf-8")
+    return choose_phone(json.loads(listing))
+
+
+def start_phone(device: dict) -> None:
+    # An earlier prepare step can leave the device booting; booting it a second
+    # time is an error rather than a useful way to wait for readiness.
+    if device.get("state") not in {"Booted", "Booting"}:
+        run("xcrun", "simctl", "boot", device["udid"])
+
+
+def prepare_simulator(output: Path) -> None:
+    runtime, device = available_phone(output, "available-devices-before-build.json")
+    start_phone(device)
+    print(f"Started {device['name']} ({runtime}); boot overlaps the app build.", flush=True)
 
 
 def capture(app: Path, output: Path) -> None:
@@ -77,13 +109,10 @@ def capture(app: Path, output: Path) -> None:
     with (app / "Info.plist").open("rb") as source:
         info = plistlib.load(source)
     bundle_id = info["CFBundleIdentifier"]
-    listing = run("xcrun", "simctl", "list", "devices", "available", "--json").stdout
-    (output / "available-devices.json").write_text(listing, encoding="utf-8")
-    runtime, device = choose_phone(json.loads(listing))
+    runtime, device = available_phone(output, "available-devices.json")
     udid = device["udid"]
-    if device.get("state") != "Booted":
-        run("xcrun", "simctl", "boot", udid)
-    run("xcrun", "simctl", "bootstatus", udid, "-b", timeout=240)
+    start_phone(device)
+    run("xcrun", "simctl", "bootstatus", udid, "-b", timeout=600)
     run("xcrun", "simctl", "spawn", udid, "defaults", "write", ".GlobalPreferences",
         "AppleLanguages", "-array", "ja", "en")
     run("xcrun", "simctl", "spawn", udid, "defaults", "write", ".GlobalPreferences",
@@ -133,12 +162,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("select-xcode")
+    prepare = commands.add_parser("prepare-simulator")
+    prepare.add_argument("--output", type=Path, required=True)
     screenshot = commands.add_parser("capture")
     screenshot.add_argument("--app", type=Path, required=True)
     screenshot.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
     if arguments.command == "select-xcode":
         select_xcode()
+    elif arguments.command == "prepare-simulator":
+        prepare_simulator(arguments.output)
     else:
         capture(arguments.app, arguments.output)
 
