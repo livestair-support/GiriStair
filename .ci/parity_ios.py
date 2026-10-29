@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -178,6 +179,16 @@ def capture(app: Path, output: Path) -> None:
         "--style", "compact", "--predicate", 'process == "Runner"',
     ).stdout
     (output / "simulator.log").write_text(logs, encoding="utf-8")
+    requested = {item["screen"] for item in captures}
+    confirmed = set(re.findall(r"GiriStairPreview (\w+)", logs))
+    if not requested.issubset(confirmed):
+        raise RuntimeError(f"Preview routes were not confirmed: {sorted(requested - confirmed)}")
+    hashes = {
+        hashlib.sha256((output / item["screenshot"]).read_bytes()).hexdigest()
+        for item in captures
+    }
+    if len(hashes) != len(captures):
+        raise RuntimeError("Preview routes produced identical screenshots; inspect the route setup.")
     fonts = verify_font_diagnostics(logs)
     (output / "font-metadata.json").write_text(
         json.dumps(fonts, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

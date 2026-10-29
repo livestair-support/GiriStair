@@ -205,7 +205,9 @@ private final class StairMapSearchController: UITableViewController,
     guard !isFinishing else { return }
     isFinishing = true
     activeSearch?.cancel()
-    dismiss(animated: true) { self.resolve(value) }
+    // Close the whole picker even when its UISearchController is presenting.
+    let pickerContainer: UIViewController = navigationController ?? self
+    pickerContainer.dismiss(animated: true) { self.resolve(value) }
   }
 
   private func resolve(_ value: Any?) {

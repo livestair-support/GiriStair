@@ -29,6 +29,7 @@ final class StairNativeControls: NSObject, FlutterPlugin {
     case "previewOptions":
       #if DEBUG
       let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--stair-preview-screen=") }?.components(separatedBy: "=").last ?? "registration"
+      NSLog("GiriStairPreview %@", screen)
       result(["screen": screen])
       #else
       result(FlutterMethodNotImplemented)

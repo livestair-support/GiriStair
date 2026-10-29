@@ -18,7 +18,9 @@ Future<void> main() async {
   try {
     final options = await const MethodChannel('giristair/native-controls').invokeMapMethod<String,dynamic>('previewOptions');
     screen = options?['screen'] as String? ?? screen;
-  } on MissingPluginException { screen = 'registration'; }
+  } on MissingPluginException {
+    throw StateError('The iPhone preview requires DEBUG in the Runner target.');
+  }
   await store.savePreferences(AppPreferences(
     selfName: '確認用プレイヤー',
     onboardingCompleted: true,
