@@ -7,14 +7,16 @@ import '../store.dart';
 import '../tournament_presentation.dart';
 import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
+import '../ui/stair_symbols.dart';
 import 'current_calendar.dart';
 import 'event_detail.dart';
+import 'event_editor.dart' show formatEventDate, eventStatusLabel;
 import 'online_site_editor.dart';
 
 export 'event_detail.dart';
 
 String formatCalendarDate(DateTime? value) {
-  if (value == null) return '未設定';
+  if (value == null) { return '未設定'; }
   const weekdays = ['月', '火', '水', '木', '金', '土', '日'];
   return '${value.year}年${value.month}月${value.day}日(${weekdays[value.weekday - 1]})';
 }
@@ -26,7 +28,7 @@ String formatLiveEventDate(GiriEvent event) => event.startsAt != null
     : '日付未設定';
 
 String _shortDate(DateTime? value, {bool compact = false}) {
-  if (value == null) return '日付未定';
+  if (value == null) { return '日付未定'; }
   const weekdays = ['月', '火', '水', '木', '金', '土', '日'];
   return '${compact ? '' : '${value.year}/'}${value.month}/${value.day}(${weekdays[value.weekday - 1]})';
 }
@@ -37,7 +39,7 @@ String _kind(GiriEvent event) => event.kind == EventKind.live ? '生大喜利' :
 String _roundLabel(GiriEvent event, EventRound round) => [event.meetingType == MeetingType.tournament ? round.name : '投稿・投票', if (event.meetingType == MeetingType.tournament || round.promptNumber > 1) 'お題${round.promptNumber}', if (round.block.isNotEmpty) round.block].join(' · ');
 
 DateTime? _relevantDate(GiriEvent event, DateTime now) {
-  if (event.kind == EventKind.live) return event.eventDate ?? event.startsAt;
+  if (event.kind == EventKind.live) { return event.eventDate ?? event.startsAt; }
   final dates = [for (final round in event.effectiveRounds) ...[
     if (round.submissionEnabled) round.submissionEnd,
     if (round.votingRequired) round.votingEnd,
@@ -59,6 +61,7 @@ class EventListScreen extends StatefulWidget {
 
 class _EventListScreenState extends State<EventListScreen> {
   String _query = '';
+  final _search = TextEditingController();
   EventKind? _kindFilter;
   EventStatus? _status;
   bool _attended = false;
@@ -66,16 +69,15 @@ class _EventListScreenState extends State<EventListScreen> {
   DateTime _selected = DateUtils.dateOnly(DateTime.now());
   String? _workingSite;
 
-  Future<void> _mode(bool current) async {
-    try { await widget.store.savePreferences(widget.store.preferences.copyWith(listCurrentMode: current)); }
-    catch (_) { if (mounted) showStairMessage(context, '表示方法を保存できませんでした。', error: true); }
-  }
+  @override
+  void dispose() { _search.dispose(); super.dispose(); }
 
   bool _matches(GiriEvent event, {bool current = false}) {
-    if (!current && event.onlineSiteId != null && !event.isParticipating) return false;
-    if (_kindFilter != null && event.kind != _kindFilter) return false;
-    if (_status != null && event.status != _status) return false;
-    if (!current && _status == null && (event.status == EventStatus.attended) != _attended) return false;
+    if (current) { return event.status != EventStatus.canceled; }
+    if (!current && event.onlineSiteId != null && !event.isParticipating) { return false; }
+    if (_kindFilter != null && event.kind != _kindFilter) { return false; }
+    if (_status != null && event.status != _status) { return false; }
+    if (!current && _status == null && (event.status == EventStatus.attended) != _attended) { return false; }
     final site = widget.store.onlineSiteById(event.onlineSiteId);
     final venue = widget.store.venueById(event.venueId);
     return [event.title, event.organizer, event.venue, venue?.prefecture ?? '', site?.name ?? '', event.affiliation, event.block, ...event.participants].join(' ').toLowerCase().contains(_query.toLowerCase());
@@ -84,13 +86,13 @@ class _EventListScreenState extends State<EventListScreen> {
   void _open(GiriEvent event, {String? roundId}) => Navigator.push<void>(context, CupertinoPageRoute(builder: (_) => EventDetailScreen(store: widget.store, eventId: event.id, initialRoundId: roundId)));
 
   Future<void> _cycle(OnlineSite site, int offset) async {
-    if (_workingSite != null) return;
+    if (_workingSite != null) { return; }
     setState(() => _workingSite = site.id);
     try {
       final event = await widget.store.createSiteCycle(site.id, weekOffset: offset, join: false);
-      if (mounted) _open(event);
-    } catch (_) { if (mounted) showStairMessage(context, '開催回を開けませんでした。', error: true); }
-    finally { if (mounted) setState(() => _workingSite = null); }
+      if (mounted) { _open(event); }
+    } catch (_) { if (mounted) { showStairMessage(context, '開催回を開けませんでした。', error: true); } }
+    finally { if (mounted) { setState(() => _workingSite = null); } }
   }
 
   @override
@@ -99,35 +101,30 @@ class _EventListScreenState extends State<EventListScreen> {
     final now = DateTime.now();
     final events = widget.store.events.where((event) => _matches(event, current: current)).toList()..sort((a, b) {
       final ad = _relevantDate(a, now), bd = _relevantDate(b, now);
-      if (ad == null && bd == null) return b.createdAt.compareTo(a.createdAt);
-      if (ad == null) return 1;
-      if (bd == null) return -1;
+      if (ad == null && bd == null) { return b.createdAt.compareTo(a.createdAt); }
+      if (ad == null) { return 1; }
+      if (bd == null) { return -1; }
       return _attended ? bd.compareTo(ad) : ad.compareTo(bd);
     });
     final periods = currentPeriodsFor(events);
     final sites = _kindFilter == EventKind.live || _attended ? <OnlineSite>[] : widget.store.onlineSites.where((site) => '${site.name} ${site.affiliation} ${site.block}'.toLowerCase().contains(_query.toLowerCase())).toList();
     return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 120), keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag, children: [
-      StairFormSection(title: '表示・検索', icon: CupertinoIcons.slider_horizontal_3, accent: StairColors.online, children: [
-        Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity, child: CupertinoSlidingSegmentedControl<bool>(
-          key: const ValueKey('list-mode'), groupValue: current,
-          children: const {false: Text('通常'), true: Text('カレント')},
-          onValueChanged: (value) { if (value != null) _mode(value); },
-        ))),
+      if (!current) StairFormSection(title: '表示・検索', icon: CupertinoIcons.slider_horizontal_3, accent: StairColors.online, children: [
         if (!current) Padding(padding: const EdgeInsets.fromLTRB(12, 0, 12, 12), child: SizedBox(width: double.infinity, child: CupertinoSlidingSegmentedControl<bool>(
           key: const ValueKey('list-attendance-tabs'), groupValue: _attended,
           children: const {false: Text('参加予定'), true: Text('参加済')},
-          onValueChanged: (value) { if (value != null) setState(() { _attended = value; _status = null; }); },
+          onValueChanged: (value) { if (value != null) { setState(() { _attended = value; _status = null; }); } },
         ))),
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4), child: TextField(key: const ValueKey('list-search'), decoration: const InputDecoration(hintText: 'タイトル・会場・主催者・参加者で検索', prefixIcon: Icon(CupertinoIcons.search, size: 20)), onChanged: (value) => setState(() => _query = value.trim()))),
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4), child: TextField(key: const ValueKey('list-search'), controller: _search, decoration: const InputDecoration(hintText: 'タイトル・会場・主催者・参加者で検索', prefixIcon: Icon(CupertinoIcons.search, size: 20)), onChanged: (value) => setState(() => _query = value.trim()))),
         StairMenuRow<int>(key: const ValueKey('list-kind-filter'), label: '形式', accent: StairColors.online, value: _kindFilter?.index ?? -1, items: const {-1: 'すべて', 0: '生大喜利', 1: 'ネット大喜利'}, onChanged: (value) => setState(() => _kindFilter = value == -1 ? null : EventKind.values[value])),
-        StairMenuRow<int>(key: const ValueKey('list-status-filter'), label: '参加状況', accent: StairColors.online, value: _status?.index ?? -1, items: {-1: 'すべて', for (final status in EventStatus.values) status.index: eventStatusLabel(status)}, onChanged: (value) => setState(() { _status = value == -1 ? null : EventStatus.values[value]; if (_status != null) _attended = _status == EventStatus.attended; })),
+        StairMenuRow<int>(key: const ValueKey('list-status-filter'), label: '参加状況', accent: StairColors.online, value: _status?.index ?? -1, items: {-1: 'すべて', for (final status in EventStatus.values) status.index: eventStatusLabel(status)}, onChanged: (value) => setState(() { _status = value == -1 ? null : EventStatus.values[value]; if (_status != null) { _attended = _status == EventStatus.attended; } })),
       ]),
       if (current) ...[
-        CurrentCalendar(month: _month, selected: _selected, periods: periods,
-          onMonthChanged: (month) => setState(() { _month = month; _selected = month; }),
+        CurrentCalendar(month: _month, selected: _selected, periods: periods, accent: _attended ? StairColors.online : StairColors.action,
+          onMonthChanged: (month) => setState(() => _month = month),
           onSelected: (day) => setState(() => _selected = day),
           onOpenPeriod: (period) => _open(period.event, roundId: period.round?.id)),
-        Row(children: [Expanded(child: Text(formatCalendarDate(_selected), style: Theme.of(context).textTheme.titleMedium)), CupertinoButton(padding: const EdgeInsets.all(8), onPressed: () => setState(() { _selected = DateUtils.dateOnly(DateTime.now()); _month = DateTime(_selected.year, _selected.month); }), child: const Text('今日'))]),
+        Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Text(formatCalendarDate(_selected), style: Theme.of(context).textTheme.titleMedium)),
         if (!periods.any((period) => period.overlapsDay(_selected))) _empty('この日の予定はありません'),
         for (final period in periods.where((period) => period.overlapsDay(_selected))) _periodCard(period),
       ] else ...[
@@ -213,5 +210,44 @@ class _CardDate extends StatelessWidget {
     painter.dispose();
     return FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
       child: Text(label, maxLines: 1, softWrap: false, style: style));
+  });
+}
+
+/// LiveStair's 44-point circular calendar/list toolbar button.
+class EventListModeButton extends StatefulWidget {
+  const EventListModeButton({super.key, required this.store});
+  final GiriStore store;
+  @override
+  State<EventListModeButton> createState() => _EventListModeButtonState();
+}
+
+class _EventListModeButtonState extends State<EventListModeButton> {
+  bool _saving = false;
+  Future<void> _toggle() async {
+    if (_saving) { return; }
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() => _saving = true);
+    try {
+      final preferences = widget.store.preferences;
+      await widget.store.savePreferences(preferences.copyWith(listCurrentMode: !preferences.listCurrentMode));
+    } catch (_) {
+      if (mounted) { showStairMessage(context, '表示方法を保存できませんでした。', error: true); }
+    } finally { if (mounted) { setState(() => _saving = false); } }
+  }
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(listenable: widget.store, builder: (context, _) {
+    final current = widget.store.preferences.listCurrentMode;
+    final label = current ? '一覧表示に切り替える' : 'カレンダー表示に切り替える';
+    final foreground = Theme.of(context).colorScheme.onSurface;
+    return Tooltip(message: label, child: Semantics(label: label, button: true,
+      child: CupertinoButton(key: const ValueKey('list-mode-button'), padding: EdgeInsets.zero,
+        minimumSize: const Size(44, 44), onPressed: _saving ? null : _toggle,
+        child: Container(width: 44, height: 44, alignment: Alignment.center,
+          decoration: BoxDecoration(shape: BoxShape.circle, color: Theme.of(context).colorScheme.surface,
+            border: Border.all(color: foreground.withValues(alpha: .1), width: 1)),
+          child: _saving ? CupertinoActivityIndicator(color: foreground, radius: 9)
+              : StairSymbolIcon(icon: current ? CupertinoIcons.list_bullet : CupertinoIcons.calendar, size: 19, weight: FontWeight.w600, color: foreground)),
+      ),
+    ));
   });
 }

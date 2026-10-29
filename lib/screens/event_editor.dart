@@ -114,12 +114,24 @@ class _EventEditorState extends State<EventEditor> {
       _tournamentFormat = event.tournamentResult!.format;
     }
     _teams = event?.teams.toList() ?? [];
-    if (_teams.isEmpty && _tournamentFormat != TournamentFormat.individual &&
-        (_tournamentResult.teamName.isNotEmpty || _tournamentResult.members.isNotEmpty)) {
-      _teams = [GiriTeam(id: widget.store.newId(), name: _tournamentResult.teamName, members: _tournamentResult.members, isMine: true)];
+    if (_teams.isEmpty &&
+        _tournamentFormat != TournamentFormat.individual &&
+        (_tournamentResult.teamName.isNotEmpty ||
+            _tournamentResult.members.isNotEmpty)) {
+      _teams = [
+        GiriTeam(
+          id: widget.store.newId(),
+          name: _tournamentResult.teamName,
+          members: _tournamentResult.members,
+          isMine: true,
+        ),
+      ];
     }
-    _myTeamId = event?.myTeamId ?? _teams.where((team) => team.isMine).firstOrNull?.id;
-    _teamSize = event?.teamSize ?? (_tournamentFormat == TournamentFormat.pair ? 2 : null);
+    _myTeamId =
+        event?.myTeamId ?? _teams.where((team) => team.isMine).firstOrNull?.id;
+    _teamSize =
+        event?.teamSize ??
+        (_tournamentFormat == TournamentFormat.pair ? 2 : null);
     _kind = event?.kind ?? EventKind.live;
     _meetingType = event?.meetingType ?? MeetingType.casual;
     _status = event?.status ?? EventStatus.planned;
@@ -134,7 +146,12 @@ class _EventEditorState extends State<EventEditor> {
     _rounds = event?.effectiveRounds.toList() ?? [];
     _automaticRoundFields = {};
     if (event?.kind == EventKind.online && _rounds.isEmpty) {
-      _rounds.add(EventRound(id: widget.store.newId(), name: _meetingType == MeetingType.tournament ? '予選1回戦' : '投稿・投票'));
+      _rounds.add(
+        EventRound(
+          id: widget.store.newId(),
+          name: _meetingType == MeetingType.tournament ? '予選1回戦' : '投稿・投票',
+        ),
+      );
     }
     _scheduleError = null;
   }
@@ -199,7 +216,10 @@ class _EventEditorState extends State<EventEditor> {
     _scheduleError = null;
   });
 
-  bool get _isNewSite => widget.event == null && _kind == EventKind.online && _meetingType == MeetingType.casual;
+  bool get _isNewSite =>
+      widget.event == null &&
+      _kind == EventKind.online &&
+      _meetingType == MeetingType.casual;
 
   void _syncSelfParticipant() {
     final self = widget.store.preferences.selfName.trim();
@@ -208,12 +228,21 @@ class _EventEditorState extends State<EventEditor> {
       if (self.isEmpty || organizer.isEmpty) return;
       final isSelf = playerSearchKey(self) == playerSearchKey(organizer);
       if (isSelf && _autoSelfAdded) {
-        final index = _participants.indexWhere((controller) => playerSearchKey(controller.text) == playerSearchKey(self));
+        final index = _participants.indexWhere(
+          (controller) =>
+              playerSearchKey(controller.text) == playerSearchKey(self),
+        );
         if (index >= 0) _participants.removeAt(index).dispose();
         if (_participants.isEmpty) _participants.add(TextEditingController());
         _autoSelfAdded = false;
-      } else if (!isSelf && !_participants.any((controller) => playerSearchKey(controller.text) == playerSearchKey(self))) {
-        final empty = _participants.where((controller) => controller.text.trim().isEmpty).firstOrNull;
+      } else if (!isSelf &&
+          !_participants.any(
+            (controller) =>
+                playerSearchKey(controller.text) == playerSearchKey(self),
+          )) {
+        final empty = _participants
+            .where((controller) => controller.text.trim().isEmpty)
+            .firstOrNull;
         if (empty == null) {
           _participants.add(TextEditingController(text: self));
         } else {
@@ -225,7 +254,15 @@ class _EventEditorState extends State<EventEditor> {
   }
 
   Future<void> _openSiteRegistration() async {
-    final site = await Navigator.of(context).push<OnlineSite>(CupertinoPageRoute(builder: (_) => OnlineSiteEditor(store: widget.store, initialName: _title.text.trim(), initialUrl: _siteUrl.text.trim())));
+    final site = await Navigator.of(context).push<OnlineSite>(
+      CupertinoPageRoute(
+        builder: (_) => OnlineSiteEditor(
+          store: widget.store,
+          initialName: _title.text.trim(),
+          initialUrl: _siteUrl.text.trim(),
+        ),
+      ),
+    );
     if (!mounted || site == null) return;
     _formKey.currentState?.reset();
     setState(_loadEvent);
@@ -238,14 +275,29 @@ class _EventEditorState extends State<EventEditor> {
     _tournamentResult = _tournamentResult.copyWith(format: format);
     if (format != TournamentFormat.individual && _teams.isEmpty) {
       final id = widget.store.newId();
-      _teams = [GiriTeam(id: id, isMine: true, members: widget.store.preferences.selfName.isEmpty ? const [] : [widget.store.preferences.selfName])];
+      _teams = [
+        GiriTeam(
+          id: id,
+          isMine: true,
+          members: widget.store.preferences.selfName.isEmpty
+              ? const []
+              : [widget.store.preferences.selfName],
+        ),
+      ];
       _myTeamId = id;
       _teamSize = format == TournamentFormat.pair ? 2 : _teamSize;
     }
   });
 
   String? _validateSchedule() {
-    if (_meetingType == MeetingType.tournament && _tournamentFormat != TournamentFormat.individual && _teamSize != null && _teams.any((team) => team.members.where((name) => name.trim().isNotEmpty).length > _teamSize!)) {
+    if (_meetingType == MeetingType.tournament &&
+        _tournamentFormat != TournamentFormat.individual &&
+        _teamSize != null &&
+        _teams.any(
+          (team) =>
+              team.members.where((name) => name.trim().isNotEmpty).length >
+              _teamSize!,
+        )) {
       return 'チーム人数を超えているメンバーがあります。人数設定を確認してください。';
     }
     if (_isNewSite) return null;
@@ -291,16 +343,32 @@ class _EventEditorState extends State<EventEditor> {
         .toSet()
         .toList();
     final self = widget.store.preferences.selfName.trim();
-    if (widget.event?.isParticipating != false && self.isNotEmpty &&
+    if (widget.event?.isParticipating != false &&
+        self.isNotEmpty &&
         _organizer.text.trim().isNotEmpty &&
         playerSearchKey(self) != playerSearchKey(_organizer.text) &&
-        !participants.any((name) => playerSearchKey(name) == playerSearchKey(self))) {
+        !participants.any(
+          (name) => playerSearchKey(name) == playerSearchKey(self),
+        )) {
       participants.add(self);
     }
     final original = widget.event;
     final ownTeam = _teams.where((team) => team.id == _myTeamId).firstOrNull;
-    final latest = original == null ? null : widget.store.events.where((event) => event.id == original.id).firstOrNull;
-    final base = latest ?? original ?? GiriEvent(id: widget.store.newId(), title: _title.text.trim(), kind: _kind, meetingType: _meetingType, createdAt: DateTime.now());
+    final latest = original == null
+        ? null
+        : widget.store.events
+              .where((event) => event.id == original.id)
+              .firstOrNull;
+    final base =
+        latest ??
+        original ??
+        GiriEvent(
+          id: widget.store.newId(),
+          title: _title.text.trim(),
+          kind: _kind,
+          meetingType: _meetingType,
+          createdAt: DateTime.now(),
+        );
     final event = base.copyWith(
       title: _title.text.trim(),
       kind: _kind,
@@ -308,7 +376,19 @@ class _EventEditorState extends State<EventEditor> {
       tournamentFormat: _tournamentFormat,
       teamSize: _teamSize,
       myTeamId: _myTeamId,
-      teams: _teams.map((team) => team.copyWith(name: team.name.trim(), members: team.members.map((name) => name.trim()).where((name) => name.isNotEmpty).toSet().toList(), isMine: team.id == _myTeamId)).toList(),
+      teams: _teams
+          .map(
+            (team) => team.copyWith(
+              name: team.name.trim(),
+              members: team.members
+                  .map((name) => name.trim())
+                  .where((name) => name.isNotEmpty)
+                  .toSet()
+                  .toList(),
+              isMine: team.id == _myTeamId,
+            ),
+          )
+          .toList(),
       affiliation: _affiliation.text.trim(),
       block: _block.text.trim(),
       organizer: _organizer.text.trim(),
@@ -346,7 +426,18 @@ class _EventEditorState extends State<EventEditor> {
               _ => null,
             },
       tournamentResult: _meetingType == MeetingType.tournament
-          ? _tournamentResult.copyWith(memo: _result.text.trim(), format: _tournamentFormat, teamName: ownTeam?.name ?? (_teamCompositionTouched ? '' : _tournamentResult.teamName), members: ownTeam?.members ?? (_teamCompositionTouched ? const [] : _tournamentResult.members))
+          ? _tournamentResult.copyWith(
+              memo: _result.text.trim(),
+              format: _tournamentFormat,
+              teamName:
+                  ownTeam?.name ??
+                  (_teamCompositionTouched ? '' : _tournamentResult.teamName),
+              members:
+                  ownTeam?.members ??
+                  (_teamCompositionTouched
+                      ? const []
+                      : _tournamentResult.members),
+            )
           : null,
     );
     setState(() => _saving = true);
@@ -669,27 +760,69 @@ class _EventEditorState extends State<EventEditor> {
     children: [
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: LayoutBuilder(builder: (context, constraints) {
-          Widget button(bool images) => OutlinedButton(
-            key: ValueKey(images ? 'event-import-participant-images' : 'event-import-participants'),
-            onPressed: _saving ? null : () => _importParticipants(images: images),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: StairColors.action,
-              backgroundColor: StairColors.action.withValues(alpha: .05),
-              side: BorderSide(color: StairColors.action.withValues(alpha: .35)),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-            ),
-            child: Row(mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
-              Icon(images ? CupertinoIcons.doc_text_viewfinder : CupertinoIcons.doc_text, size: 19),
-              const SizedBox(width: 6),
-              Flexible(child: Text(images ? 'OCR読み取り' : '文字貼り付け', maxLines: 1, overflow: TextOverflow.ellipsis)),
-            ]),
-          );
-          if (constraints.maxWidth < 290 || MediaQuery.textScalerOf(context).scale(17) > 22) {
-            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [button(false), const SizedBox(height: 8), button(true)]);
-          }
-          return Row(children: [Expanded(child: button(false)), const SizedBox(width: 8), Expanded(child: button(true))]);
-        }),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            Widget button(bool images) => OutlinedButton(
+              key: ValueKey(
+                images
+                    ? 'event-import-participant-images'
+                    : 'event-import-participants',
+              ),
+              onPressed: _saving
+                  ? null
+                  : () => _importParticipants(images: images),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: StairColors.action,
+                backgroundColor: StairColors.action.withValues(alpha: .05),
+                side: BorderSide(
+                  color: StairColors.action.withValues(alpha: .35),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    images
+                        ? CupertinoIcons.doc_text_viewfinder
+                        : CupertinoIcons.doc_text,
+                    size: 19,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      images ? 'OCR読み取り' : '文字貼り付け',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            );
+            if (constraints.maxWidth < 290 ||
+                MediaQuery.textScalerOf(context).scale(17) > 22) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  button(false),
+                  const SizedBox(height: 8),
+                  button(true),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: button(false)),
+                const SizedBox(width: 8),
+                Expanded(child: button(true)),
+              ],
+            );
+          },
+        ),
       ),
       for (var index = 0; index < _participants.length; index++)
         Padding(
@@ -710,7 +843,9 @@ class _EventEditorState extends State<EventEditor> {
                     onChanged: (_) => setState(() {}),
                     onSubmitted: (_) {
                       if (index == _participants.length - 1) {
-                        setState(() => _participants.add(TextEditingController()));
+                        setState(
+                          () => _participants.add(TextEditingController()),
+                        );
                       }
                       FocusScope.of(context).nextFocus();
                     },
@@ -891,7 +1026,21 @@ class _EventEditorState extends State<EventEditor> {
                       : (value) => setState(() {
                           _kind = value;
                           if (value == EventKind.online && _rounds.isEmpty) {
-                            _rounds.add(addNextRound(null, id: widget.store.newId(), tournament: _meetingType == MeetingType.tournament, defaultStart: defaultSubmissionStart(_eventDate ?? DateTime.now(), widget.store.preferences), submissionDays: widget.store.preferences.submissionDays, votingDays: widget.store.preferences.votingDays));
+                            _rounds.add(
+                              addNextRound(
+                                null,
+                                id: widget.store.newId(),
+                                tournament:
+                                    _meetingType == MeetingType.tournament,
+                                defaultStart: defaultSubmissionStart(
+                                  _eventDate ?? DateTime.now(),
+                                  widget.store.preferences,
+                                ),
+                                submissionDays:
+                                    widget.store.preferences.submissionDays,
+                                votingDays: widget.store.preferences.votingDays,
+                              ),
+                            );
                           }
                           _scheduleError = null;
                         }),
@@ -908,23 +1057,27 @@ class _EventEditorState extends State<EventEditor> {
                       : (value) => setState(() {
                           _meetingType = value;
                           if (_rounds.length == 1 && widget.event == null) {
-                            _rounds[0] = _rounds[0].copyWith(name: value == MeetingType.tournament ? '予選1回戦' : '投稿・投票');
+                            _rounds[0] = _rounds[0].copyWith(
+                              name: value == MeetingType.tournament
+                                  ? '予選1回戦'
+                                  : '投稿・投票',
+                            );
                           }
                         }),
                 ),
                 if (!_isNewSite)
-                StairMenuRow<EventStatus>(
-                  label: '参加状況',
-                  selectionFeedback: true,
-                  value: _status,
-                  items: {
-                    for (final status in EventStatus.values)
-                      status: eventStatusLabel(status),
-                  },
-                  onChanged: _saving
-                      ? null
-                      : (value) => setState(() => _status = value),
-                ),
+                  StairMenuRow<EventStatus>(
+                    label: '参加状況',
+                    selectionFeedback: true,
+                    value: _status,
+                    items: {
+                      for (final status in EventStatus.values)
+                        status: eventStatusLabel(status),
+                    },
+                    onChanged: _saving
+                        ? null
+                        : (value) => setState(() => _status = value),
+                  ),
                 _textField(
                   label: _isNewSite ? 'サイト名 *' : '会・大会名 *',
                   controller: _title,
@@ -947,8 +1100,20 @@ class _EventEditorState extends State<EventEditor> {
                       onChanged: (_) => _syncSelfParticipant(),
                     ),
                   ),
-                if (_organizer.text.trim().isNotEmpty && widget.store.preferences.selfName.trim().isNotEmpty && playerSearchKey(_organizer.text) == playerSearchKey(widget.store.preferences.selfName))
-                  Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 8), child: Text('自分の主催', style: StairTypography.role(StairTextRole.footnote, color: StairColors.live))),
+                if (_organizer.text.trim().isNotEmpty &&
+                    widget.store.preferences.selfName.trim().isNotEmpty &&
+                    playerSearchKey(_organizer.text) ==
+                        playerSearchKey(widget.store.preferences.selfName))
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                    child: Text(
+                      '自分の主催',
+                      style: StairTypography.role(
+                        StairTextRole.footnote,
+                        color: StairColors.live,
+                      ),
+                    ),
+                  ),
                 if (_kind == EventKind.live) ...[
                   StairDateRow(
                     label: '日付',
@@ -1012,9 +1177,12 @@ class _EventEditorState extends State<EventEditor> {
                 tournament: _meetingType == MeetingType.tournament,
                 preferences: widget.store.preferences,
                 initialDate: _eventDate,
-                autoFillRoundIds: widget.event == null ? _rounds.map((round) => round.id).toSet() : const {},
+                autoFillRoundIds: widget.event == null
+                    ? _rounds.map((round) => round.id).toSet()
+                    : const {},
                 automaticFields: _automaticRoundFields,
-                onAutomaticFieldsChanged: (fields) => _automaticRoundFields = fields,
+                onAutomaticFieldsChanged: (fields) =>
+                    _automaticRoundFields = fields,
                 enabled: !_saving,
                 newId: widget.store.newId,
                 onChanged: (rounds) => setState(() {
@@ -1039,20 +1207,29 @@ class _EventEditorState extends State<EventEditor> {
                 myTeamId: _myTeamId,
                 enabled: !_saving,
                 onFormatChanged: _changeFormat,
-                onTeamsChanged: (teams) => setState(() { _teamCompositionTouched = true; _teams = teams; }),
+                onTeamsChanged: (teams) => setState(() {
+                  _teamCompositionTouched = true;
+                  _teams = teams;
+                }),
                 onTeamSizeChanged: (size) => setState(() {
                   _teamCompositionTouched = true;
                   _teamSize = size;
                   if (_tournamentFormat == TournamentFormat.pair && size != 2) {
                     _tournamentFormat = TournamentFormat.team;
-                    _tournamentResult = _tournamentResult.copyWith(format: TournamentFormat.team);
+                    _tournamentResult = _tournamentResult.copyWith(
+                      format: TournamentFormat.team,
+                    );
                   }
                 }),
-                onMyTeamChanged: (id) => setState(() { _teamCompositionTouched = true; _myTeamId = id; }),
+                onMyTeamChanged: (id) => setState(() {
+                  _teamCompositionTouched = true;
+                  _myTeamId = id;
+                }),
               ),
             if (_kind == EventKind.online && !_isNewSite)
               StairFormSection(
-                title: '所属・ブロック', icon: CupertinoIcons.person_2,
+                title: '所属・ブロック',
+                icon: CupertinoIcons.person_2,
                 accent: StairColors.online,
                 children: [
                   _textField(label: '所属（任意）', controller: _affiliation),
@@ -1060,7 +1237,8 @@ class _EventEditorState extends State<EventEditor> {
                 ],
               ),
             if (_meetingType == MeetingType.tournament &&
-                (widget.event?.hasRecordedResult == true || _status == EventStatus.attended))
+                (widget.event?.hasRecordedResult == true ||
+                    _status == EventStatus.attended))
               TournamentResultEditor(
                 value: _tournamentResult,
                 rounds: _rounds,
@@ -1072,21 +1250,21 @@ class _EventEditorState extends State<EventEditor> {
                     setState(() => _tournamentResult = result),
               ),
             if (!_isNewSite)
-            StairFormSection(
-              editorStyle: true,
-              title: '振り返り',
-              icon: CupertinoIcons.text_alignleft,
-              accent: StairColors.memo,
-              children: [
-                _textField(
-                  label: '気づいたことや振り返りを残す',
-                  controller: _memo,
-                  fieldKey: const ValueKey('event-memo'),
-                  minLines: 3,
-                  maxLines: 8,
-                ),
-              ],
-            ),
+              StairFormSection(
+                editorStyle: true,
+                title: '振り返り',
+                icon: CupertinoIcons.text_alignleft,
+                accent: StairColors.memo,
+                children: [
+                  _textField(
+                    label: '気づいたことや振り返りを残す',
+                    controller: _memo,
+                    fieldKey: const ValueKey('event-memo'),
+                    minLines: 3,
+                    maxLines: 8,
+                  ),
+                ],
+              ),
           ],
         ),
       ),

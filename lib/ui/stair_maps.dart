@@ -71,7 +71,7 @@ abstract final class StairMaps {
     FocusManager.instance.primaryFocus?.unfocus();
     final response = await _channel.invokeMapMethod<Object?, Object?>(
       'pickPlace',
-      {'initialQuery': initialQuery.trim(), if (dark != null) 'dark': dark},
+      {'initialQuery': initialQuery.trim(), 'dark': ?dark},
     );
     if (response == null) return null;
     return StairPlace.fromMap(response);

@@ -53,7 +53,9 @@ List<GiriReminder> planGiriReminders({
   }
 
   for (final event in events) {
-    if (!event.isParticipating || event.status == EventStatus.canceled) continue;
+    if (!event.isParticipating || event.status == EventStatus.canceled) {
+      continue;
+    }
     if (event.kind == EventKind.live) {
       if (event.status != EventStatus.planned) continue;
       final start = event.startsAt;
@@ -93,15 +95,16 @@ List<GiriReminder> planGiriReminders({
         final prefix = event.rounds.isEmpty
             ? ''
             : 'round:${Uri.encodeComponent(round.id)}:';
-        final labels = <String>[
+        final labels = <String>{
           if (event.meetingType == MeetingType.tournament &&
-              event.rounds.isNotEmpty && round.name.trim().isNotEmpty)
+              event.rounds.isNotEmpty &&
+              round.name.trim().isNotEmpty)
             round.name.trim(),
           if (event.rounds.isNotEmpty) 'お題${round.promptNumber}',
           if (event.affiliation.trim().isNotEmpty) event.affiliation.trim(),
           if (event.block.trim().isNotEmpty) event.block.trim(),
           if (round.block.trim().isNotEmpty) round.block.trim(),
-        ].toSet().toList();
+        }.toList();
         final roundLabel = labels.isEmpty ? '' : '${labels.join('・')}・';
         for (final entry in [
           if (event.status == EventStatus.planned && round.submissionEnabled)

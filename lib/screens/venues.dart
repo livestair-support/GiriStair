@@ -30,7 +30,9 @@ class _VenueDirectoryScreenState extends State<VenueDirectoryScreen> {
       actions: [
         CupertinoButton(
           onPressed: () => Navigator.of(context).push<GiriVenue>(
-            CupertinoPageRoute(builder: (_) => VenueEditorScreen(store: widget.store)),
+            CupertinoPageRoute(
+              builder: (_) => VenueEditorScreen(store: widget.store),
+            ),
           ),
           child: const Icon(CupertinoIcons.plus),
         ),
@@ -40,9 +42,13 @@ class _VenueDirectoryScreenState extends State<VenueDirectoryScreen> {
       listenable: widget.store,
       builder: (context, _) {
         final query = playerSearchKey(_query);
-        final venues = widget.store.venueDirectory.where(
-          (venue) => playerSearchKey('${venue.name} ${venue.prefecture}').contains(query),
-        ).toList();
+        final venues = widget.store.venueDirectory
+            .where(
+              (venue) => playerSearchKey(
+                '${venue.name} ${venue.prefecture}',
+              ).contains(query),
+            )
+            .toList();
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
           children: [
@@ -75,10 +81,16 @@ class _VenueDirectoryScreenState extends State<VenueDirectoryScreen> {
                   ),
                 for (final venue in venues)
                   CupertinoButton(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
                     onPressed: () => Navigator.of(context).push<void>(
                       CupertinoPageRoute(
-                        builder: (_) => VenueDetailScreen(store: widget.store, venueId: venue.id),
+                        builder: (_) => VenueDetailScreen(
+                          store: widget.store,
+                          venueId: venue.id,
+                        ),
                       ),
                     ),
                     child: Row(
@@ -87,9 +99,15 @@ class _VenueDirectoryScreenState extends State<VenueDirectoryScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(venue.name, style: Theme.of(context).textTheme.bodyLarge),
+                              Text(
+                                venue.name,
+                                style: Theme.of(context).textTheme.bodyLarge,
+                              ),
                               if (venue.prefecture.isNotEmpty)
-                                Text(venue.prefecture, style: Theme.of(context).textTheme.bodySmall),
+                                Text(
+                                  venue.prefecture,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
                             ],
                           ),
                         ),
@@ -134,14 +152,22 @@ class _VenueDetailScreenState extends State<VenueDetailScreen> {
         dark: Theme.of(context).brightness == Brightness.dark,
       );
       if (place == null || !mounted) return;
-      final prefecture = japanesePrefectures.where(place.address.contains).firstOrNull;
-      await widget.store.saveVenue(venue.copyWith(
-        latitude: place.latitude,
-        longitude: place.longitude,
-        mapAddress: place.address,
-        prefecture: venue.prefecture.isEmpty ? prefecture ?? '' : venue.prefecture,
-      ));
-      final saved = widget.store.venueDirectory.where((item) => item.name == venue.name).firstOrNull;
+      final prefecture = japanesePrefectures
+          .where(place.address.contains)
+          .firstOrNull;
+      await widget.store.saveVenue(
+        venue.copyWith(
+          latitude: place.latitude,
+          longitude: place.longitude,
+          mapAddress: place.address,
+          prefecture: venue.prefecture.isEmpty
+              ? prefecture ?? ''
+              : venue.prefecture,
+        ),
+      );
+      final saved = widget.store.venueDirectory
+          .where((item) => item.name == venue.name)
+          .firstOrNull;
       if (mounted && saved != null) setState(() => _venueId = saved.id);
     } catch (_) {
       if (mounted) showStairMessage(context, '地図を保存できませんでした。', error: true);
@@ -154,7 +180,9 @@ class _VenueDetailScreenState extends State<VenueDetailScreen> {
     if (_savingMap) return;
     setState(() => _savingMap = true);
     try {
-      await widget.store.saveVenue(venue.copyWith(latitude: null, longitude: null, mapAddress: ''));
+      await widget.store.saveVenue(
+        venue.copyWith(latitude: null, longitude: null, mapAddress: ''),
+      );
     } catch (_) {
       if (mounted) showStairMessage(context, '地図の登録を解除できませんでした。', error: true);
     } finally {
@@ -192,9 +220,14 @@ class _VenueDetailScreenState extends State<VenueDetailScreen> {
         ? '${venue.latitude},${venue.longitude}'
         : '${venue.prefecture} ${venue.name}'.trim();
     return google
-        ? Uri.https('www.google.com', '/maps/search/', {'api': '1', 'query': query})
+        ? Uri.https('www.google.com', '/maps/search/', {
+            'api': '1',
+            'query': query,
+          })
         : Uri.https('maps.apple.com', '/', {
-            'q': venue.latitude != null && venue.longitude != null ? venue.name : query,
+            'q': venue.latitude != null && venue.longitude != null
+                ? venue.name
+                : query,
             if (venue.latitude != null && venue.longitude != null) 'll': query,
           });
   }
@@ -206,7 +239,8 @@ class _VenueDetailScreenState extends State<VenueDetailScreen> {
       builder: (context) => CupertinoActionSheet(
         title: Text(venue.name),
         actions: [
-          if (registered != null && ['https', 'http'].contains(registered.scheme))
+          if (registered != null &&
+              ['https', 'http'].contains(registered.scheme))
             CupertinoActionSheetAction(
               onPressed: () => Navigator.pop(context, 0),
               child: const Text('登録した地図で開く'),
@@ -227,7 +261,9 @@ class _VenueDetailScreenState extends State<VenueDetailScreen> {
       ),
     );
     if (choice == null || !mounted) return;
-    await _launch(choice == 0 ? registered! : _mapUri(venue, google: choice == 2));
+    await _launch(
+      choice == 0 ? registered! : _mapUri(venue, google: choice == 2),
+    );
   }
 
   @override
@@ -235,8 +271,11 @@ class _VenueDetailScreenState extends State<VenueDetailScreen> {
     listenable: widget.store,
     builder: (context, _) {
       final store = widget.store;
-      final venue = store.venueById(_venueId) ??
-          store.venueDirectory.where((venue) => venue.name == _lastName).firstOrNull;
+      final venue =
+          store.venueById(_venueId) ??
+          store.venueDirectory
+              .where((venue) => venue.name == _lastName)
+              .firstOrNull;
       if (venue == null) {
         return Scaffold(
           appBar: StairNavigationBar(title: const Text('会場')),
@@ -244,17 +283,24 @@ class _VenueDetailScreenState extends State<VenueDetailScreen> {
         );
       }
       _lastName = venue.name;
-      final visits = store.events.where(
-        (event) => event.status == EventStatus.attended &&
-            event.kind == EventKind.live &&
-            (event.venueId == venue.id ||
-                playerSearchKey(event.venue) == playerSearchKey(venue.name)),
-      ).toList();
+      final visits = store.events
+          .where(
+            (event) =>
+                event.status == EventStatus.attended &&
+                event.kind == EventKind.live &&
+                (event.venueId == venue.id ||
+                    playerSearchKey(event.venue) ==
+                        playerSearchKey(venue.name)),
+          )
+          .toList();
       return Scaffold(
         appBar: StairNavigationBar(
           title: const Text('会場'),
           actions: [
-            CupertinoButton(onPressed: _savingMap ? null : () => _edit(venue), child: const Text('編集')),
+            CupertinoButton(
+              onPressed: _savingMap ? null : () => _edit(venue),
+              child: const Text('編集'),
+            ),
           ],
         ),
         body: ListView(
@@ -334,7 +380,12 @@ class _VenueDetailScreenState extends State<VenueDetailScreen> {
                 title: 'メモ',
                 icon: CupertinoIcons.pencil,
                 accent: StairColors.memo,
-                children: [Padding(padding: const EdgeInsets.all(16), child: Text(venue.memo))],
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(venue.memo),
+                  ),
+                ],
               ),
             StairFormSection(
               title: '参加した会',
@@ -342,18 +393,25 @@ class _VenueDetailScreenState extends State<VenueDetailScreen> {
               accent: StairColors.live,
               children: [
                 if (visits.isEmpty)
-                  const Padding(padding: EdgeInsets.all(16), child: Text('参加記録がありません')),
+                  const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text('参加記録がありません'),
+                  ),
                 for (final event in visits)
                   CupertinoButton(
                     padding: const EdgeInsets.all(16),
                     onPressed: () => Navigator.of(context).push<void>(
                       CupertinoPageRoute(
-                        builder: (_) => EventDetailScreen(store: store, eventId: event.id),
+                        builder: (_) =>
+                            EventDetailScreen(store: store, eventId: event.id),
                       ),
                     ),
                     child: Align(
                       alignment: Alignment.centerLeft,
-                      child: Text(event.title, style: Theme.of(context).textTheme.bodyLarge),
+                      child: Text(
+                        event.title,
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
                     ),
                   ),
               ],
@@ -406,7 +464,9 @@ class _VenueEditorScreenState extends State<VenueEditorScreen> {
         _latitude = place.latitude;
         _longitude = place.longitude;
         _address = place.address;
-        final prefecture = japanesePrefectures.where(place.address.contains).firstOrNull;
+        final prefecture = japanesePrefectures
+            .where(place.address.contains)
+            .firstOrNull;
         if (_prefecture.isEmpty && prefecture != null) _prefecture = prefecture;
       });
     } catch (_) {
@@ -420,7 +480,9 @@ class _VenueEditorScreenState extends State<VenueEditorScreen> {
     if (_name.text.trim().isEmpty || _saving || _choosingMap) return;
     final map = Uri.tryParse(_map.text.trim());
     if (_map.text.trim().isNotEmpty &&
-        (map == null || !['http', 'https'].contains(map.scheme) || map.host.isEmpty)) {
+        (map == null ||
+            !['http', 'https'].contains(map.scheme) ||
+            map.host.isEmpty)) {
       showStairMessage(context, '地図のURLを確認してください。', error: true);
       return;
     }
@@ -439,9 +501,12 @@ class _VenueEditorScreenState extends State<VenueEditorScreen> {
         ),
       );
       if (!mounted) return;
-      final saved = widget.store.venueDirectory.where(
-        (venue) => playerSearchKey(venue.name) == playerSearchKey(_name.text),
-      ).firstOrNull;
+      final saved = widget.store.venueDirectory
+          .where(
+            (venue) =>
+                playerSearchKey(venue.name) == playerSearchKey(_name.text),
+          )
+          .firstOrNull;
       StairNativeControls.saveFeedback();
       Navigator.of(context).pop(saved);
     } catch (error) {
@@ -499,7 +564,9 @@ class _VenueEditorScreenState extends State<VenueEditorScreen> {
           child: ValueListenableBuilder(
             valueListenable: _name,
             builder: (context, value, _) => StairSaveButton(
-              onPressed: _saving || _choosingMap || value.text.trim().isEmpty ? null : _save,
+              onPressed: _saving || _choosingMap || value.text.trim().isEmpty
+                  ? null
+                  : _save,
               saving: _saving,
             ),
           ),
@@ -531,11 +598,15 @@ class _VenueEditorScreenState extends State<VenueEditorScreen> {
               accent: StairColors.venue,
               items: {
                 '': '未設定',
-                for (final prefecture in japanesePrefectures) prefecture: prefecture,
-                if (_prefecture.isNotEmpty && !japanesePrefectures.contains(_prefecture))
+                for (final prefecture in japanesePrefectures)
+                  prefecture: prefecture,
+                if (_prefecture.isNotEmpty &&
+                    !japanesePrefectures.contains(_prefecture))
                   _prefecture: _prefecture,
               },
-              onChanged: _saving ? null : (value) => setState(() => _prefecture = value),
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _prefecture = value),
             ),
           ],
         ),
@@ -547,7 +618,11 @@ class _VenueEditorScreenState extends State<VenueEditorScreen> {
             if (_latitude != null && _longitude != null)
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: StairMapPreview(latitude: _latitude!, longitude: _longitude!, name: _name.text),
+                child: StairMapPreview(
+                  latitude: _latitude!,
+                  longitude: _longitude!,
+                  name: _name.text,
+                ),
               ),
             if (_address.isNotEmpty)
               Padding(padding: const EdgeInsets.all(16), child: Text(_address)),
@@ -561,11 +636,13 @@ class _VenueEditorScreenState extends State<VenueEditorScreen> {
               ),
             if (_latitude != null || _longitude != null)
               CupertinoButton(
-                onPressed: _saving || _choosingMap ? null : () => setState(() {
-                  _latitude = null;
-                  _longitude = null;
-                  _address = '';
-                }),
+                onPressed: _saving || _choosingMap
+                    ? null
+                    : () => setState(() {
+                        _latitude = null;
+                        _longitude = null;
+                        _address = '';
+                      }),
                 child: const Text('マップの登録を解除'),
               ),
             Padding(

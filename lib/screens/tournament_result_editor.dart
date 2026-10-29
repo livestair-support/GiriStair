@@ -119,62 +119,62 @@ class TournamentResultEditor extends StatelessWidget {
         ],
       ),
       if (showStages)
-      for (var index = 0; index < value.stages.length; index++)
-        StairFormSection(
-          key: ValueKey('event-result-stage-${value.stages[index].id}'),
-          title: value.stages[index].name,
-          icon: CupertinoIcons.list_number,
-          accent: StairColors.result,
-          trailing: CupertinoButton(
-            key: ValueKey(
-              'event-result-stage-remove-${value.stages[index].id}',
+        for (var index = 0; index < value.stages.length; index++)
+          StairFormSection(
+            key: ValueKey('event-result-stage-${value.stages[index].id}'),
+            title: value.stages[index].name,
+            icon: CupertinoIcons.list_number,
+            accent: StairColors.result,
+            trailing: CupertinoButton(
+              key: ValueKey(
+                'event-result-stage-remove-${value.stages[index].id}',
+              ),
+              minimumSize: const Size(32, 32),
+              padding: EdgeInsets.zero,
+              onPressed: enabled
+                  ? () => onChanged(
+                      value.copyWith(
+                        stages: List.of(value.stages)..removeAt(index),
+                      ),
+                    )
+                  : null,
+              child: const Icon(CupertinoIcons.minus_circle, size: 20),
             ),
-            minimumSize: const Size(32, 32),
-            padding: EdgeInsets.zero,
-            onPressed: enabled
-                ? () => onChanged(
-                    value.copyWith(
-                      stages: List.of(value.stages)..removeAt(index),
-                    ),
-                  )
-                : null,
-            child: const Icon(CupertinoIcons.minus_circle, size: 20),
+            children: [
+              ResultStageEditor(
+                value: value.stages[index],
+                enabled: enabled,
+                team: value.format != TournamentFormat.individual,
+                onChanged: (stage) => _stage(index, stage),
+              ),
+            ],
           ),
-          children: [
-            ResultStageEditor(
-              value: value.stages[index],
-              enabled: enabled,
-              team: value.format != TournamentFormat.individual,
-              onChanged: (stage) => _stage(index, stage),
-            ),
-          ],
-        ),
       if (showStages)
-      CupertinoButton(
-        key: const ValueKey('event-result-stage-add'),
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        onPressed: enabled
-            ? () => onChanged(
-                value.copyWith(
-                  stages: [
-                    ...value.stages,
-                    ResultStage(
-                      id: newId(),
-                      name: '予選${value.stages.length + 1}回戦',
-                    ),
-                  ],
-                ),
-              )
-            : null,
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(CupertinoIcons.plus_circle, size: 22),
-            SizedBox(width: 8),
-            Text('段階ごとの結果を追加'),
-          ],
+        CupertinoButton(
+          key: const ValueKey('event-result-stage-add'),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          onPressed: enabled
+              ? () => onChanged(
+                  value.copyWith(
+                    stages: [
+                      ...value.stages,
+                      ResultStage(
+                        id: newId(),
+                        name: '予選${value.stages.length + 1}回戦',
+                      ),
+                    ],
+                  ),
+                )
+              : null,
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(CupertinoIcons.plus_circle, size: 22),
+              SizedBox(width: 8),
+              Text('段階ごとの結果を追加'),
+            ],
+          ),
         ),
-      ),
     ],
   );
 }

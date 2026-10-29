@@ -45,6 +45,11 @@ abstract final class StairSymbols {
     CupertinoIcons.check_mark_circled_solid: 'checkmark.circle.fill',
     CupertinoIcons.plus_circle: 'plus.circle',
     CupertinoIcons.minus_circle: 'minus.circle',
+    CupertinoIcons.chevron_left: 'chevron.left',
+    CupertinoIcons.chevron_right: 'chevron.right',
+    CupertinoIcons.chevron_up: 'chevron.up',
+    CupertinoIcons.chevron_down: 'chevron.down',
+    CupertinoIcons.list_bullet: 'list.bullet',
   };
 
   static String? nameFor(IconData icon) => _names[icon];

@@ -22,10 +22,17 @@ class GiriStore extends ChangeNotifier {
   List<GiriPlayer> get players => List.unmodifiable(_document.players);
   List<OnlineSite> get onlineSites => List.unmodifiable(_document.onlineSites);
   List<GiriVenue> get venues => List.unmodifiable(_document.venues);
-  OnlineSite? onlineSiteById(String? id) => onlineSites.where((site) => site.id == id).firstOrNull;
-  GiriVenue? venueById(String? id) => venueDirectory.where((venue) => venue.id == id).firstOrNull;
-  GiriPlayer? playerByName(String name) => playerDirectory.where((player) => playerSearchKey(player.name) == playerSearchKey(name)).firstOrNull;
-  bool get showPlayerIcons => preferences.playerIconMode == 'show' || (preferences.playerIconMode == 'auto' && players.any((player) => player.iconDataBase64.isNotEmpty));
+  OnlineSite? onlineSiteById(String? id) =>
+      onlineSites.where((site) => site.id == id).firstOrNull;
+  GiriVenue? venueById(String? id) =>
+      venueDirectory.where((venue) => venue.id == id).firstOrNull;
+  GiriPlayer? playerByName(String name) => playerDirectory
+      .where((player) => playerSearchKey(player.name) == playerSearchKey(name))
+      .firstOrNull;
+  bool get showPlayerIcons =>
+      preferences.playerIconMode == 'show' ||
+      (preferences.playerIconMode == 'auto' &&
+          players.any((player) => player.iconDataBase64.isNotEmpty));
   AppPreferences get preferences => _document.preferences;
   DateTime? get lastBackupAt => _document.lastBackupAt;
   bool get loaded => _loaded;
@@ -37,7 +44,18 @@ class GiriStore extends ChangeNotifier {
       for (final player in _document.players)
         playerSearchKey(player.name): player,
     };
-    for (final name in [preferences.selfName, ..._document.events.expand((event) => [event.organizer, ...event.participants, ...event.teams.expand((team) => team.members), ...?event.tournamentResult?.members, ...event.standings.expand((standing) => standing.playerNames)])]) {
+    for (final name in [
+      preferences.selfName,
+      ..._document.events.expand(
+        (event) => [
+          event.organizer,
+          ...event.participants,
+          ...event.teams.expand((team) => team.members),
+          ...?event.tournamentResult?.members,
+          ...event.standings.expand((standing) => standing.playerNames),
+        ],
+      ),
+    ]) {
       final trimmed = name.trim();
       if (trimmed.isEmpty) continue;
       final key = playerSearchKey(trimmed);
@@ -85,7 +103,13 @@ class GiriStore extends ChangeNotifier {
     final known = document.players
         .map((player) => playerSearchKey(player.name))
         .toSet();
-    for (final name in [event.organizer, ...event.participants, ...event.teams.expand((team) => team.members), ...?event.tournamentResult?.members, ...event.standings.expand((standing) => standing.playerNames)]) {
+    for (final name in [
+      event.organizer,
+      ...event.participants,
+      ...event.teams.expand((team) => team.members),
+      ...?event.tournamentResult?.members,
+      ...event.standings.expand((standing) => standing.playerNames),
+    ]) {
       final trimmed = name.trim();
       if (trimmed.isNotEmpty && known.add(playerSearchKey(trimmed))) {
         document.players.add(GiriPlayer(id: newId(), name: trimmed));
@@ -137,9 +161,10 @@ class GiriStore extends ChangeNotifier {
       id: player.id.startsWith('history:') ? newId() : player.id,
       name: name,
       furigana: player.furigana.trim(),
-      region: player.region.trim(), iconDataBase64: player.iconDataBase64,
-      twitterUrl: player.twitterUrl.trim(), memo: player.memo,
-
+      region: player.region.trim(),
+      iconDataBase64: player.iconDataBase64,
+      twitterUrl: player.twitterUrl.trim(),
+      memo: player.memo,
     );
     if (index < 0) {
       document.players.add(saved);
@@ -150,12 +175,26 @@ class GiriStore extends ChangeNotifier {
       final oldKey = playerSearchKey(old.name);
       for (var i = 0; i < document.events.length; i++) {
         final event = document.events[i];
-        String renamed(String name) => playerSearchKey(name) == oldKey ? saved.name : name;
+        String renamed(String name) =>
+            playerSearchKey(name) == oldKey ? saved.name : name;
         document.events[i] = event.copyWith(
           organizer: renamed(event.organizer),
-          teams: event.teams.map((team) => team.copyWith(members: team.members.map(renamed).toList())).toList(),
-          standings: event.standings.map((standing) => standing.copyWith(playerNames: standing.playerNames.map(renamed).toList())).toList(),
-          tournamentResult: event.tournamentResult?.copyWith(members: event.tournamentResult!.members.map(renamed).toList()),
+          teams: event.teams
+              .map(
+                (team) =>
+                    team.copyWith(members: team.members.map(renamed).toList()),
+              )
+              .toList(),
+          standings: event.standings
+              .map(
+                (standing) => standing.copyWith(
+                  playerNames: standing.playerNames.map(renamed).toList(),
+                ),
+              )
+              .toList(),
+          tournamentResult: event.tournamentResult?.copyWith(
+            members: event.tournamentResult!.members.map(renamed).toList(),
+          ),
           participants: event.participants
               .map(
                 (participant) =>
@@ -163,8 +202,10 @@ class GiriStore extends ChangeNotifier {
               )
               .toList(),
         );
+    }
+      if (playerSearchKey(document.preferences.selfName) == oldKey) {
+        document.preferences = document.preferences.copyWith(selfName: name);
       }
-      if (playerSearchKey(document.preferences.selfName) == oldKey) document.preferences = document.preferences.copyWith(selfName: name);
     }
   });
 
@@ -173,88 +214,152 @@ class GiriStore extends ChangeNotifier {
     document.players.removeWhere((player) => player.id == id);
   });
 
-  Future<void> savePreferences(AppPreferences preferences) =>
-      _mutate((document) {
-        final checked = AppPreferences.fromJson(preferences.toJson());
-        document.preferences = checked.copyWith(selfName: checked.selfName.trim());
-        final name = document.preferences.selfName;
-        if (name.isNotEmpty && !document.players.any(
+  Future<void> savePreferences(AppPreferences preferences) => _mutate((
+    document,
+  ) {
+    final checked = AppPreferences.fromJson(preferences.toJson());
+    document.preferences = checked.copyWith(selfName: checked.selfName.trim());
+    final name = document.preferences.selfName;
+    if (name.isNotEmpty &&
+        !document.players.any(
           (player) => playerSearchKey(player.name) == playerSearchKey(name),
         )) {
-          document.players.add(GiriPlayer(id: newId(), name: name));
-        }
-      });
-
+      document.players.add(GiriPlayer(id: newId(), name: name));
+    }
+  });
 
   List<GiriPlayer> suggestPlayers(String query, {bool organizer = false}) {
     final key = playerSearchKey(query);
     final counts = <String, int>{};
-    for (final event in events.where((event) => event.status != EventStatus.canceled)) {
-      for (final name in organizer ? [event.organizer] : event.participants.toSet()) {
+    for (final event in events.where(
+      (event) => event.status != EventStatus.canceled,
+    )) {
+      for (final name
+          in organizer ? [event.organizer] : event.participants.toSet()) {
         final normalized = playerSearchKey(name);
         counts.update(normalized, (value) => value + 1, ifAbsent: () => 1);
       }
     }
-    final result = playerDirectory.where((player) => key.isEmpty || playerSearchKey(player.name).contains(key) || playerSearchKey(player.furigana).contains(key)).toList();
-    result.sort((a,b) {
-      final frequent = (counts[playerSearchKey(b.name)] ?? 0).compareTo(counts[playerSearchKey(a.name)] ?? 0);
-      return frequent != 0 ? frequent : playerSearchKey(a.furigana.isEmpty ? a.name : a.furigana).compareTo(playerSearchKey(b.furigana.isEmpty ? b.name : b.furigana));
+    final result = playerDirectory
+        .where(
+          (player) =>
+              key.isEmpty ||
+              playerSearchKey(player.name).contains(key) ||
+              playerSearchKey(player.furigana).contains(key),
+        )
+        .toList();
+    result.sort((a, b) {
+      final frequent = (counts[playerSearchKey(b.name)] ?? 0).compareTo(
+        counts[playerSearchKey(a.name)] ?? 0,
+      );
+      return frequent != 0
+          ? frequent
+          : playerSearchKey(a.furigana.isEmpty ? a.name : a.furigana).compareTo(
+              playerSearchKey(b.furigana.isEmpty ? b.name : b.furigana),
+            );
     });
     return result;
   }
 
   List<GiriVenue> get venueDirectory {
-    final result = <String,GiriVenue>{for(final venue in venues) playerSearchKey(venue.name): venue};
-    for(final event in events) {
-      if(event.venue.trim().isEmpty) continue;
+    final result = <String, GiriVenue>{
+      for (final venue in venues) playerSearchKey(venue.name): venue,
+    };
+    for (final event in events) {
+      if (event.venue.trim().isEmpty) continue;
       final key = playerSearchKey(event.venue);
-      result.putIfAbsent(key, () => GiriVenue(id:'history:$key', name:event.venue.trim()));
+      result.putIfAbsent(
+        key,
+        () => GiriVenue(id: 'history:$key', name: event.venue.trim()),
+      );
     }
-    return result.values.toList()..sort((a,b) => a.name.compareTo(b.name));
+    return result.values.toList()..sort((a, b) => a.name.compareTo(b.name));
   }
 
   Future<void> saveVenue(GiriVenue venue) => _mutate((document) {
     final checked = GiriVenue.fromJson(venue.toJson());
     final old = venueById(venue.id);
-    if(venueDirectory.any((other) => other.id != venue.id && playerSearchKey(other.name) == playerSearchKey(checked.name))) throw const FormatException('同じ会場名が登録されています。');
-    final saved = checked.id.startsWith('history:') ? checked.copyWith(id:newId()) : checked;
+    if (venueDirectory.any(
+      (other) =>
+          other.id != venue.id &&
+          playerSearchKey(other.name) == playerSearchKey(checked.name),
+    )) {
+      throw const FormatException('同じ会場名が登録されています。');
+    }
+    final saved = checked.id.startsWith('history:')
+        ? checked.copyWith(id: newId())
+        : checked;
     final index = document.venues.indexWhere((item) => item.id == venue.id);
-    if(index < 0) { document.venues.add(saved); } else { document.venues[index] = saved; }
-    if(old != null) {
-      for(var i=0;i<document.events.length;i++) {
+    if (index < 0) {
+      document.venues.add(saved);
+    } else {
+      document.venues[index] = saved;
+    }
+    if (old != null) {
+      for (var i = 0; i < document.events.length; i++) {
         final event = document.events[i];
-        if(event.venueId == old.id || playerSearchKey(event.venue) == playerSearchKey(old.name)) document.events[i] = event.copyWith(venue:saved.name,venueId:saved.id);
+        if (event.venueId == old.id ||
+            playerSearchKey(event.venue) == playerSearchKey(old.name)) {
+          document.events[i] = event.copyWith(
+            venue: saved.name,
+            venueId: saved.id,
+          );
+        }
       }
     }
   });
   Future<void> deleteVenue(String id) => _mutate((document) {
     document.venues.removeWhere((venue) => venue.id == id);
-    for(var i=0;i<document.events.length;i++) {
-      if(document.events[i].venueId == id) document.events[i] = document.events[i].copyWith(venueId:null);
+    for (var i = 0; i < document.events.length; i++) {
+      if (document.events[i].venueId == id) {
+        document.events[i] = document.events[i].copyWith(venueId: null);
+      }
     }
   });
 
   Future<void> saveOnlineSite(OnlineSite site) => _mutate((document) {
     final checked = OnlineSite.fromJson(site.toJson());
     final index = document.onlineSites.indexWhere((item) => item.id == site.id);
-    if(index < 0) { document.onlineSites.add(checked); } else { document.onlineSites[index] = checked; }
+    if (index < 0) {
+      document.onlineSites.add(checked);
+    } else {
+      document.onlineSites[index] = checked;
+    }
   });
   Future<void> deleteOnlineSite(String id) => _mutate((document) {
     document.onlineSites.removeWhere((site) => site.id == id);
-    for(var i=0;i<document.events.length;i++) {
-      if(document.events[i].onlineSiteId == id) document.events[i] = document.events[i].copyWith(onlineSiteId:null);
+    for (var i = 0; i < document.events.length; i++) {
+      if (document.events[i].onlineSiteId == id) {
+        document.events[i] = document.events[i].copyWith(onlineSiteId: null);
+      }
     }
   });
 
-  Future<GiriEvent> createSiteCycle(String siteId, {DateTime? weekOf, int weekOffset = 0, DateTime? submissionStart, bool join = true}) async {
+  Future<GiriEvent> createSiteCycle(
+    String siteId, {
+    DateTime? weekOf,
+    int weekOffset = 0,
+    DateTime? submissionStart,
+    bool join = true,
+  }) async {
     late GiriEvent result;
     await _enqueue(() async {
       _requireLoaded();
       final site = onlineSiteById(siteId);
-      if(site == null) throw const FormatException('サイトが見つかりません。');
-      final start = submissionStart ?? siteCycleStart(site,weekOf ?? DateTime.now(),weekOffset:weekOffset);
+      if (site == null) throw const FormatException('サイトが見つかりません。');
+      final start =
+          submissionStart ??
+          siteCycleStart(
+            site,
+            weekOf ?? DateTime.now(),
+            weekOffset: weekOffset,
+          );
       final key = cycleKeyFor(start);
-      final existing = _document.events.where((event) => event.onlineSiteId == siteId && event.cycleKey == key).firstOrNull;
+      final existing = _document.events
+          .where(
+            (event) => event.onlineSiteId == siteId && event.cycleKey == key,
+          )
+          .firstOrNull;
       if (existing != null) {
         if (!join || existing.isParticipating) {
           result = existing;
@@ -262,9 +367,10 @@ class GiriStore extends ChangeNotifier {
         }
         final selfName = preferences.selfName.trim();
         final participants = List<String>.of(existing.participants);
-        if (selfName.isNotEmpty && !participants.any(
-          (name) => playerSearchKey(name) == playerSearchKey(selfName),
-        )) {
+        if (selfName.isNotEmpty &&
+            !participants.any(
+              (name) => playerSearchKey(name) == playerSearchKey(selfName),
+            )) {
           participants.add(selfName);
         }
         result = existing.copyWith(
@@ -272,7 +378,9 @@ class GiriStore extends ChangeNotifier {
           participants: participants,
         );
         final document = _document.copy();
-        final index = document.events.indexWhere((event) => event.id == existing.id);
+        final index = document.events.indexWhere(
+          (event) => event.id == existing.id,
+        );
         document.events[index] = result;
         await _storage.write(jsonEncode(document.toJson()));
         _document = document;
@@ -280,8 +388,35 @@ class GiriStore extends ChangeNotifier {
         return;
       }
       final roundId = newId();
-      final round = completeRoundSchedule(EventRound(id:roundId,name:'投稿・投票',stageId:roundId,block:site.block,submissionStart:start), submissionDays:site.submissionDays, votingDays:site.votingDays);
-      result = GiriEvent(id:newId(),title:site.name,kind:EventKind.online,meetingType:MeetingType.casual,createdAt:DateTime.now(),onlineSiteId:site.id,cycleKey:key,affiliation:site.affiliation,block:site.block,siteUrl:site.url,memo:site.memo,rounds:[round],isParticipating:join,participants:join && preferences.selfName.isNotEmpty ? [preferences.selfName] : const []);
+      final round = completeRoundSchedule(
+        EventRound(
+          id: roundId,
+          name: '投稿・投票',
+          stageId: roundId,
+          block: site.block,
+          submissionStart: start,
+        ),
+        submissionDays: site.submissionDays,
+        votingDays: site.votingDays,
+      );
+      result = GiriEvent(
+        id: newId(),
+        title: site.name,
+        kind: EventKind.online,
+        meetingType: MeetingType.casual,
+        createdAt: DateTime.now(),
+        onlineSiteId: site.id,
+        cycleKey: key,
+        affiliation: site.affiliation,
+        block: site.block,
+        siteUrl: site.url,
+        memo: site.memo,
+        rounds: [round],
+        isParticipating: join,
+        participants: join && preferences.selfName.isNotEmpty
+            ? [preferences.selfName]
+            : const [],
+      );
       final document = _document.copy();
       document.events.add(result);
       await _storage.write(jsonEncode(document.toJson()));
@@ -292,10 +427,12 @@ class GiriStore extends ChangeNotifier {
   }
 
   Future<void> ensureCurrentSiteCycles({DateTime? now}) async {
-    for(final site in onlineSites.where((site) => site.recurrence == SiteRecurrence.weekly)) {
-      await createSiteCycle(site.id,weekOf:now,weekOffset:-1,join:false);
-      await createSiteCycle(site.id,weekOf:now,join:false);
-      await createSiteCycle(site.id,weekOf:now,weekOffset:1,join:false);
+    for (final site in onlineSites.where(
+      (site) => site.recurrence == SiteRecurrence.weekly,
+    )) {
+      await createSiteCycle(site.id, weekOf: now, weekOffset: -1, join: false);
+      await createSiteCycle(site.id, weekOf: now, join: false);
+      await createSiteCycle(site.id, weekOf: now, weekOffset: 1, join: false);
     }
   }
 
@@ -412,9 +549,17 @@ class _GiriDocument {
     final events = records('events', GiriEvent.fromJson);
     final notes = records('notes', ThoughtNote.fromJson);
     final players = records('players', GiriPlayer.fromJson, optional: true);
-    final onlineSites = records('onlineSites', OnlineSite.fromJson, optional:true);
-    final venues = records('venues', GiriVenue.fromJson, optional:true);
-    if(onlineSites.map((item)=>item.id).toSet().length != onlineSites.length || venues.map((item)=>item.id).toSet().length != venues.length) throw const FormatException('Duplicate site or venue IDs.');
+    final onlineSites = records(
+      'onlineSites',
+      OnlineSite.fromJson,
+      optional: true,
+    );
+    final venues = records('venues', GiriVenue.fromJson, optional: true);
+    if (onlineSites.map((item) => item.id).toSet().length !=
+            onlineSites.length ||
+        venues.map((item) => item.id).toSet().length != venues.length) {
+      throw const FormatException('Duplicate site or venue IDs.');
+    }
     if (events.map((item) => item.id).toSet().length != events.length ||
         notes.map((item) => item.id).toSet().length != notes.length ||
         players.map((item) => item.id).toSet().length != players.length ||

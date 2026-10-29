@@ -62,8 +62,7 @@ class TournamentTeamEditor extends StatelessWidget {
               items: {
                 0: '制限なし',
                 for (var size = 2; size <= 6; size++) size: '$size人',
-                if (teamSize != null && teamSize! > 6)
-                  teamSize!: '$teamSize人',
+                if (teamSize != null && teamSize! > 6) teamSize!: '$teamSize人',
               },
               onChanged: enabled
                   ? (size) => onTeamSizeChanged(size == 0 ? null : size)
@@ -94,9 +93,7 @@ class TournamentTeamEditor extends StatelessWidget {
             key: ValueKey(teams[index].id),
             store: store,
             team: teams[index],
-            title: teams[index].id == myTeamId
-                ? '自分のチーム'
-                : 'チーム${index + 1}',
+            title: teams[index].id == myTeamId ? '自分のチーム' : 'チーム${index + 1}',
             enabled: enabled,
             teamSize: teamSize,
             onChanged: (team) {
@@ -162,11 +159,10 @@ class _TeamFields extends StatefulWidget {
 
 class _TeamFieldsState extends State<_TeamFields> {
   late final _name = TextEditingController(text: widget.team.name);
-  late final _members = (widget.team.members.isEmpty
-          ? const ['']
-          : widget.team.members)
-      .map((name) => TextEditingController(text: name))
-      .toList();
+  late final _members =
+      (widget.team.members.isEmpty ? const [''] : widget.team.members)
+          .map((name) => TextEditingController(text: name))
+          .toList();
 
   @override
   void dispose() {
@@ -249,7 +245,8 @@ class _TeamFieldsState extends State<_TeamFields> {
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         child: TextButton.icon(
-          onPressed: !widget.enabled ||
+          onPressed:
+              !widget.enabled ||
                   (widget.teamSize != null &&
                       _members.length >= widget.teamSize!)
               ? null

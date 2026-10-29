@@ -78,41 +78,65 @@ class _EventRoundEditorState extends State<EventRoundEditor> {
     final automatic = _automatic.putIfAbsent(old.id, () => <String>{});
     final draft = old.copyWith(
       submissionStart: date,
-      submissionEnd: automatic.contains('submissionEnd') ? null : old.submissionEnd,
+      submissionEnd: automatic.contains('submissionEnd')
+          ? null
+          : old.submissionEnd,
       votingStart: automatic.contains('votingStart') ? null : old.votingStart,
       votingEnd: automatic.contains('votingEnd') ? null : old.votingEnd,
     );
-    if (date == null) { _replace(index, draft); return; }
+    if (date == null) {
+      _replace(index, draft);
+      return;
+    }
     if (draft.submissionEnd == null) automatic.add('submissionEnd');
     if (draft.votingStart == null) automatic.add('votingStart');
     if (draft.votingEnd == null) automatic.add('votingEnd');
-    _replace(index, completeRoundSchedule(draft, submissionDays: preferences.submissionDays, votingDays: preferences.votingDays));
+    _replace(
+      index,
+      completeRoundSchedule(
+        draft,
+        submissionDays: preferences.submissionDays,
+        votingDays: preferences.votingDays,
+      ),
+    );
   }
 
   void _submissionEnd(int index, DateTime? date) {
     final old = rounds[index];
     final automatic = _automatic.putIfAbsent(old.id, () => <String>{});
     automatic.remove('submissionEnd');
-    final votingStart = automatic.contains('votingStart') ? date : old.votingStart;
-    _replace(index, old.copyWith(
-      submissionEnd: date,
-      votingStart: votingStart,
-      votingEnd: automatic.contains('votingEnd')
-          ? votingStart == null ? null : addCalendarDays(votingStart, preferences.votingDays)
-          : old.votingEnd,
-    ));
+    final votingStart = automatic.contains('votingStart')
+        ? date
+        : old.votingStart;
+    _replace(
+      index,
+      old.copyWith(
+        submissionEnd: date,
+        votingStart: votingStart,
+        votingEnd: automatic.contains('votingEnd')
+            ? votingStart == null
+                  ? null
+                  : addCalendarDays(votingStart, preferences.votingDays)
+            : old.votingEnd,
+      ),
+    );
   }
 
   void _votingStart(int index, DateTime? date) {
     final old = rounds[index];
     final automatic = _automatic.putIfAbsent(old.id, () => <String>{});
     automatic.remove('votingStart');
-    _replace(index, old.copyWith(
-      votingStart: date,
-      votingEnd: automatic.contains('votingEnd')
-          ? date == null ? null : addCalendarDays(date, preferences.votingDays)
-          : old.votingEnd,
-    ));
+    _replace(
+      index,
+      old.copyWith(
+        votingStart: date,
+        votingEnd: automatic.contains('votingEnd')
+            ? date == null
+                  ? null
+                  : addCalendarDays(date, preferences.votingDays)
+            : old.votingEnd,
+      ),
+    );
   }
 
   void _publishAutomatic() => widget.onAutomaticFieldsChanged?.call({
@@ -130,7 +154,10 @@ class _EventRoundEditorState extends State<EventRoundEditor> {
     final stageId = rounds[index].effectiveStageId;
     onChanged([
       for (final round in rounds)
-        if (round.effectiveStageId == stageId) round.copyWith(name: name) else round,
+        if (round.effectiveStageId == stageId)
+          round.copyWith(name: name)
+        else
+          round,
     ]);
   }
 
@@ -148,7 +175,10 @@ class _EventRoundEditorState extends State<EventRoundEditor> {
       id: newId(),
       sameStage: sameStage,
       tournament: tournament,
-      defaultStart: defaultSubmissionStart(initialDate ?? DateTime.now(), preferences),
+      defaultStart: defaultSubmissionStart(
+        initialDate ?? DateTime.now(),
+        preferences,
+      ),
       submissionDays: preferences.submissionDays,
       votingDays: preferences.votingDays,
     );
@@ -202,7 +232,9 @@ class _EventRoundEditorState extends State<EventRoundEditor> {
                 key: ValueKey('event-round-remove-${rounds[index].id}'),
                 minimumSize: const Size(32, 32),
                 padding: EdgeInsets.zero,
-                onPressed: enabled ? () => onChanged(List.of(rounds)..removeAt(index)) : null,
+                onPressed: enabled
+                    ? () => onChanged(List.of(rounds)..removeAt(index))
+                    : null,
                 child: const Icon(CupertinoIcons.minus_circle, size: 20),
               ),
             ],
@@ -218,12 +250,16 @@ class _EventRoundEditorState extends State<EventRoundEditor> {
               label: 'お題',
               value: rounds[index].promptNumber,
               items: {
-                for (var number = 1; number <= 20; number++) number: 'お題$number',
+                for (var number = 1; number <= 20; number++)
+                  number: 'お題$number',
                 if (rounds[index].promptNumber > 20)
                   rounds[index].promptNumber: 'お題${rounds[index].promptNumber}',
               },
               onChanged: enabled
-                  ? (number) => _replace(index, rounds[index].copyWith(promptNumber: number))
+                  ? (number) => _replace(
+                      index,
+                      rounds[index].copyWith(promptNumber: number),
+                    )
                   : null,
             ),
             Padding(
@@ -236,27 +272,26 @@ class _EventRoundEditorState extends State<EventRoundEditor> {
                 decoration: InputDecoration(
                   hintText: tournament ? '自分のブロック（任意）' : '所属・お題ブロック（任意）',
                 ),
-                onChanged: (block) => _replace(index, rounds[index].copyWith(block: block)),
+                onChanged: (block) =>
+                    _replace(index, rounds[index].copyWith(block: block)),
               ),
             ),
             StairDateRow(
               label: '投稿開始',
               value: rounds[index].submissionStart,
-              onChanged: enabled ? (date) => _submissionStart(index, date) : null,
+              onChanged: enabled
+                  ? (date) => _submissionStart(index, date)
+                  : null,
             ),
             StairDateRow(
               label: '投稿締切',
               value: rounds[index].submissionEnd,
-              onChanged: enabled
-                  ? (date) => _submissionEnd(index, date)
-                  : null,
+              onChanged: enabled ? (date) => _submissionEnd(index, date) : null,
             ),
             StairDateRow(
               label: '投票開始',
               value: rounds[index].votingStart,
-              onChanged: enabled
-                  ? (date) => _votingStart(index, date)
-                  : null,
+              onChanged: enabled ? (date) => _votingStart(index, date) : null,
             ),
             StairDateRow(
               label: '投票締切',
@@ -268,10 +303,22 @@ class _EventRoundEditorState extends State<EventRoundEditor> {
                     }
                   : null,
             ),
-            _switch('投稿する', rounds[index].submissionEnabled,
-                (value) => _replace(index, rounds[index].copyWith(submissionEnabled: value))),
-            _switch('投票する', rounds[index].votingRequired,
-                (value) => _replace(index, rounds[index].copyWith(votingRequired: value))),
+            _switch(
+              '投稿する',
+              rounds[index].submissionEnabled,
+              (value) => _replace(
+                index,
+                rounds[index].copyWith(submissionEnabled: value),
+              ),
+            ),
+            _switch(
+              '投票する',
+              rounds[index].votingRequired,
+              (value) => _replace(
+                index,
+                rounds[index].copyWith(votingRequired: value),
+              ),
+            ),
           ],
         ),
       Padding(

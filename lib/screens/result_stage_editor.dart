@@ -85,7 +85,8 @@ class ResultStageEditor extends StatelessWidget {
         label: value.roundId == null ? 'この段階の順位（任意）' : 'このお題の順位（任意）',
         initialValue: value.placement?.toString(),
         suffix: '位',
-        onChanged: (text) => onChanged(value.copyWith(placement: int.tryParse(text.trim()))),
+        onChanged: (text) =>
+            onChanged(value.copyWith(placement: int.tryParse(text.trim()))),
       ),
       if (team) ...[
         _number(
@@ -93,14 +94,18 @@ class ResultStageEditor extends StatelessWidget {
           label: 'チーム順位（任意）',
           initialValue: value.teamPlacement?.toString(),
           suffix: '位',
-          onChanged: (text) => onChanged(value.copyWith(teamPlacement: int.tryParse(text.trim()))),
+          onChanged: (text) => onChanged(
+            value.copyWith(teamPlacement: int.tryParse(text.trim())),
+          ),
         ),
         _number(
           field: 'individual-placement',
           label: '個人順位（任意）',
           initialValue: value.individualPlacement?.toString(),
           suffix: '位',
-          onChanged: (text) => onChanged(value.copyWith(individualPlacement: int.tryParse(text.trim()))),
+          onChanged: (text) => onChanged(
+            value.copyWith(individualPlacement: int.tryParse(text.trim())),
+          ),
         ),
       ],
       _number(
@@ -109,7 +114,8 @@ class ResultStageEditor extends StatelessWidget {
         initialValue: value.voterCount?.toString(),
         suffix: '人',
         zero: true,
-        onChanged: (text) => onChanged(value.copyWith(voterCount: int.tryParse(text.trim()))),
+        onChanged: (text) =>
+            onChanged(value.copyWith(voterCount: int.tryParse(text.trim()))),
       ),
       _number(
         field: 'points',
@@ -118,7 +124,8 @@ class ResultStageEditor extends StatelessWidget {
         suffix: '点',
         zero: true,
         decimal: true,
-        onChanged: (text) => onChanged(value.copyWith(points: double.tryParse(text.trim()))),
+        onChanged: (text) =>
+            onChanged(value.copyWith(points: double.tryParse(text.trim()))),
       ),
       StairMenuRow<int>(
         label: '1人あたりの満点',
@@ -136,7 +143,9 @@ class ResultStageEditor extends StatelessWidget {
       StairFormRow(
         label: '得票率',
         child: Text(
-          value.voteRate == null ? '—' : '${value.voteRate!.toStringAsFixed(2)}%',
+          value.voteRate == null
+              ? '—'
+              : '${value.voteRate!.toStringAsFixed(2)}%',
           textAlign: TextAlign.right,
           style: StairTypography.role(StairTextRole.dateValue),
         ),

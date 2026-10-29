@@ -25,6 +25,7 @@ final class StairSymbols: NSObject, FlutterPlugin {
     let displayScale = CGFloat(requestedScale.isFinite ? min(4, max(1, requestedScale)) : 2)
     let variants: [(CGFloat, UIImage.SymbolWeight, Int)] = [
       (14, .semibold, 600), (19, .bold, 700),
+      (14, .bold, 700), (19, .semibold, 600), (21, .bold, 700),
     ]
     var images: [String: [String: Any]] = [:]
     for name in Set(names) {

@@ -57,8 +57,14 @@ void main() {
     (tester) async {
       final store = await makeStore(count: 16);
       await showScreen(tester, store, list: true);
-      expect(tester.getSize(find.byKey(const ValueKey('share-canvas'))).width, 595);
-      expect(tester.getSize(find.byKey(const ValueKey('share-canvas'))).height, greaterThanOrEqualTo(842));
+      expect(
+        tester.getSize(find.byKey(const ValueKey('share-canvas'))).width,
+        595,
+      );
+      expect(
+        tester.getSize(find.byKey(const ValueKey('share-canvas'))).height,
+        greaterThanOrEqualTo(842),
+      );
       expect(find.text('会0'), findsOneWidget);
       expect(find.text('会14'), findsOneWidget);
       expect(find.text('会15'), findsNothing);
@@ -141,17 +147,35 @@ void main() {
   });
 
   test('共有対象は不参加・キャンセルを除き、年と月の期間で絞る', () {
-    GiriEvent event(String id, {EventStatus status = EventStatus.attended, bool joined = true, int month = 1}) => GiriEvent(
-      id: id, title: id, kind: EventKind.live,
-      meetingType: MeetingType.casual, status: status, isParticipating: joined,
-      eventDate: DateTime(2026, month), createdAt: DateTime(2026),
+    GiriEvent event(
+      String id, {
+      EventStatus status = EventStatus.attended,
+      bool joined = true,
+      int month = 1,
+    }) => GiriEvent(
+      id: id,
+      title: id,
+      kind: EventKind.live,
+      meetingType: MeetingType.casual,
+      status: status,
+      isParticipating: joined,
+      eventDate: DateTime(2026, month),
+      createdAt: DateTime(2026),
     );
     final records = [
-      event('past'), event('future', status: EventStatus.planned, month: 7),
-      event('canceled', status: EventStatus.canceled), event('seed', joined: false),
+      event('past'),
+      event('future', status: EventStatus.planned, month: 7),
+      event('canceled', status: EventStatus.canceled),
+      event('seed', joined: false),
     ];
-    expect(shareableRecords(records).map((event) => event.id), ['past', 'future']);
-    expect(shareableRecords(records, status: EventStatus.planned).single.id, 'future');
+    expect(shareableRecords(records).map((event) => event.id), [
+      'past',
+      'future',
+    ]);
+    expect(
+      shareableRecords(records, status: EventStatus.planned).single.id,
+      'future',
+    );
     expect(shareableRecords(records, year: 2025), isEmpty);
     expect(shareableRecords(records, monthPeriod: 101).single.id, 'past');
     expect(shareableRecords(records, monthPeriod: 203).single.id, 'future');
@@ -161,16 +185,28 @@ void main() {
     final store = GiriStore(storage: MemoryGiriStorage());
     await store.load();
     final now = DateTime.now();
-    await store.saveEvent(GiriEvent(
-      id: 'past', title: '去年参加した会', kind: EventKind.live,
-      meetingType: MeetingType.casual, status: EventStatus.attended,
-      eventDate: DateTime(now.year - 1, 12, 20), createdAt: now,
-    ));
-    await store.saveEvent(GiriEvent(
-      id: 'next', title: '次に参加する会', kind: EventKind.live,
-      meetingType: MeetingType.casual, status: EventStatus.planned,
-      eventDate: DateTime(now.year + 1, 1, 15), createdAt: now,
-    ));
+    await store.saveEvent(
+      GiriEvent(
+        id: 'past',
+        title: '去年参加した会',
+        kind: EventKind.live,
+        meetingType: MeetingType.casual,
+        status: EventStatus.attended,
+        eventDate: DateTime(now.year - 1, 12, 20),
+        createdAt: now,
+      ),
+    );
+    await store.saveEvent(
+      GiriEvent(
+        id: 'next',
+        title: '次に参加する会',
+        kind: EventKind.live,
+        meetingType: MeetingType.casual,
+        status: EventStatus.planned,
+        eventDate: DateTime(now.year + 1, 1, 15),
+        createdAt: now,
+      ),
+    );
     await showScreen(tester, store, list: true);
     expect(find.text('${now.year - 1}年'), findsOneWidget);
     expect(find.text('${now.year + 1}年'), findsOneWidget);
@@ -187,53 +223,92 @@ void main() {
     final store = GiriStore(storage: MemoryGiriStorage());
     await store.load();
     final now = DateTime.now();
-    await store.saveEvent(GiriEvent(
-      id: 'live', title: '生大喜利の大会', kind: EventKind.live,
-      meetingType: MeetingType.tournament, status: EventStatus.attended,
-      eventDate: now, createdAt: now, organizer: '主催者A',
-      tournamentResult: TournamentResult(stages: const [ResultStage(id: 'pre', name: '予選', outcome: TournamentOutcome.advanced)]),
-    ));
-    await store.saveEvent(GiriEvent(
-      id: 'online', title: 'ネットの大会', kind: EventKind.online,
-      meetingType: MeetingType.tournament, status: EventStatus.attended,
-      createdAt: now, organizer: '主催者B', siteUrl: 'https://example.com/',
-      tournamentResult: TournamentResult(outcome: TournamentOutcome.champion),
-    ));
+    await store.saveEvent(
+      GiriEvent(
+        id: 'live',
+        title: '生大喜利の大会',
+        kind: EventKind.live,
+        meetingType: MeetingType.tournament,
+        status: EventStatus.attended,
+        eventDate: now,
+        createdAt: now,
+        organizer: '主催者A',
+        tournamentResult: TournamentResult(
+          stages: const [
+            ResultStage(
+              id: 'pre',
+              name: '予選',
+              outcome: TournamentOutcome.advanced,
+            ),
+          ],
+        ),
+      ),
+    );
+    await store.saveEvent(
+      GiriEvent(
+        id: 'online',
+        title: 'ネットの大会',
+        kind: EventKind.online,
+        meetingType: MeetingType.tournament,
+        status: EventStatus.attended,
+        createdAt: now,
+        organizer: '主催者B',
+        siteUrl: 'https://example.com/',
+        tournamentResult: TournamentResult(outcome: TournamentOutcome.champion),
+      ),
+    );
     await showScreen(tester, store);
-    expect(tester.getSize(find.byKey(const ValueKey('share-canvas'))), const Size(390, 650));
+    expect(
+      tester.getSize(find.byKey(const ValueKey('share-canvas'))),
+      const Size(390, 650),
+    );
     expect(find.text('生大喜利'), findsOneWidget);
     expect(find.text('ネット大喜利'), findsOneWidget);
     expect(find.text('主催者A'), findsOneWidget);
     expect(find.text('主催者B'), findsOneWidget);
     expect(find.text('example.com'), findsOneWidget);
     expect(find.text('通過'), findsNothing);
-    expect(find.descendant(of: find.byKey(const ValueKey('share-metric-優勝')), matching: find.text('1')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('share-metric-優勝')),
+        matching: find.text('1'),
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     store.dispose();
   });
-
 
   testWidgets('ランキングが多くてもSummaryの二列と公開設定が崩れない', (tester) async {
     final store = GiriStore(storage: MemoryGiriStorage());
     await store.load();
     final now = DateTime.now();
     for (var index = 0; index < 20; index++) {
-      await store.saveEvent(GiriEvent(
-        id: 'ranking-$index', title: '記録$index',
-        kind: index < 10 ? EventKind.live : EventKind.online,
-        meetingType: MeetingType.casual, status: EventStatus.attended,
-        createdAt: now, eventDate: now, venue: index < 10 ? '会場$index' : '',
-        organizer: '主催$index', participants: ['同席者$index'],
-        siteUrl: index < 10 ? '' : 'https://site$index.example/',
-      ));
+      await store.saveEvent(
+        GiriEvent(
+          id: 'ranking-$index',
+          title: '記録$index',
+          kind: index < 10 ? EventKind.live : EventKind.online,
+          meetingType: MeetingType.casual,
+          status: EventStatus.attended,
+          createdAt: now,
+          eventDate: now,
+          venue: index < 10 ? '会場$index' : '',
+          organizer: '主催$index',
+          participants: ['同席者$index'],
+          siteUrl: index < 10 ? '' : 'https://site$index.example/',
+        ),
+      );
     }
     await showScreen(tester, store);
     final visibility = find.byKey(const ValueKey('share-show-participants'));
     await tester.ensureVisible(visibility);
     await tester.tap(visibility);
     await tester.pumpAndSettle();
-    final paperSize = tester.getSize(find.byKey(const ValueKey('share-canvas')));
+    final paperSize = tester.getSize(
+      find.byKey(const ValueKey('share-canvas')),
+    );
     expect(paperSize.width, 390);
     expect(paperSize.height, inInclusiveRange(650, 740));
     expect(find.text('TOP PLAYERS'), findsOneWidget);
@@ -244,5 +319,4 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     store.dispose();
   });
-
 }

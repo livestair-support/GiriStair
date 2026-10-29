@@ -25,19 +25,29 @@ class GiriAnalytics {
     this.selfName = '',
     Map<String, String> siteNames = const {},
   }) : siteNames = Map.unmodifiable(siteNames),
-       attended = List.unmodifiable(events.where((event) {
-         if (event.status != EventStatus.attended || !event.isParticipating) return false;
-         if (kind != null && event.kind != kind) return false;
-         if (meetingType != null && event.meetingType != meetingType) return false;
-         if (year == null && month == null) return true;
-         final date = dateOf(event);
-         return date != null &&
-             (year == null || date.year == year) &&
-             (month == null || date.month == month);
-       })) {
+       attended = List.unmodifiable(
+         events.where((event) {
+           if (event.status != EventStatus.attended || !event.isParticipating) {
+             return false;
+           }
+           if (kind != null && event.kind != kind) return false;
+           if (meetingType != null && event.meetingType != meetingType) {
+             return false;
+           }
+           if (year == null && month == null) return true;
+           final date = dateOf(event);
+           return date != null &&
+               (year == null || date.year == year) &&
+               (month == null || date.month == month);
+         }),
+       ) {
     final selectedMonth = month;
     if (selectedMonth != null && (selectedMonth < 1 || selectedMonth > 12)) {
-      throw ArgumentError.value(selectedMonth, 'month', 'Month must be 1 through 12.');
+      throw ArgumentError.value(
+        selectedMonth,
+        'month',
+        'Month must be 1 through 12.',
+      );
     }
   }
 
@@ -62,7 +72,10 @@ class GiriAnalytics {
       .where((event) => event.meetingType == MeetingType.casual)
       .toList(growable: false);
   List<GiriEvent> get ranked => tournaments
-      .where((event) => event.effectivePlacement != null && event.effectivePlacement! > 0)
+      .where(
+        (event) =>
+            event.effectivePlacement != null && event.effectivePlacement! > 0,
+      )
       .toList(growable: false);
 
   int get firstPlaceCount =>
@@ -77,7 +90,8 @@ class GiriAnalytics {
   int get placedCount => tournaments.where((event) {
     final rank = event.effectivePlacement;
     if (rank == 1 || rank == 2) return false;
-    return rank == 3 || event.tournamentResult?.outcome == TournamentOutcome.placed;
+    return rank == 3 ||
+        event.tournamentResult?.outcome == TournamentOutcome.placed;
   }).length;
 
   int get resultCount =>
@@ -102,19 +116,21 @@ class GiriAnalytics {
     bool includeTeams = false,
   }) {
     final self = playerSearchKey(selfName);
-    return _counts(events.expand((event) {
-      final names = <String, String>{};
-      for (final value in [
-        ...event.participants,
-        if (includeTeams) ...event.teams.expand((team) => team.members),
-        if (includeTeams) ...?event.tournamentResult?.members,
-      ]) {
-        final name = value.trim();
-        final key = playerSearchKey(name);
-        if (key.isNotEmpty && key != self) names.putIfAbsent(key, () => name);
-      }
-      return names.values;
-    }));
+    return _counts(
+      events.expand((event) {
+        final names = <String, String>{};
+        for (final value in [
+          ...event.participants,
+          if (includeTeams) ...event.teams.expand((team) => team.members),
+          if (includeTeams) ...?event.tournamentResult?.members,
+        ]) {
+          final name = value.trim();
+          final key = playerSearchKey(name);
+          if (key.isNotEmpty && key != self) names.putIfAbsent(key, () => name);
+        }
+        return names.values;
+      }),
+    );
   }
 
   String siteLabel(GiriEvent event) {
@@ -125,8 +141,7 @@ class GiriAnalytics {
     return event.title.trim();
   }
 
-  List<MapEntry<String, int>> get sites =>
-      _counts(online.map(siteLabel));
+  List<MapEntry<String, int>> get sites => _counts(online.map(siteLabel));
 
   List<MonthlyParticipation> get monthly {
     final counts = <DateTime, List<int>>{};
@@ -139,20 +154,23 @@ class GiriAnalytics {
     }
     final periods = year != null
         ? [
-            for (final index in month == null
-                ? List.generate(12, (index) => index + 1)
-                : [month!])
+            for (final index
+                in month == null
+                    ? List.generate(12, (index) => index + 1)
+                    : [month!])
               DateTime(year!, index),
           ]
         : (counts.keys.toList()..sort());
-    return List.unmodifiable(periods.map((period) {
-      final count = counts[period] ?? const [0, 0];
-      return MonthlyParticipation(
-        month: period,
-        live: count[0],
-        online: count[1],
-      );
-    }));
+    return List.unmodifiable(
+      periods.map((period) {
+        final count = counts[period] ?? const [0, 0];
+        return MonthlyParticipation(
+          month: period,
+          live: count[0],
+          online: count[1],
+        );
+      }),
+    );
   }
 
   /// A live calendar date stays distinct from a notification deadline.

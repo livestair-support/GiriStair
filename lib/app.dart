@@ -22,8 +22,12 @@ import 'scheduling.dart';
 import 'screens/result_entry.dart';
 
 class GiriStairApp extends StatefulWidget {
-  const GiriStairApp({super.key, required this.store, this.initialTab = 1, this.navigatorKey})
-    : assert(initialTab >= 0 && initialTab < 5);
+  const GiriStairApp({
+    super.key,
+    required this.store,
+    this.initialTab = 1,
+    this.navigatorKey,
+  }) : assert(initialTab >= 0 && initialTab < 5);
 
   final GiriStore store;
   final int initialTab;
@@ -139,10 +143,15 @@ class _GiriStairAppState extends State<GiriStairApp>
                 ),
               );
             }
-            if (!widget.store.preferences.onboardingCompleted || widget.store.preferences.selfName.trim().isEmpty) {
+            if (!widget.store.preferences.onboardingCompleted ||
+                widget.store.preferences.selfName.trim().isEmpty) {
               return SelfProfileScreen(store: widget.store, initialSetup: true);
             }
-            return _Home(store: widget.store, initialTab: widget.initialTab, cycleUpdateFailed: _cycleUpdateFailed);
+            return _Home(
+              store: widget.store,
+              initialTab: widget.initialTab,
+              cycleUpdateFailed: _cycleUpdateFailed,
+            );
           },
         ),
       ),
@@ -151,7 +160,11 @@ class _GiriStairAppState extends State<GiriStairApp>
 }
 
 class _Home extends StatefulWidget {
-  const _Home({required this.store, required this.initialTab, this.cycleUpdateFailed = false});
+  const _Home({
+    required this.store,
+    required this.initialTab,
+    this.cycleUpdateFailed = false,
+  });
 
   final GiriStore store;
   final int initialTab;
@@ -172,7 +185,13 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (widget.cycleUpdateFailed) showStairMessage(context, '周期を更新できませんでした。保存済みの記録は表示しています。', error: true);
+      if (widget.cycleUpdateFailed) {
+        showStairMessage(
+          context,
+          '周期を更新できませんでした。保存済みの記録は表示しています。',
+          error: true,
+        );
+      }
       _checkResults();
     });
   }
@@ -186,32 +205,72 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      unawaited(widget.store.ensureCurrentSiteCycles().catchError((Object error, StackTrace stack) {
-        if (mounted) showStairMessage(context, '周期を更新できませんでした。もう一度お試しください。', error: true);
-      }));
+      unawaited(
+        widget.store.ensureCurrentSiteCycles().catchError((
+          Object error,
+          StackTrace stack,
+        ) {
+          if (mounted) {
+            showStairMessage(
+              context,
+              '周期を更新できませんでした。もう一度お試しください。',
+              error: true,
+            );
+          }
+        }),
+      );
       _checkResults();
     }
   }
 
   Future<void> _checkResults() async {
-    if (!mounted || _showingResultPrompt || !(ModalRoute.of(context)?.isCurrent ?? false)) return;
-    final pending = widget.store.events.where((event) => !_promptedResults.contains(event.id) && eventNeedsResult(event, DateTime.now())).toList()
-      ..sort((a,b) => (b.eventDate ?? b.startsAt ?? b.createdAt).compareTo(a.eventDate ?? a.startsAt ?? a.createdAt));
+    if (!mounted ||
+        _showingResultPrompt ||
+        !(ModalRoute.of(context)?.isCurrent ?? false)) {
+          return;
+        }
+    final pending =
+        widget.store.events
+            .where(
+              (event) =>
+                  !_promptedResults.contains(event.id) &&
+                  eventNeedsResult(event, DateTime.now()),
+            )
+            .toList()
+          ..sort(
+            (a, b) => (b.eventDate ?? b.startsAt ?? b.createdAt).compareTo(
+              a.eventDate ?? a.startsAt ?? a.createdAt,
+            ),
+          );
     if (pending.isEmpty) return;
     final event = pending.first;
     _promptedResults.add(event.id);
     _showingResultPrompt = true;
     try {
-      final edit = await showCupertinoDialog<bool>(context: context, builder: (context) => StairCupertinoAlertDialog(
-        title: const Text('大会の結果を残しますか？'),
-        content: Text(event.title),
-        actions: [
-          StairCupertinoDialogAction(onPressed: () => Navigator.pop(context,false), child: const Text('後で')),
-          StairCupertinoDialogAction(onPressed: () => Navigator.pop(context,true), child: const Text('入力する')),
-        ],
-      ));
+      final edit = await showCupertinoDialog<bool>(
+        context: context,
+        builder: (context) => StairCupertinoAlertDialog(
+          title: const Text('大会の結果を残しますか？'),
+          content: Text(event.title),
+          actions: [
+            StairCupertinoDialogAction(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('後で'),
+            ),
+            StairCupertinoDialogAction(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('入力する'),
+            ),
+          ],
+        ),
+      );
       if (mounted && edit == true) {
-        await Navigator.of(context).push<void>(CupertinoPageRoute(builder: (_) => ResultEntryScreen(store: widget.store, eventId: event.id)));
+        await Navigator.of(context).push<void>(
+          CupertinoPageRoute(
+            builder: (_) =>
+                ResultEntryScreen(store: widget.store, eventId: event.id),
+          ),
+        );
       }
     } finally {
       _showingResultPrompt = false;
@@ -229,10 +288,11 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
           onSaved: () => setState(() => _selected = 1),
         ),
         Scaffold(
-          appBar: const StairPageHeader(
+          appBar: StairPageHeader(
             title: '一覧',
             icon: CupertinoIcons.clock,
             accent: StairColors.online,
+            trailing: EventListModeButton(store: widget.store),
           ),
           body: EventListScreen(store: widget.store),
         ),

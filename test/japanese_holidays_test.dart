@@ -11,14 +11,17 @@ void main() {
     expect(japaneseHolidayName(DateTime(1949, 1, 1)), '元日');
   });
 
-  test('substitute holiday rules respect their historical start and changes', () {
-    expect(japaneseHolidayName(DateTime(1973, 2, 12)), isNull);
-    expect(japaneseHolidayName(DateTime(1973, 4, 30)), '振替休日');
-    expect(japaneseHolidayName(DateTime(1998, 5, 4)), '振替休日');
-    expect(japaneseHolidayName(DateTime(1998, 5, 6)), isNull);
-    expect(japaneseHolidayName(DateTime(2009, 5, 6)), '振替休日');
-    expect(japaneseHolidayName(DateTime(2026, 5, 6)), '振替休日');
-  });
+  test(
+    'substitute holiday rules respect their historical start and changes',
+    () {
+      expect(japaneseHolidayName(DateTime(1973, 2, 12)), isNull);
+      expect(japaneseHolidayName(DateTime(1973, 4, 30)), '振替休日');
+      expect(japaneseHolidayName(DateTime(1998, 5, 4)), '振替休日');
+      expect(japaneseHolidayName(DateTime(1998, 5, 6)), isNull);
+      expect(japaneseHolidayName(DateTime(2009, 5, 6)), '振替休日');
+      expect(japaneseHolidayName(DateTime(2026, 5, 6)), '振替休日');
+    },
+  );
 
   test('citizen holidays and imperial occasions match LiveStair names', () {
     expect(japaneseHolidayName(DateTime(2015, 9, 22)), '休日');
@@ -51,10 +54,13 @@ void main() {
     expect(japaneseHolidayName(DateTime(2100, 3, 20)), '春分の日');
   });
 
-  test('holiday lookup uses the calendar day, without treating weekends as holidays', () {
-    expect(japaneseHolidayName(DateTime(2026, 11, 3, 23, 55)), '文化の日');
-    expect(japaneseHolidayName(DateTime(2026, 10, 31)), isNull);
-    expect(isJapaneseHoliday(DateTime(2026, 11, 3)), isTrue);
-    expect(isJapaneseHoliday(DateTime(2026, 10, 31)), isFalse);
-  });
+  test(
+    'holiday lookup uses the calendar day, without treating weekends as holidays',
+    () {
+      expect(japaneseHolidayName(DateTime(2026, 11, 3, 23, 55)), '文化の日');
+      expect(japaneseHolidayName(DateTime(2026, 10, 31)), isNull);
+      expect(isJapaneseHoliday(DateTime(2026, 11, 3)), isTrue);
+      expect(isJapaneseHoliday(DateTime(2026, 10, 31)), isFalse);
+    },
+  );
 }

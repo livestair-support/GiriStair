@@ -31,7 +31,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _expanded = <String>{
     'profile',
-    'profile',
     'share',
     'stats',
     'directory',
@@ -307,9 +306,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
           children: [
-            _section('profile','自分のプロフィール',CupertinoIcons.person,StairColors.online,[
-              _link('自分の名前',()=>_push(SelfProfileScreen(store:widget.store)),detail:preferences.selfName.isEmpty?'未設定':preferences.selfName),
-            ]),
+            _section(
+              'profile',
+              '自分のプロフィール',
+              CupertinoIcons.person,
+              StairColors.online,
+              [
+                _link(
+                  '自分の名前',
+                  () => _push(SelfProfileScreen(store: widget.store)),
+                  detail: preferences.selfName.isEmpty
+                      ? '未設定'
+                      : preferences.selfName,
+                ),
+              ],
+            ),
             _section('share', '共有ページ', CupertinoIcons.share, StairColors.live, [
               _link(
                 'Giri Summary',
@@ -347,7 +358,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   () => _push(PlayerDirectoryScreen(store: widget.store)),
                   detail: '名前・フリガナ・プロフィール',
                 ),
-                _link('会場一覧',()=>_push(VenueDirectoryScreen(store:widget.store)),detail:'都道府県・マップ'),
+                _link(
+                  '会場一覧',
+                  () => _push(VenueDirectoryScreen(store: widget.store)),
+                  detail: '都道府県・マップ',
+                ),
               ],
             ),
             _section(
@@ -371,12 +386,97 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           preferences.copyWith(theme: value),
                         ),
                 ),
-                StairMenuRow<String>(label:'プレイヤーのアイコン',value:preferences.playerIconMode,items:const{'auto':'自動','show':'表示','hide':'非表示'},onChanged:_busy?null:(value)=>_savePreferences(preferences.copyWith(playerIconMode:value))),
-                StairMenuRow<int>(label:'投稿期間',value:preferences.submissionDays,items:{for(var days=1;days<=30;days++)days:'$days日',if(preferences.submissionDays>30)preferences.submissionDays:'${preferences.submissionDays}日'},onChanged:_busy?null:(value)=>_savePreferences(preferences.copyWith(submissionDays:value))),
-                StairMenuRow<int>(label:'投票期間',value:preferences.votingDays,items:{for(var days=1;days<=30;days++)days:'$days日',if(preferences.votingDays>30)preferences.votingDays:'${preferences.votingDays}日'},onChanged:_busy?null:(value)=>_savePreferences(preferences.copyWith(votingDays:value))),
-                StairMenuRow<int>(label:'投稿開始の日',value:preferences.submissionStartDayOffset,items:{for(var offset=-7;offset<=1;offset++)offset:offset==-1?'開催日の前日':offset==0?'開催日当日':offset<0?'${-offset}日前':'翌日',if(preferences.submissionStartDayOffset < -7 || preferences.submissionStartDayOffset > 1)preferences.submissionStartDayOffset:'${preferences.submissionStartDayOffset}日'},onChanged:_busy?null:(value)=>_savePreferences(preferences.copyWith(submissionStartDayOffset:value))),
-                Padding(padding:const EdgeInsets.symmetric(horizontal:16,vertical:8),child:StairTimeButton(label:'投稿開始の時刻',value:DateTime(2000,1,1,preferences.submissionStartHour,preferences.submissionStartMinute),date:DateTime(2000,1,1),onChanged:_busy?null:(value){if(value!=null)_savePreferences(preferences.copyWith(submissionStartHour:value.hour,submissionStartMinute:value.minute));})),
-
+                StairMenuRow<String>(
+                  label: 'プレイヤーのアイコン',
+                  value: preferences.playerIconMode,
+                  items: const {'auto': '自動', 'show': '表示', 'hide': '非表示'},
+                  onChanged: _busy
+                      ? null
+                      : (value) => _savePreferences(
+                          preferences.copyWith(playerIconMode: value),
+                        ),
+                ),
+                StairMenuRow<int>(
+                  label: '投稿期間',
+                  value: preferences.submissionDays,
+                  items: {
+                    for (var days = 1; days <= 30; days++) days: '$days日',
+                    if (preferences.submissionDays > 30)
+                      preferences.submissionDays:
+                          '${preferences.submissionDays}日',
+                  },
+                  onChanged: _busy
+                      ? null
+                      : (value) => _savePreferences(
+                          preferences.copyWith(submissionDays: value),
+                        ),
+                ),
+                StairMenuRow<int>(
+                  label: '投票期間',
+                  value: preferences.votingDays,
+                  items: {
+                    for (var days = 1; days <= 30; days++) days: '$days日',
+                    if (preferences.votingDays > 30)
+                      preferences.votingDays: '${preferences.votingDays}日',
+                  },
+                  onChanged: _busy
+                      ? null
+                      : (value) => _savePreferences(
+                          preferences.copyWith(votingDays: value),
+                        ),
+                ),
+                StairMenuRow<int>(
+                  label: '投稿開始の日',
+                  value: preferences.submissionStartDayOffset,
+                  items: {
+                    for (var offset = -7; offset <= 1; offset++)
+                      offset: offset == -1
+                          ? '開催日の前日'
+                          : offset == 0
+                          ? '開催日当日'
+                          : offset < 0
+                          ? '${-offset}日前'
+                          : '翌日',
+                    if (preferences.submissionStartDayOffset < -7 ||
+                        preferences.submissionStartDayOffset > 1)
+                      preferences.submissionStartDayOffset:
+                          '${preferences.submissionStartDayOffset}日',
+                  },
+                  onChanged: _busy
+                      ? null
+                      : (value) => _savePreferences(
+                          preferences.copyWith(submissionStartDayOffset: value),
+                        ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  child: StairTimeButton(
+                    label: '投稿開始の時刻',
+                    value: DateTime(
+                      2000,
+                      1,
+                      1,
+                      preferences.submissionStartHour,
+                      preferences.submissionStartMinute,
+                    ),
+                    date: DateTime(2000, 1, 1),
+                    onChanged: _busy
+                        ? null
+                        : (value) {
+                            if (value != null) {
+                              _savePreferences(
+                                preferences.copyWith(
+                                  submissionStartHour: value.hour,
+                                  submissionStartMinute: value.minute,
+                                ),
+                              );
+                            }
+                          },
+                  ),
+                ),
               ],
             ),
             _section(

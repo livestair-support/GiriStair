@@ -893,8 +893,13 @@ class _DatePickerSheet extends StatefulWidget {
 }
 
 class _DatePickerSheetState extends State<_DatePickerSheet> {
-  late DateTime _selection = DateTime(widget.initial.year, widget.initial.month,
-      widget.initial.day, widget.initial.hour, widget.initial.minute ~/ 5 * 5);
+  late DateTime _selection = DateTime(
+    widget.initial.year,
+    widget.initial.month,
+    widget.initial.day,
+    widget.initial.hour,
+    widget.initial.minute ~/ 5 * 5,
+  );
 
   @override
   Widget build(BuildContext context) {

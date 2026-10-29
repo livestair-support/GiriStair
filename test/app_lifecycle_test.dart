@@ -12,10 +12,7 @@ import 'package:giristair/ui/stair_tab_bar.dart';
 import 'package:giristair/ui/stair_theme.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-const _completed = AppPreferences(
-  selfName: '本人',
-  onboardingCompleted: true,
-);
+const _completed = AppPreferences(selfName: '本人', onboardingCompleted: true);
 
 class _CycleStorage extends MemoryGiriStorage {
   bool failWrites = false;
@@ -114,18 +111,16 @@ void main() {
     FocusManager.instance.primaryFocus?.unfocus();
     await tester.pumpAndSettle();
     final navigation = find.byType(StairTabBar);
-    await tester.tap(find.descendant(
-      of: navigation,
-      matching: find.text('思考'),
-    ));
+    await tester.tap(
+      find.descendant(of: navigation, matching: find.text('思考')),
+    );
     await tester.pumpAndSettle();
     expect(tester.widget<StairTabBar>(navigation).currentIndex, 3);
     await _resume(tester);
     expect(tester.widget<StairTabBar>(navigation).currentIndex, 3);
-    await tester.tap(find.descendant(
-      of: navigation,
-      matching: find.text('登録'),
-    ));
+    await tester.tap(
+      find.descendant(of: navigation, matching: find.text('登録')),
+    );
     await tester.pumpAndSettle();
     expect(tester.widget<TextFormField>(title).controller!.text, '編集中の大会');
     expect(store.events, isEmpty);
@@ -146,17 +141,20 @@ void main() {
     await tester.pumpWidget(GiriStairApp(store: store));
     await tester.pumpAndSettle();
     expect(find.text('大会の結果を残しますか？'), findsNothing);
-    await store.saveEvent(event.copyWith(
-      endsAt: DateTime.now().subtract(const Duration(hours: 1)),
-    ));
+    await store.saveEvent(
+      event.copyWith(endsAt: DateTime.now().subtract(const Duration(hours: 1))),
+    );
     await tester.pumpAndSettle();
     expect(find.text('大会の結果を残しますか？'), findsNothing);
     await _resume(tester);
     expect(find.text('大会の結果を残しますか？'), findsOneWidget);
-    expect(find.descendant(
-      of: find.byType(StairCupertinoAlertDialog),
-      matching: find.text(event.title),
-    ), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(StairCupertinoAlertDialog),
+        matching: find.text(event.title),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.text('後で'));
     await tester.pumpAndSettle();
     await _resume(tester);
@@ -168,78 +166,87 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('saving a final result suppresses the prompt on the next launch', (
-    tester,
-  ) async {
-    _phone(tester);
-    final storage = MemoryGiriStorage();
-    final store = GiriStore(storage: storage);
-    await store.load();
-    await store.savePreferences(_completed);
-    await store.saveEvent(_tournament('save-result'));
-    await tester.pumpWidget(GiriStairApp(store: store));
-    await tester.pumpAndSettle();
-    expect(find.text('大会の結果を残しますか？'), findsOneWidget);
-    await tester.tap(find.text('入力する'));
-    await tester.pumpAndSettle();
-    expect(find.byType(ResultEntryScreen), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('event-final-outcome')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('優勝'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('保存'));
-    await tester.pumpAndSettle();
-    expect(find.byType(ResultEntryScreen), findsNothing);
-    expect(store.events.single.tournamentResult!.outcome, TournamentOutcome.champion);
-    expect(store.events.single.placement, 1);
-    await _resume(tester);
-    expect(find.text('大会の結果を残しますか？'), findsNothing);
+  testWidgets(
+    'saving a final result suppresses the prompt on the next launch',
+    (tester) async {
+      _phone(tester);
+      final storage = MemoryGiriStorage();
+      final store = GiriStore(storage: storage);
+      await store.load();
+      await store.savePreferences(_completed);
+      await store.saveEvent(_tournament('save-result'));
+      await tester.pumpWidget(GiriStairApp(store: store));
+      await tester.pumpAndSettle();
+      expect(find.text('大会の結果を残しますか？'), findsOneWidget);
+      await tester.tap(find.text('入力する'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ResultEntryScreen), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('event-final-outcome')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('優勝'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ResultEntryScreen), findsNothing);
+      expect(
+        store.events.single.tournamentResult!.outcome,
+        TournamentOutcome.champion,
+      );
+      expect(store.events.single.placement, 1);
+      await _resume(tester);
+      expect(find.text('大会の結果を残しますか？'), findsNothing);
 
-    await tester.pumpWidget(const SizedBox());
-    store.dispose();
-    final reopened = GiriStore(storage: storage);
-    await tester.pumpWidget(GiriStairApp(store: reopened));
-    await tester.pumpAndSettle();
-    expect(find.text('大会の結果を残しますか？'), findsNothing);
-    expect(reopened.events.single.hasFinalResult, isTrue);
-    await tester.pumpWidget(const SizedBox());
-    reopened.dispose();
-    expect(tester.takeException(), isNull);
-  });
+      await tester.pumpWidget(const SizedBox());
+      store.dispose();
+      final reopened = GiriStore(storage: storage);
+      await tester.pumpWidget(GiriStairApp(store: reopened));
+      await tester.pumpAndSettle();
+      expect(find.text('大会の結果を残しますか？'), findsNothing);
+      expect(reopened.events.single.hasFinalResult, isTrue);
+      await tester.pumpWidget(const SizedBox());
+      reopened.dispose();
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-  testWidgets('optional site-cycle write failure keeps readable saved records', (
-    tester,
-  ) async {
-    _phone(tester);
-    final storage = _CycleStorage();
-    final store = GiriStore(storage: storage);
-    await store.load();
-    await store.savePreferences(_completed);
-    await store.saveEvent(GiriEvent(
-      id: 'readable',
-      title: '読み出せる記録',
-      kind: EventKind.live,
-      meetingType: MeetingType.casual,
-      createdAt: DateTime.now(),
-      eventDate: DateTime.now().add(const Duration(days: 1)),
-    ));
-    await store.saveOnlineSite(const OnlineSite(
-      id: 'site',
-      name: '毎週のサイト',
-      recurrence: SiteRecurrence.weekly,
-    ));
-    final savedContents = storage.contents;
-    storage.failWrites = true;
-    await tester.pumpWidget(GiriStairApp(store: store));
-    await tester.pumpAndSettle();
-    expect(find.byType(StairTabBar), findsOneWidget);
-    expect(find.text('読み出せる記録'), findsAtLeastNWidgets(1));
-    expect(find.text('記録を読み込めませんでした'), findsNothing);
-    expect(find.text('周期を更新できませんでした。保存済みの記録は表示しています。'), findsOneWidget);
-    expect(storage.contents, savedContents);
-    expect(store.events.single.id, 'readable');
-    await tester.pumpWidget(const SizedBox());
-    store.dispose();
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'optional site-cycle write failure keeps readable saved records',
+    (tester) async {
+      _phone(tester);
+      final storage = _CycleStorage();
+      final store = GiriStore(storage: storage);
+      await store.load();
+      await store.savePreferences(_completed);
+      await store.saveEvent(
+        GiriEvent(
+          id: 'readable',
+          title: '読み出せる記録',
+          kind: EventKind.live,
+          meetingType: MeetingType.casual,
+          createdAt: DateTime.now(),
+          eventDate: DateTime.now().add(const Duration(days: 1)),
+        ),
+      );
+      await store.saveOnlineSite(
+        const OnlineSite(
+          id: 'site',
+          name: '毎週のサイト',
+          recurrence: SiteRecurrence.weekly,
+        ),
+      );
+      final savedContents = storage.contents;
+      storage.failWrites = true;
+      await tester.pumpWidget(GiriStairApp(store: store));
+      await tester.pumpAndSettle();
+      expect(find.byType(StairTabBar), findsOneWidget);
+      expect(find.text('読み出せる記録'), findsAtLeastNWidgets(1));
+      expect(find.text('記録を読み込めませんでした'), findsNothing);
+      expect(find.text('周期を更新できませんでした。保存済みの記録は表示しています。'), findsOneWidget);
+      expect(storage.contents, savedContents);
+      expect(store.events.single.id, 'readable');
+      await tester.pumpWidget(const SizedBox());
+      store.dispose();
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

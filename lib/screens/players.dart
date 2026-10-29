@@ -33,7 +33,8 @@ class _PlayerDirectoryScreenState extends State<PlayerDirectoryScreen> {
     } else {
       Navigator.of(context).push<void>(
         CupertinoPageRoute(
-          builder: (_) => PlayerDetailScreen(store: widget.store, playerId: player.id),
+          builder: (_) =>
+              PlayerDetailScreen(store: widget.store, playerId: player.id),
         ),
       );
     }
@@ -112,7 +113,7 @@ class _PlayerDirectoryScreenState extends State<PlayerDirectoryScreen> {
                       ),
                       child: Row(
                         children: [
-                          PlayerAvatar(store:widget.store,name:player.name),
+                          PlayerAvatar(store: widget.store, name: player.name),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -164,9 +165,11 @@ class _PlayerEditorState extends State<_PlayerEditor> {
   late final _furigana = TextEditingController(
     text: widget.player?.furigana ?? '',
   );
-  late final _region = TextEditingController(text:widget.player?.region ?? '');
-  late final _twitter = TextEditingController(text:widget.player?.twitterUrl ?? '');
-  late final _memo = TextEditingController(text:widget.player?.memo ?? '');
+  late final _region = TextEditingController(text: widget.player?.region ?? '');
+  late final _twitter = TextEditingController(
+    text: widget.player?.twitterUrl ?? '',
+  );
+  late final _memo = TextEditingController(text: widget.player?.memo ?? '');
   late String _icon = widget.player?.iconDataBase64 ?? '';
   bool _saving = false;
   bool _pickingIcon = false;
@@ -176,7 +179,9 @@ class _PlayerEditorState extends State<_PlayerEditor> {
   void dispose() {
     _name.dispose();
     _furigana.dispose();
-    _region.dispose(); _twitter.dispose(); _memo.dispose();
+    _region.dispose();
+    _twitter.dispose();
+    _memo.dispose();
     super.dispose();
   }
 
@@ -192,7 +197,10 @@ class _PlayerEditorState extends State<_PlayerEditor> {
           id: widget.player?.id ?? widget.store.newId(),
           name: _name.text,
           furigana: _furigana.text,
-          region:_region.text, twitterUrl:_twitter.text, memo:_memo.text, iconDataBase64:_icon,
+          region: _region.text,
+          twitterUrl: _twitter.text,
+          memo: _memo.text,
+          iconDataBase64: _icon,
         ),
       );
       if (!mounted) return;
@@ -267,9 +275,11 @@ class _PlayerEditorState extends State<_PlayerEditor> {
       if (mounted) setState(() => _icon = base64Encode(bytes));
     } catch (error) {
       if (mounted) {
-        setState(() => _error = error is FormatException
-            ? error.message
-            : '画像を読み込めませんでした。');
+        setState(
+          () => _error = error is FormatException
+              ? error.message
+              : '画像を読み込めませんでした。',
+        );
       }
     } finally {
       if (mounted) setState(() => _pickingIcon = false);
@@ -278,14 +288,17 @@ class _PlayerEditorState extends State<_PlayerEditor> {
 
   Widget _iconImage() {
     final bytes = playerIconBytes(_icon);
-    if (bytes == null) return const Icon(CupertinoIcons.person_crop_circle, size: 72);
+    if (bytes == null) {
+      return const Icon(CupertinoIcons.person_crop_circle, size: 72);
+    }
     return ClipOval(
       child: Image.memory(
         bytes,
         width: 96,
         height: 96,
         fit: BoxFit.cover,
-        errorBuilder: (_, error, stack) => const Icon(CupertinoIcons.person_crop_circle, size: 72),
+        errorBuilder: (_, error, stack) =>
+            const Icon(CupertinoIcons.person_crop_circle, size: 72),
       ),
     );
   }
@@ -300,7 +313,9 @@ class _PlayerEditorState extends State<_PlayerEditor> {
           child: ValueListenableBuilder(
             valueListenable: _name,
             builder: (context, value, _) => StairSaveButton(
-              onPressed: _saving || _pickingIcon || value.text.trim().isEmpty ? null : _save,
+              onPressed: _saving || _pickingIcon || value.text.trim().isEmpty
+                  ? null
+                  : _save,
               saving: _saving,
             ),
           ),
@@ -334,7 +349,10 @@ class _PlayerEditorState extends State<_PlayerEditor> {
                 textInputAction: TextInputAction.next,
               ),
             ),
-            for (final entry in [(_region, '地域・都道府県'), (_twitter, 'X（Twitter）のユーザー名・URL')])
+            for (final entry in [
+              (_region, '地域・都道府県'),
+              (_twitter, 'X（Twitter）のユーザー名・URL'),
+            ])
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: TextField(
@@ -361,7 +379,10 @@ class _PlayerEditorState extends State<_PlayerEditor> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    if (_pickingIcon) const CupertinoActivityIndicator() else _iconImage(),
+                    if (_pickingIcon)
+                      const CupertinoActivityIndicator()
+                    else
+                      _iconImage(),
                     const SizedBox(height: 10),
                     Text(_icon.isEmpty ? '写真を選ぶ' : '写真を変更'),
                   ],
@@ -370,7 +391,9 @@ class _PlayerEditorState extends State<_PlayerEditor> {
             ),
             if (_icon.isNotEmpty)
               CupertinoButton(
-                onPressed: _saving || _pickingIcon ? null : () => setState(() => _icon = ''),
+                onPressed: _saving || _pickingIcon
+                    ? null
+                    : () => setState(() => _icon = ''),
                 child: const Text('アイコンを外す'),
               ),
           ],
@@ -480,7 +503,8 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
     listenable: widget.store,
     builder: (context, _) {
       final store = widget.store;
-      final player = store.playerDirectory
+      final player =
+          store.playerDirectory
               .where((player) => player.id == _playerId)
               .firstOrNull ??
           (_lastName == null ? null : store.playerByName(_lastName!));
@@ -492,20 +516,26 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
       }
       _lastName = player.name;
       final key = playerSearchKey(player.name);
-      final joined = store.events.where(
-        (event) => event.status == EventStatus.attended &&
-            event.participants.any((name) => playerSearchKey(name) == key),
-      ).toList();
-      final hosted = store.events.where(
-        (event) => playerSearchKey(event.organizer) == key,
-      ).toList();
+      final joined = store.events
+          .where(
+            (event) =>
+                event.status == EventStatus.attended &&
+                event.participants.any((name) => playerSearchKey(name) == key),
+          )
+          .toList();
+      final hosted = store.events
+          .where((event) => playerSearchKey(event.organizer) == key)
+          .toList();
       final standings = [
         for (final event in store.events.where(
-          (event) => event.meetingType == MeetingType.tournament &&
+          (event) =>
+              event.meetingType == MeetingType.tournament &&
               event.status == EventStatus.attended,
         ))
           for (final standing in event.standings)
-            if (standing.playerNames.any((name) => playerSearchKey(name) == key))
+            if (standing.playerNames.any(
+              (name) => playerSearchKey(name) == key,
+            ))
               (event, standing),
       ];
       return Scaffold(
@@ -531,7 +561,10 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         if (player.furigana.isNotEmpty)
-                          Text(player.furigana, style: Theme.of(context).textTheme.bodySmall),
+                          Text(
+                            player.furigana,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
                         Text(
                           player.name,
                           key: const ValueKey('player-detail-name'),
@@ -555,7 +588,11 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
                     onPressed: () => _openAccount(player.twitterUrl),
                     child: Align(
                       alignment: Alignment.centerLeft,
-                      child: Text(player.twitterUrl, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      child: Text(
+                        player.twitterUrl,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
                 ],
@@ -566,7 +603,10 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
                 icon: CupertinoIcons.pencil,
                 accent: StairColors.memo,
                 children: [
-                  Padding(padding: const EdgeInsets.all(16), child: Text(player.memo)),
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(player.memo),
+                  ),
                 ],
               ),
             StairFormSection(
@@ -576,11 +616,17 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
               children: [
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: StairFieldRow(label: '同席した会', child: Text('${joined.length}回')),
+                  child: StairFieldRow(
+                    label: '同席した会',
+                    child: Text('${joined.length}回'),
+                  ),
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: StairFieldRow(label: '主催', child: Text('${hosted.length}回')),
+                  child: StairFieldRow(
+                    label: '主催',
+                    child: Text('${hosted.length}回'),
+                  ),
                 ),
               ],
             ),
@@ -600,11 +646,19 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
                     onPressed: () => _openEvent(item.$1),
                     child: Row(
                       children: [
-                        Expanded(child: Text(item.$1.title, style: Theme.of(context).textTheme.bodyLarge)),
+                        Expanded(
+                          child: Text(
+                            item.$1.title,
+                            style: Theme.of(context).textTheme.bodyLarge,
+                          ),
+                        ),
                         const SizedBox(width: 12),
                         Text(
-                          item.$2.placement == 1 ? '優勝' :
-                          item.$2.placement == 2 ? '準優勝' : '${item.$2.placement}位',
+                          item.$2.placement == 1
+                              ? '優勝'
+                              : item.$2.placement == 2
+                              ? '準優勝'
+                              : '${item.$2.placement}位',
                         ),
                         const SizedBox(width: 8),
                         const Icon(CupertinoIcons.chevron_right, size: 15),
@@ -629,7 +683,10 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
                     onPressed: () => _openEvent(event),
                     child: Align(
                       alignment: Alignment.centerLeft,
-                      child: Text(event.title, style: Theme.of(context).textTheme.bodyLarge),
+                      child: Text(
+                        event.title,
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
                     ),
                   ),
               ],

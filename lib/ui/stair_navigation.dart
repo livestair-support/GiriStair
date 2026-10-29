@@ -6,48 +6,119 @@ import 'package:flutter/services.dart';
 import 'stair_native_controls.dart';
 
 class StairBackButton extends StatelessWidget {
-  const StairBackButton({super.key,this.onPressed,this.enabled=true});
+  const StairBackButton({super.key, this.onPressed, this.enabled = true});
   final VoidCallback? onPressed;
   final bool enabled;
   @override
   Widget build(BuildContext context) {
-    void back(){if(!enabled)return;if(onPressed!=null){onPressed!();}else{Navigator.of(context).maybePop();}}
-    if(StairNativeControls.available&&!kIsWeb&&defaultTargetPlatform==TargetPlatform.iOS) {
-      return _SystemBack(onPressed:back,enabled:enabled);
+    void back() {
+      if (!enabled) return;
+      if (onPressed != null) {
+        onPressed!();
+      } else {
+        Navigator.of(context).maybePop();
+      }
     }
-    return CupertinoButton(padding:EdgeInsets.zero,onPressed:enabled?back:null,child:Icon(CupertinoIcons.back,size:28,color:enabled?Theme.of(context).colorScheme.onSurface:Theme.of(context).disabledColor,semanticLabel:'戻る'));
+
+    if (StairNativeControls.available &&
+        !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.iOS) {
+      return _SystemBack(onPressed: back, enabled: enabled);
+    }
+    return CupertinoButton(
+      padding: EdgeInsets.zero,
+      onPressed: enabled ? back : null,
+      child: Icon(
+        CupertinoIcons.back,
+        size: 28,
+        color: enabled
+            ? Theme.of(context).colorScheme.onSurface
+            : Theme.of(context).disabledColor,
+        semanticLabel: '戻る',
+      ),
+    );
   }
 }
 
 class _SystemBack extends StatefulWidget {
-  const _SystemBack({required this.onPressed,required this.enabled});
+  const _SystemBack({required this.onPressed, required this.enabled});
   final VoidCallback onPressed;
   final bool enabled;
   @override
-  State<_SystemBack> createState()=>_SystemBackState();
+  State<_SystemBack> createState() => _SystemBackState();
 }
+
 class _SystemBackState extends State<_SystemBack> {
   MethodChannel? _channel;
-  Map<String,Object> get _values=>{'dark':Theme.of(context).brightness==Brightness.dark,'enabled':widget.enabled};
-  void _created(int id){
-    if(!mounted)return;
-    _channel=MethodChannel('giristair/native-back/$id');
-    _channel!.setMethodCallHandler((call)async{if(mounted&&widget.enabled&&call.method=='back')widget.onPressed();});
-    unawaited(_channel!.invokeMethod<void>('configure',_values));
+  Map<String, Object> get _values => {
+    'dark': Theme.of(context).brightness == Brightness.dark,
+    'enabled': widget.enabled,
+  };
+  void _created(int id) {
+    if (!mounted) return;
+    _channel = MethodChannel('giristair/native-back/$id');
+    _channel!.setMethodCallHandler((call) async {
+      if (mounted && widget.enabled && call.method == 'back') {
+        widget.onPressed();
+      }
+    });
+    unawaited(_channel!.invokeMethod<void>('configure', _values));
   }
+
   @override
-  void didChangeDependencies(){super.didChangeDependencies();if(_channel!=null)unawaited(_channel!.invokeMethod<void>('configure',_values));}
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_channel != null) {
+      unawaited(_channel!.invokeMethod<void>('configure', _values));
+    }
+  }
+
   @override
-  void didUpdateWidget(covariant _SystemBack oldWidget){super.didUpdateWidget(oldWidget);if(_channel!=null)unawaited(_channel!.invokeMethod<void>('configure',_values));}
+  void didUpdateWidget(covariant _SystemBack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_channel != null) {
+      unawaited(_channel!.invokeMethod<void>('configure', _values));
+    }
+  }
+
   @override
-  void dispose(){_channel?.setMethodCallHandler(null);super.dispose();}
+  void dispose() {
+    _channel?.setMethodCallHandler(null);
+    super.dispose();
+  }
+
   @override
-  Widget build(BuildContext context)=>SizedBox(width:64,height:44,child:UiKitView(viewType:'giristair/native-back',creationParams:_values,creationParamsCodec:const StandardMessageCodec(),onPlatformViewCreated:_created));
+  Widget build(BuildContext context) => SizedBox(
+    width: 64,
+    height: 44,
+    child: UiKitView(
+      viewType: 'giristair/native-back',
+      creationParams: _values,
+      creationParamsCodec: const StandardMessageCodec(),
+      onPlatformViewCreated: _created,
+    ),
+  );
 }
 
 /// All secondary pages use this bar, including pages added in future changes.
-class StairNavigationBar extends StatelessWidget implements PreferredSizeWidget {
-  const StairNavigationBar({super.key,this.title,this.actions,this.leading,this.automaticallyImplyLeading=true,this.centerTitle=true,this.backgroundColor,this.foregroundColor,this.bottom,this.toolbarHeight=44,this.leadingWidth=64,this.titleSpacing,this.elevation,this.scrolledUnderElevation});
+class StairNavigationBar extends StatelessWidget
+    implements PreferredSizeWidget {
+  const StairNavigationBar({
+    super.key,
+    this.title,
+    this.actions,
+    this.leading,
+    this.automaticallyImplyLeading = true,
+    this.centerTitle = true,
+    this.backgroundColor,
+    this.foregroundColor,
+    this.bottom,
+    this.toolbarHeight = 44,
+    this.leadingWidth = 64,
+    this.titleSpacing,
+    this.elevation,
+    this.scrolledUnderElevation,
+  });
   final Widget? title;
   final List<Widget>? actions;
   final Widget? leading;
@@ -62,7 +133,26 @@ class StairNavigationBar extends StatelessWidget implements PreferredSizeWidget 
   final double? elevation;
   final double? scrolledUnderElevation;
   @override
-  Size get preferredSize=>Size.fromHeight(toolbarHeight+(bottom?.preferredSize.height??0));
+  Size get preferredSize =>
+      Size.fromHeight(toolbarHeight + (bottom?.preferredSize.height ?? 0));
   @override
-  Widget build(BuildContext context)=>AppBar(title:title,actions:actions,leading:leading??(automaticallyImplyLeading&&(ModalRoute.of(context)?.canPop??false)?const StairBackButton():null),automaticallyImplyLeading:false,leadingWidth:leadingWidth,titleSpacing:titleSpacing,centerTitle:centerTitle,backgroundColor:backgroundColor,foregroundColor:foregroundColor,bottom:bottom,toolbarHeight:toolbarHeight,elevation:elevation,scrolledUnderElevation:scrolledUnderElevation);
+  Widget build(BuildContext context) => AppBar(
+    title: title,
+    actions: actions,
+    leading:
+        leading ??
+        (automaticallyImplyLeading && (ModalRoute.of(context)?.canPop ?? false)
+            ? const StairBackButton()
+            : null),
+    automaticallyImplyLeading: false,
+    leadingWidth: leadingWidth,
+    titleSpacing: titleSpacing,
+    centerTitle: centerTitle,
+    backgroundColor: backgroundColor,
+    foregroundColor: foregroundColor,
+    bottom: bottom,
+    toolbarHeight: toolbarHeight,
+    elevation: elevation,
+    scrolledUnderElevation: scrolledUnderElevation,
+  );
 }

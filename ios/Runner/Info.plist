@@ -73,6 +73,6 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>参加者一覧の画像を選び、名前を読み取るために写真を使用します。</string>
+	<string>参加者の文字読み取り、お題・プレイヤーのアイコン・共有背景の画像を選ぶために写真を使用します。</string>
 </dict>
 </plist>

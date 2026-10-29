@@ -2,7 +2,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../store.dart';
-import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
 
 class SelfProfileScreen extends StatefulWidget {
@@ -22,7 +21,9 @@ class SelfProfileScreen extends StatefulWidget {
 }
 
 class _SelfProfileScreenState extends State<SelfProfileScreen> {
-  late final _name = TextEditingController(text: widget.store.preferences.selfName);
+  late final _name = TextEditingController(
+    text: widget.store.preferences.selfName,
+  );
   bool _saving = false;
 
   bool get _canSave => !_saving && _name.text.trim().isNotEmpty;

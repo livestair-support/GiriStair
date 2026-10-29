@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -61,13 +62,26 @@ void main() {
       votingEnd: DateTime(now.year, now.month, now.day + 14),
     )]);
     await store.saveEvent(event);
-    await tester.pumpWidget(app(EventListScreen(store: store)));
+    await tester.pumpWidget(app(Column(children: [
+      EventListModeButton(store: store), Expanded(child: EventListScreen(store: store)),
+    ])));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('カレント'));
+    await tester.enterText(find.byKey(const ValueKey('list-search')), '別の名前');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pumpAndSettle();
+    expect(find.text('継続サイト'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('list-mode-button')));
     await tester.pumpAndSettle();
     expect(store.preferences.listCurrentMode, isTrue);
     expect(find.byType(CurrentCalendar), findsOneWidget);
     expect(find.text('継続サイト · 投稿'), findsWidgets);
+    expect(find.byKey(const ValueKey('list-search')), findsNothing);
+    expect(find.byKey(const ValueKey('list-attendance-tabs')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('list-mode-button')));
+    await tester.pumpAndSettle();
+    expect(store.preferences.listCurrentMode, isFalse);
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('list-search'))).controller!.text, '別の名前');
+    expect(find.text('継続サイト'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     store.dispose();
@@ -96,4 +110,88 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     store.dispose();
   });
+
+  testWidgets('month wheels preserve grid height and the selected day through jumps', (tester) async {
+    tester.view.physicalSize = const Size(393, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final year = DateTime.now().year;
+    var month = DateTime(year, 10);
+    var selected = DateTime(year, 10, 28);
+    final original = selected;
+    await tester.pumpWidget(app(StatefulBuilder(builder: (context, update) => SingleChildScrollView(
+      child: CurrentCalendar(month: month, selected: selected, periods: const [],
+        onMonthChanged: (value) => update(() => month = value),
+        onSelected: (value) => update(() => selected = value), onOpenPeriod: (_) {},
+      ),
+    ))));
+    await tester.pumpAndSettle();
+    final height = tester.getSize(find.byType(CurrentCalendar)).height;
+    await tester.tap(find.byKey(const ValueKey('current-month-picker-toggle')));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(find.byType(CurrentCalendar)).height, closeTo(height, .1));
+    expect(tester.widget<CupertinoButton>(find.byKey(const ValueKey('current-previous-month'))).onPressed, isNull);
+    expect(tester.widget<CupertinoButton>(find.byKey(const ValueKey('current-next-month'))).onPressed, isNull);
+    final yearWheel = tester.widget<CupertinoPicker>(find.byKey(const ValueKey('current-year-wheel')));
+    final monthWheel = tester.widget<CupertinoPicker>(find.byKey(const ValueKey('current-month-wheel')));
+    yearWheel.scrollController!.jumpToItem(22);
+    monthWheel.scrollController!.jumpToItem(4);
+    await tester.pumpAndSettle();
+    expect(month, DateTime(year, 10));
+    await tester.tap(find.byKey(const ValueKey('current-apply-month')));
+    await tester.pumpAndSettle();
+    expect(month, DateTime(year + 2, 5));
+    expect(selected, original);
+    expect(find.byKey(const ValueKey('current-year-wheel')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('current-previous-month')));
+    await tester.pumpAndSettle();
+    expect(month, DateTime(year + 2, 4));
+    expect(selected, original);
+    await tester.tap(find.byKey(const ValueKey('current-next-month')));
+    await tester.pumpAndSettle();
+    expect(month, DateTime(year + 2, 5));
+    expect(selected, original);
+
+    await tester.tap(find.byKey(const ValueKey('current-month-picker-toggle')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('current-today')));
+    await tester.pumpAndSettle();
+    final today = DateUtils.dateOnly(DateTime.now());
+    expect(month, DateTime(today.year, today.month));
+    expect(selected, today);
+    expect(find.byKey(const ValueKey('current-year-wheel')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('current-month-picker-toggle')));
+    await tester.pumpAndSettle();
+    final draft = tester.widget<CupertinoPicker>(find.byKey(const ValueKey('current-year-wheel')));
+    draft.scrollController!.jumpToItem(21);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('current-month-picker-toggle')));
+    await tester.pumpAndSettle();
+    expect(month, DateTime(today.year, today.month));
+    expect(selected, today);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('failed mode saves keep the list selected', (tester) async {
+    final store = GiriStore(storage: _UnwritableStorage());
+    await store.load();
+    await tester.pumpWidget(app(EventListModeButton(store: store)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('list-mode-button')));
+    await tester.pumpAndSettle();
+    expect(store.preferences.listCurrentMode, isFalse);
+    expect(find.text('表示方法を保存できませんでした。'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    store.dispose();
+  });
+}
+
+class _UnwritableStorage implements GiriStorage {
+  @override
+  Future<String?> read() async => null;
+  @override
+  Future<void> write(String contents) async => throw StateError('write failed');
 }

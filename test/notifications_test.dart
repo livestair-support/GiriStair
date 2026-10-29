@@ -38,7 +38,11 @@ void main() {
     () {
       final events = [
         meeting('future', start: DateTime(2026, 10, 28, 12)),
-        meeting('unjoined', start: DateTime(2026, 10, 28, 12), isParticipating: false),
+        meeting(
+          'unjoined',
+          start: DateTime(2026, 10, 28, 12),
+          isParticipating: false,
+        ),
         meeting('past', start: DateTime(2026, 10, 28, 8, 30)),
         meeting(
           'canceled',
@@ -219,42 +223,48 @@ void main() {
     expect(renamedPlan.last.body, '決勝戦・お題1・投稿締切の30分前です');
   });
 
-  test('elapsed and canceled rounds are skipped while attended voting remains', () {
-    final event = meeting(
-      'online',
-      kind: EventKind.online,
-      meetingType: MeetingType.tournament,
-      rounds: [
-        EventRound(
-          id: 'past',
-          name: '予選',
-          submissionEnd: now.subtract(const Duration(days: 1)),
-        ),
-        EventRound(
-          id: 'future',
-          name: '本戦',
-          votingEnd: now.add(const Duration(days: 7)),
-        ),
-        const EventRound(id: 'unknown', name: '決勝'),
-      ],
-    );
-    final plan = planGiriReminders(
-      events: [
-        event,
-        event.copyWith(id: 'canceled', status: EventStatus.canceled),
-        event.copyWith(id: 'attended', status: EventStatus.attended),
-        event.copyWith(id: 'preview', isParticipating: false),
-      ],
-      preferences: enabled.copyWith(reminderMinutes: 0),
-      now: now,
-    );
-    expect(plan.map((item) => item.key), [
-      'attended:round:future:voting',
-      'online:round:future:voting',
-    ]);
-    expect(plan.every((item) => item.body == '本戦・お題1・投票の締切です'), isTrue);
-    expect(plan.every((item) => item.when == now.add(const Duration(days: 7))), isTrue);
-  });
+  test(
+    'elapsed and canceled rounds are skipped while attended voting remains',
+    () {
+      final event = meeting(
+        'online',
+        kind: EventKind.online,
+        meetingType: MeetingType.tournament,
+        rounds: [
+          EventRound(
+            id: 'past',
+            name: '予選',
+            submissionEnd: now.subtract(const Duration(days: 1)),
+          ),
+          EventRound(
+            id: 'future',
+            name: '本戦',
+            votingEnd: now.add(const Duration(days: 7)),
+          ),
+          const EventRound(id: 'unknown', name: '決勝'),
+        ],
+      );
+      final plan = planGiriReminders(
+        events: [
+          event,
+          event.copyWith(id: 'canceled', status: EventStatus.canceled),
+          event.copyWith(id: 'attended', status: EventStatus.attended),
+          event.copyWith(id: 'preview', isParticipating: false),
+        ],
+        preferences: enabled.copyWith(reminderMinutes: 0),
+        now: now,
+      );
+      expect(plan.map((item) => item.key), [
+        'attended:round:future:voting',
+        'online:round:future:voting',
+      ]);
+      expect(plan.every((item) => item.body == '本戦・お題1・投票の締切です'), isTrue);
+      expect(
+        plan.every((item) => item.when == now.add(const Duration(days: 7))),
+        isTrue,
+      );
+    },
+  );
 
   test('one long tournament still keeps only the nearest 64 deadlines', () {
     final event = meeting(
@@ -281,51 +291,57 @@ void main() {
     expect(plan.map((item) => item.key).toSet().length, 64);
   });
 
-  test('eliminated players retain required voting but no posting reminders', () {
-    final deadline = now.add(const Duration(days: 7));
-    final event = meeting(
-      'eliminated',
-      kind: EventKind.online,
-      meetingType: MeetingType.tournament,
-      status: EventStatus.attended,
-      title: '投票が必要なサイトの大会',
-      rounds: [
-        EventRound(
-          id: 'final',
-          name: '決勝',
-          submissionEnd: deadline,
-          votingEnd: deadline,
-          submissionEnabled: false,
-          votingRequired: true,
-        ),
-        EventRound(
-          id: 'optional',
-          name: '終了後',
-          submissionEnd: deadline,
-          votingEnd: deadline,
-          votingRequired: false,
-        ),
-      ],
-    ).copyWith(
-      tournamentResult: TournamentResult(outcome: TournamentOutcome.eliminated),
-    );
-    final plan = planGiriReminders(
-      events: [event],
-      preferences: enabled,
-      now: now,
-    );
-    expect(plan.single.key, 'eliminated:round:final:voting');
-    expect(plan.single.title, '投票が必要なサイトの大会');
-    expect(plan.single.body, '決勝・お題1・投票締切の60分前です');
-    expect(
-      planGiriReminders(
-        events: [event.copyWith(status: EventStatus.canceled)],
+  test(
+    'eliminated players retain required voting but no posting reminders',
+    () {
+      final deadline = now.add(const Duration(days: 7));
+      final event =
+          meeting(
+            'eliminated',
+            kind: EventKind.online,
+            meetingType: MeetingType.tournament,
+            status: EventStatus.attended,
+            title: '投票が必要なサイトの大会',
+            rounds: [
+              EventRound(
+                id: 'final',
+                name: '決勝',
+                submissionEnd: deadline,
+                votingEnd: deadline,
+                submissionEnabled: false,
+                votingRequired: true,
+              ),
+              EventRound(
+                id: 'optional',
+                name: '終了後',
+                submissionEnd: deadline,
+                votingEnd: deadline,
+                votingRequired: false,
+              ),
+            ],
+          ).copyWith(
+            tournamentResult: TournamentResult(
+              outcome: TournamentOutcome.eliminated,
+            ),
+          );
+      final plan = planGiriReminders(
+        events: [event],
         preferences: enabled,
         now: now,
-      ),
-      isEmpty,
-    );
-  });
+      );
+      expect(plan.single.key, 'eliminated:round:final:voting');
+      expect(plan.single.title, '投票が必要なサイトの大会');
+      expect(plan.single.body, '決勝・お題1・投票締切の60分前です');
+      expect(
+        planGiriReminders(
+          events: [event.copyWith(status: EventStatus.canceled)],
+          preferences: enabled,
+          now: now,
+        ),
+        isEmpty,
+      );
+    },
+  );
 
   test('round posting and voting switches are independent while planned', () {
     final deadline = now.add(const Duration(days: 7));
@@ -411,9 +427,11 @@ void main() {
     });
     final reordered = planGiriReminders(
       events: [
-        event.copyWith(rounds: event.rounds.reversed.map(
-          (round) => round.copyWith(name: '改名した予選'),
-        ).toList()),
+        event.copyWith(
+          rounds: event.rounds.reversed
+              .map((round) => round.copyWith(name: '改名した予選'))
+              .toList(),
+        ),
       ],
       preferences: enabled,
       now: now,
@@ -421,57 +439,63 @@ void main() {
     expect(reordered.map((item) => item.key), plan.map((item) => item.key));
   });
 
-  test('ordinary site reminders show affiliation and topic without qualifiers', () {
-    final event = meeting(
-      'ordinary',
-      kind: EventKind.online,
-      title: '毎週参加するサイト',
-      rounds: [
-        EventRound(
-          id: 'week',
-          // A name left over from an older version must not imply a tournament.
-          name: '予選1回戦',
-          promptNumber: 3,
-          block: 'お題A',
-          votingEnd: now.add(const Duration(days: 7)),
-        ),
-      ],
-    ).copyWith(affiliation: '一部', block: 'お題A');
-    final plan = planGiriReminders(
-      events: [event],
-      preferences: enabled,
-      now: now,
-    );
-    expect(plan.single.title, '毎週参加するサイト');
-    expect(plan.single.body, 'お題3・一部・お題A・投票締切の60分前です');
-    expect(plan.single.body, isNot(contains('予選')));
-    expect(
-      planGiriReminders(
-        events: [event.copyWith(isParticipating: false)],
+  test(
+    'ordinary site reminders show affiliation and topic without qualifiers',
+    () {
+      final event = meeting(
+        'ordinary',
+        kind: EventKind.online,
+        title: '毎週参加するサイト',
+        rounds: [
+          EventRound(
+            id: 'week',
+            // A name left over from an older version must not imply a tournament.
+            name: '予選1回戦',
+            promptNumber: 3,
+            block: 'お題A',
+            votingEnd: now.add(const Duration(days: 7)),
+          ),
+        ],
+      ).copyWith(affiliation: '一部', block: 'お題A');
+      final plan = planGiriReminders(
+        events: [event],
         preferences: enabled,
         now: now,
-      ),
-      isEmpty,
-    );
-  });
-
-  test('legacy attended online entries retain the original required-vote key', () {
-    final deadline = now.add(const Duration(days: 7));
-    final plan = planGiriReminders(
-      events: [
-        meeting(
-          'legacy',
-          kind: EventKind.online,
-          status: EventStatus.attended,
-          submission: deadline,
-          voting: deadline,
+      );
+      expect(plan.single.title, '毎週参加するサイト');
+      expect(plan.single.body, 'お題3・一部・お題A・投票締切の60分前です');
+      expect(plan.single.body, isNot(contains('予選')));
+      expect(
+        planGiriReminders(
+          events: [event.copyWith(isParticipating: false)],
+          preferences: enabled,
+          now: now,
         ),
-      ],
-      preferences: enabled,
-      now: now,
-    );
-    expect(plan.single.key, 'legacy:voting');
-    expect(plan.single.title, '会legacy');
-    expect(plan.single.body, '投票締切の60分前です');
-  });
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'legacy attended online entries retain the original required-vote key',
+    () {
+      final deadline = now.add(const Duration(days: 7));
+      final plan = planGiriReminders(
+        events: [
+          meeting(
+            'legacy',
+            kind: EventKind.online,
+            status: EventStatus.attended,
+            submission: deadline,
+            voting: deadline,
+          ),
+        ],
+        preferences: enabled,
+        now: now,
+      );
+      expect(plan.single.key, 'legacy:voting');
+      expect(plan.single.title, '会legacy');
+      expect(plan.single.body, '投票締切の60分前です');
+    },
+  );
 }

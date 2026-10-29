@@ -13,10 +13,9 @@ void main() {
   ) async {
     final store = GiriStore(storage: MemoryGiriStorage());
     await store.load();
-    await store.savePreferences(const AppPreferences(
-      selfName: '本人',
-      onboardingCompleted: true,
-    ));
+    await store.savePreferences(
+      const AppPreferences(selfName: '本人', onboardingCompleted: true),
+    );
     await tester.pumpWidget(GiriStairApp(store: store));
     await tester.pumpAndSettle();
 
