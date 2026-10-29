@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:giristair/app.dart';
+import 'package:giristair/models.dart';
+import 'package:giristair/screens/profile_setup.dart';
 import 'package:giristair/storage.dart';
 import 'package:giristair/store.dart';
 import 'package:giristair/ui/stair_tab_bar.dart';
@@ -10,6 +12,11 @@ void main() {
     tester,
   ) async {
     final store = GiriStore(storage: MemoryGiriStorage());
+    await store.load();
+    await store.savePreferences(const AppPreferences(
+      selfName: '本人',
+      onboardingCompleted: true,
+    ));
     await tester.pumpWidget(GiriStairApp(store: store));
     await tester.pumpAndSettle();
 
@@ -48,7 +55,9 @@ void main() {
     storage.contents = null;
     await tester.tap(find.text('再読み込み'));
     await tester.pumpAndSettle();
-    expect(find.byType(StairTabBar), findsOneWidget);
+    expect(find.byType(SelfProfileScreen), findsOneWidget);
+    expect(find.byType(StairTabBar), findsNothing);
+    expect(store.loaded, isTrue);
 
     await tester.pumpWidget(const SizedBox());
     store.dispose();

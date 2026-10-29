@@ -153,4 +153,85 @@ void main() {
       expect(GiriAnalytics([online], year: 2025).attended, isEmpty);
     },
   );
+
+  test('current co-participants include both formats and exclude the normalized self name', () {
+    final stats = GiriAnalytics([
+      event('live', participants: [' A ', 'B', 'B']),
+      event('online', kind: EventKind.online, participants: ['Ａ', 'B', 'C']),
+      event('notJoined', participants: ['D']).copyWith(isParticipating: false),
+    ], selfName: 'Ａ');
+    expect(stats.attended.length, 2);
+    expect(stats.participants, hasLength(1));
+    expect(stats.participants.single.key, 'B');
+    expect(stats.participants.single.value, 1);
+    expect(stats.coParticipants.map((entry) => entry.key), ['B', 'C']);
+    expect(stats.coParticipants.map((entry) => entry.value), [2, 1]);
+  });
+
+  test('team rosters contribute once per event without becoming opponents', () {
+    final stats = GiriAnalytics([
+      event('team', kind: EventKind.online, participants: ['自分', 'B']).copyWith(
+        teams: [GiriTeam(id: 'team', name: 'チーム', members: ['自分', 'B', 'C'])],
+        tournamentResult: TournamentResult(format: TournamentFormat.team, members: ['自分', 'D']),
+      ),
+    ], selfName: '自分');
+    expect(stats.coParticipants.map((entry) => entry.key), ['B', 'C', 'D']);
+    expect(stats.coParticipants.every((entry) => entry.value == 1), isTrue);
+    expect(stats.firstPlaceCount, 0);
+    expect(stats.participants, isEmpty);
+  });
+
+  test('year month format and meeting filters apply to the same attended set', () {
+    final stats = GiriAnalytics([
+      event('live', date: DateTime(2026, 2)),
+      event('networkTournament', kind: EventKind.online, date: DateTime(2026, 2)),
+      event('networkOrdinary', kind: EventKind.online, date: DateTime(2026, 2)).copyWith(meetingType: MeetingType.casual),
+      event('differentMonth', kind: EventKind.online, date: DateTime(2026, 3)).copyWith(meetingType: MeetingType.casual),
+      event('undated', kind: EventKind.online).copyWith(meetingType: MeetingType.casual),
+    ], year: 2026, month: 2, kind: EventKind.online, meetingType: MeetingType.casual);
+    expect(stats.attended.single.id, 'networkOrdinary');
+    expect(stats.live, isEmpty);
+    expect(stats.online.length, 1);
+    expect(stats.casual.length, 1);
+    expect(stats.tournaments, isEmpty);
+    expect(stats.monthly.single.month, DateTime(2026, 2));
+  });
+
+  test('other standings and stage wins do not become the users final prizes', () {
+    final stats = GiriAnalytics([
+      event('winner').copyWith(tournamentResult: TournamentResult(outcome: TournamentOutcome.champion)),
+      event('runnerUp').copyWith(tournamentResult: TournamentResult(outcome: TournamentOutcome.runnerUp)),
+      event('explicitPrize', placement: 8).copyWith(tournamentResult: TournamentResult(outcome: TournamentOutcome.placed)),
+      event('third', placement: 3),
+      event('stageOnly').copyWith(tournamentResult: TournamentResult(stages: [
+        const ResultStage(id: 'q', name: '予選', outcome: TournamentOutcome.champion),
+      ])),
+      event('someoneElse').copyWith(standings: [
+        TournamentStanding(id: 'winner', placement: 1, playerNames: ['別の人']),
+      ]),
+    ]);
+    expect(stats.firstPlaceCount, 1);
+    expect(stats.runnerUpCount, 1);
+    expect(stats.placedCount, 2);
+    expect(stats.podiumCount, 3);
+  });
+
+  test('site cycles aggregate by their registered name and monthly format counts stay separate', () {
+    final stats = GiriAnalytics([
+      event('thisWeek', kind: EventKind.online, date: DateTime(2026, 6, 10)).copyWith(onlineSiteId: 'site'),
+      event('nextWeek', kind: EventKind.online, date: DateTime(2026, 7, 1)).copyWith(onlineSiteId: 'site'),
+      event('notJoined', kind: EventKind.online, date: DateTime(2026, 7, 15)).copyWith(onlineSiteId: 'site', isParticipating: false),
+      event('live', date: DateTime(2026, 6, 20)),
+      event('undated'),
+    ], siteNames: {'site': '継続サイト'});
+    expect(stats.sites.single.key, '継続サイト');
+    expect(stats.sites.single.value, 2);
+    expect(stats.undatedCount, 1);
+    expect(stats.monthly.map((month) => month.month), [DateTime(2026, 6), DateTime(2026, 7)]);
+    expect(stats.monthly.first.live, 1);
+    expect(stats.monthly.first.online, 1);
+    expect(stats.monthly.first.total, 2);
+    expect(stats.monthly.last.total, 1);
+    expect(GiriAnalytics(stats.attended, year: 2026).monthly, hasLength(12));
+  });
 }

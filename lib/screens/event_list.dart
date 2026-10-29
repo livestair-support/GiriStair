@@ -2,17 +2,21 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../models.dart';
+import '../scheduling.dart';
 import '../store.dart';
 import '../tournament_presentation.dart';
 import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
-import 'event_editor.dart';
+import 'current_calendar.dart';
+import 'event_detail.dart';
+import 'online_site_editor.dart';
+
+export 'event_detail.dart';
 
 String formatCalendarDate(DateTime? value) {
   if (value == null) return '未設定';
   const weekdays = ['月', '火', '水', '木', '金', '土', '日'];
-  return '${value.year}年${value.month}月${value.day}日'
-      '(${weekdays[value.weekday - 1]})';
+  return '${value.year}年${value.month}月${value.day}日(${weekdays[value.weekday - 1]})';
 }
 
 String formatLiveEventDate(GiriEvent event) => event.startsAt != null
@@ -21,458 +25,193 @@ String formatLiveEventDate(GiriEvent event) => event.startsAt != null
     ? '${formatCalendarDate(event.eventDate)} · 時刻未定'
     : '日付未設定';
 
+String _shortDate(DateTime? value, {bool compact = false}) {
+  if (value == null) return '日付未定';
+  const weekdays = ['月', '火', '水', '木', '金', '土', '日'];
+  return '${compact ? '' : '${value.year}/'}${value.month}/${value.day}(${weekdays[value.weekday - 1]})';
+}
+
+String _time(DateTime? value) => value == null ? '--:--' : '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+Color _accent(GiriEvent event) => event.kind == EventKind.live ? StairColors.live : StairColors.online;
+String _kind(GiriEvent event) => event.kind == EventKind.live ? '生大喜利' : 'ネット大喜利';
+String _roundLabel(GiriEvent event, EventRound round) => [event.meetingType == MeetingType.tournament ? round.name : '投稿・投票', if (event.meetingType == MeetingType.tournament || round.promptNumber > 1) 'お題${round.promptNumber}', if (round.block.isNotEmpty) round.block].join(' · ');
+
+DateTime? _relevantDate(GiriEvent event, DateTime now) {
+  if (event.kind == EventKind.live) return event.eventDate ?? event.startsAt;
+  final dates = [for (final round in event.effectiveRounds) ...[
+    if (round.submissionEnabled) round.submissionEnd,
+    if (round.votingRequired) round.votingEnd,
+  ]].whereType<DateTime>().toList()..sort();
+  return dates.where((date) => !date.isBefore(now)).firstOrNull ?? dates.lastOrNull;
+}
+
+EventRound? _previewRound(GiriEvent event, DateTime now) {
+  final deadline = _relevantDate(event, now);
+  return event.effectiveRounds.where((round) => round.submissionEnd == deadline || round.votingEnd == deadline).firstOrNull ?? event.effectiveRounds.firstOrNull;
+}
+
 class EventListScreen extends StatefulWidget {
   const EventListScreen({required this.store, super.key});
-
   final GiriStore store;
-
   @override
   State<EventListScreen> createState() => _EventListScreenState();
 }
 
 class _EventListScreenState extends State<EventListScreen> {
   String _query = '';
-  EventKind? _kind;
+  EventKind? _kindFilter;
   EventStatus? _status;
+  bool _attended = false;
+  DateTime _month = DateTime(DateTime.now().year, DateTime.now().month);
+  DateTime _selected = DateUtils.dateOnly(DateTime.now());
+  String? _workingSite;
 
-  DateTime? _relevantDate(GiriEvent event, DateTime now) {
-    if (event.kind == EventKind.live) {
-      return event.endsAt ?? event.startsAt ?? event.eventDate;
-    }
-    final deadlines = [
-      for (final round in event.effectiveRounds) ...[
-        round.submissionEnd,
-        round.votingEnd,
-      ],
-    ].whereType<DateTime>().toList()..sort();
-    final upcoming = deadlines.where((date) => !date.isBefore(now));
-    if (upcoming.isNotEmpty) return upcoming.first;
-    return deadlines.isEmpty ? null : deadlines.last;
+  Future<void> _mode(bool current) async {
+    try { await widget.store.savePreferences(widget.store.preferences.copyWith(listCurrentMode: current)); }
+    catch (_) { if (mounted) showStairMessage(context, '表示方法を保存できませんでした。', error: true); }
   }
 
-  EventRound? _previewRound(GiriEvent event, DateTime now) {
-    final date = _relevantDate(event, now);
-    final rounds = event.effectiveRounds;
-    final matching = rounds.where(
-      (round) => round.submissionEnd == date || round.votingEnd == date,
-    );
-    return matching.firstOrNull ?? rounds.firstOrNull;
+  bool _matches(GiriEvent event, {bool current = false}) {
+    if (!current && event.onlineSiteId != null && !event.isParticipating) return false;
+    if (_kindFilter != null && event.kind != _kindFilter) return false;
+    if (_status != null && event.status != _status) return false;
+    if (!current && _status == null && (event.status == EventStatus.attended) != _attended) return false;
+    final site = widget.store.onlineSiteById(event.onlineSiteId);
+    final venue = widget.store.venueById(event.venueId);
+    return [event.title, event.organizer, event.venue, venue?.prefecture ?? '', site?.name ?? '', event.affiliation, event.block, ...event.participants].join(' ').toLowerCase().contains(_query.toLowerCase());
+  }
+
+  void _open(GiriEvent event, {String? roundId}) => Navigator.push<void>(context, CupertinoPageRoute(builder: (_) => EventDetailScreen(store: widget.store, eventId: event.id, initialRoundId: roundId)));
+
+  Future<void> _cycle(OnlineSite site, int offset) async {
+    if (_workingSite != null) return;
+    setState(() => _workingSite = site.id);
+    try {
+      final event = await widget.store.createSiteCycle(site.id, weekOffset: offset, join: false);
+      if (mounted) _open(event);
+    } catch (_) { if (mounted) showStairMessage(context, '開催回を開けませんでした。', error: true); }
+    finally { if (mounted) setState(() => _workingSite = null); }
   }
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: widget.store,
-    builder: (context, _) {
-      final now = DateTime.now();
-      final events =
-          widget.store.events.where((event) {
-            if (_kind != null && event.kind != _kind) return false;
-            if (_status != null && event.status != _status) return false;
-            final searchable = [
-              event.title,
-              event.organizer,
-              event.venue,
-              ...event.participants,
-            ].join(' ').toLowerCase();
-            return searchable.contains(_query.toLowerCase());
-          }).toList()..sort((a, b) {
-            // Upcoming online deadlines and live dates are presented together.
-            final aDate = _relevantDate(a, now);
-            final bDate = _relevantDate(b, now);
-            if (aDate == null && bDate == null) {
-              return b.createdAt.compareTo(a.createdAt);
-            }
-            if (aDate == null) return 1;
-            if (bDate == null) return -1;
-            return bDate.compareTo(aDate);
-          });
-      return ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
-        children: [
-          StairFormSection(
-            title: '表示・検索',
-            icon: CupertinoIcons.slider_horizontal_3,
-            accent: StairColors.online,
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 4,
-                ),
-                child: TextField(
-                  key: const ValueKey('list-search'),
-                  decoration: const InputDecoration(
-                    hintText: 'タイトル・会場・主催者・参加者で検索',
-                    prefixIcon: Icon(CupertinoIcons.search, size: 20),
-                  ),
-                  onChanged: (value) => setState(() => _query = value.trim()),
-                ),
-              ),
-              StairMenuRow<int>(
-                key: const ValueKey('list-kind-filter'),
-                label: '形式',
-                accent: StairColors.online,
-                value: _kind?.index ?? -1,
-                items: const {-1: 'すべて', 0: '生大喜利', 1: 'ネット大喜利'},
-                onChanged: (value) => setState(() {
-                  _kind = value == -1 ? null : EventKind.values[value];
-                }),
-              ),
-              StairMenuRow<int>(
-                key: const ValueKey('list-status-filter'),
-                label: '参加状況',
-                accent: StairColors.online,
-                value: _status?.index ?? -1,
-                items: {
-                  -1: 'すべて',
-                  for (final status in EventStatus.values)
-                    status.index: eventStatusLabel(status),
-                },
-                onChanged: (value) => setState(() {
-                  _status = value == -1 ? null : EventStatus.values[value];
-                }),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          if (events.isEmpty)
-            StairCard(
-              accent: StairColors.online,
-              padding: const EdgeInsets.all(24),
-              child: SizedBox(
-                width: double.infinity,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    const StairIconBadge(
-                      icon: CupertinoIcons.calendar,
-                      accent: StairColors.online,
-                      size: 38,
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      widget.store.events.isEmpty ? '記録がありません' : '該当する記録がありません',
-                      style: Theme.of(context).textTheme.titleMedium,
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          for (final event in events)
-            StairCard(
-              accent: event.kind == EventKind.live
-                  ? StairColors.live
-                  : StairColors.online,
-              padding: EdgeInsets.zero,
-              child: CupertinoButton(
-                padding: EdgeInsets.zero,
-                onPressed: () => Navigator.of(context).push<void>(
-                  CupertinoPageRoute(
-                    builder: (_) => EventDetailScreen(
-                      store: widget.store,
-                      eventId: event.id,
-                    ),
-                  ),
-                ),
-                child: DefaultTextStyle(
-                  style: Theme.of(context).textTheme.bodyLarge!,
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        StairSectionTitle(
-                          title: event.title,
-                          icon: event.kind == EventKind.live
-                              ? CupertinoIcons.person_2
-                              : CupertinoIcons.globe,
-                          accent: event.kind == EventKind.live
-                              ? StairColors.live
-                              : StairColors.online,
-                          trailing: Icon(
-                            CupertinoIcons.chevron_right,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          '${event.kind == EventKind.live ? '生大喜利' : 'ネット大喜利'}'
-                          ' · ${event.meetingType == MeetingType.tournament ? '大会' : '通常会'}'
-                          ' · ${eventStatusLabel(event.status)}',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                        const Divider(height: 22),
-                        if (event.kind == EventKind.live) ...[
-                          Text(formatLiveEventDate(event)),
-                          if (event.venue.isNotEmpty) Text(event.venue),
-                        ] else ...[
-                          if (event.effectiveRounds.isEmpty)
-                            const Text('スケジュール未設定'),
-                          if (event.effectiveRounds.length > 1)
-                            Text('${event.effectiveRounds.length}日程'),
-                          if (_previewRound(event, now) case final round?) ...[
-                            if (round.name.isNotEmpty) Text(round.name),
-                            if (round.submissionEnd != null)
-                              Text(
-                                '投稿締切 ${formatEventDate(round.submissionEnd)}',
-                              ),
-                            if (round.votingEnd != null)
-                              Text('投票締切 ${formatEventDate(round.votingEnd)}'),
-                          ],
-                        ],
-                        if (event.hasRecordedResult) ...[
-                          const SizedBox(height: 12),
-                          Text(
-                            tournamentResultSummary(event),
-                            style: TextStyle(
-                              color: StairColors.result,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      );
-    },
-  );
-}
-
-class EventDetailScreen extends StatefulWidget {
-  const EventDetailScreen({
-    required this.store,
-    required this.eventId,
-    super.key,
+  Widget build(BuildContext context) => ListenableBuilder(listenable: widget.store, builder: (context, _) {
+    final current = widget.store.preferences.listCurrentMode;
+    final now = DateTime.now();
+    final events = widget.store.events.where((event) => _matches(event, current: current)).toList()..sort((a, b) {
+      final ad = _relevantDate(a, now), bd = _relevantDate(b, now);
+      if (ad == null && bd == null) return b.createdAt.compareTo(a.createdAt);
+      if (ad == null) return 1;
+      if (bd == null) return -1;
+      return _attended ? bd.compareTo(ad) : ad.compareTo(bd);
+    });
+    final periods = currentPeriodsFor(events);
+    final sites = _kindFilter == EventKind.live || _attended ? <OnlineSite>[] : widget.store.onlineSites.where((site) => '${site.name} ${site.affiliation} ${site.block}'.toLowerCase().contains(_query.toLowerCase())).toList();
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 120), keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag, children: [
+      StairFormSection(title: '表示・検索', icon: CupertinoIcons.slider_horizontal_3, accent: StairColors.online, children: [
+        Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity, child: CupertinoSlidingSegmentedControl<bool>(
+          key: const ValueKey('list-mode'), groupValue: current,
+          children: const {false: Text('通常'), true: Text('カレント')},
+          onValueChanged: (value) { if (value != null) _mode(value); },
+        ))),
+        if (!current) Padding(padding: const EdgeInsets.fromLTRB(12, 0, 12, 12), child: SizedBox(width: double.infinity, child: CupertinoSlidingSegmentedControl<bool>(
+          key: const ValueKey('list-attendance-tabs'), groupValue: _attended,
+          children: const {false: Text('参加予定'), true: Text('参加済')},
+          onValueChanged: (value) { if (value != null) setState(() { _attended = value; _status = null; }); },
+        ))),
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4), child: TextField(key: const ValueKey('list-search'), decoration: const InputDecoration(hintText: 'タイトル・会場・主催者・参加者で検索', prefixIcon: Icon(CupertinoIcons.search, size: 20)), onChanged: (value) => setState(() => _query = value.trim()))),
+        StairMenuRow<int>(key: const ValueKey('list-kind-filter'), label: '形式', accent: StairColors.online, value: _kindFilter?.index ?? -1, items: const {-1: 'すべて', 0: '生大喜利', 1: 'ネット大喜利'}, onChanged: (value) => setState(() => _kindFilter = value == -1 ? null : EventKind.values[value])),
+        StairMenuRow<int>(key: const ValueKey('list-status-filter'), label: '参加状況', accent: StairColors.online, value: _status?.index ?? -1, items: {-1: 'すべて', for (final status in EventStatus.values) status.index: eventStatusLabel(status)}, onChanged: (value) => setState(() { _status = value == -1 ? null : EventStatus.values[value]; if (_status != null) _attended = _status == EventStatus.attended; })),
+      ]),
+      if (current) ...[
+        CurrentCalendar(month: _month, selected: _selected, periods: periods,
+          onMonthChanged: (month) => setState(() { _month = month; _selected = month; }),
+          onSelected: (day) => setState(() => _selected = day),
+          onOpenPeriod: (period) => _open(period.event, roundId: period.round?.id)),
+        Row(children: [Expanded(child: Text(formatCalendarDate(_selected), style: Theme.of(context).textTheme.titleMedium)), CupertinoButton(padding: const EdgeInsets.all(8), onPressed: () => setState(() { _selected = DateUtils.dateOnly(DateTime.now()); _month = DateTime(_selected.year, _selected.month); }), child: const Text('今日'))]),
+        if (!periods.any((period) => period.overlapsDay(_selected))) _empty('この日の予定はありません'),
+        for (final period in periods.where((period) => period.overlapsDay(_selected))) _periodCard(period),
+      ] else ...[
+        for (final site in sites) _siteCard(site),
+        if (events.isEmpty && sites.isEmpty) _empty(widget.store.events.isEmpty && widget.store.onlineSites.isEmpty ? '記録がありません' : '該当する記録がありません'),
+        for (final event in events) EventListCard(store: widget.store, event: event, onTap: () => _open(event)),
+      ],
+    ]);
   });
 
-  final GiriStore store;
-  final String eventId;
+  Widget _empty(String text) => StairCard(accent: StairColors.online, padding: const EdgeInsets.all(24), child: SizedBox(width: double.infinity, child: Column(children: [const StairIconBadge(icon: CupertinoIcons.calendar, accent: StairColors.online, size: 38), const SizedBox(height: 14), Text(text, textAlign: TextAlign.center, style: Theme.of(context).textTheme.titleMedium)])));
 
-  @override
-  State<EventDetailScreen> createState() => _EventDetailScreenState();
+  Widget _siteCard(OnlineSite site) => StairFormSection(key: ValueKey('site-${site.id}'), title: site.name, icon: CupertinoIcons.globe, accent: StairColors.online,
+    trailing: CupertinoButton(padding: const EdgeInsets.all(4), minimumSize: const Size(32, 32), onPressed: () => Navigator.push<void>(context, CupertinoPageRoute(builder: (_) => OnlineSiteEditor(store: widget.store, site: site))), child: const Icon(CupertinoIcons.ellipsis, size: 19)),
+    children: [
+      if (site.affiliation.isNotEmpty || site.block.isNotEmpty) Padding(padding: const EdgeInsets.fromLTRB(16, 10, 16, 0), child: Text([site.affiliation, site.block].where((part) => part.isNotEmpty).join(' · '), style: Theme.of(context).textTheme.bodySmall)),
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), child: Row(children: [for (var offset = 0; offset < 2; offset++) Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: OutlinedButton(key: ValueKey('site-${site.id}-week-$offset'), onPressed: _workingSite == null ? () => _cycle(site, offset) : null, child: Text(site.recurrence == SiteRecurrence.weekly ? (offset == 0 ? '今週' : '来週') : (offset == 0 ? '今回' : '次の回'), maxLines: 1))))])),
+    ],
+  );
+
+  Widget _periodCard(CurrentPeriod period) => StairCard(accent: period.color, padding: EdgeInsets.zero, child: CupertinoButton(padding: const EdgeInsets.all(16), onPressed: () => _open(period.event, roundId: period.round?.id), child: DefaultTextStyle(style: Theme.of(context).textTheme.bodyLarge!, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Row(children: [Expanded(child: Text(period.event.title, style: Theme.of(context).textTheme.titleMedium)), _Badge(period.phase, period.color)]),
+    if (period.round != null) Text(_roundLabel(period.event, period.round!), style: Theme.of(context).textTheme.bodySmall), const SizedBox(height: 6),
+    Text('${formatEventDate(period.start)} 〜 ${formatEventDate(period.end)}', style: Theme.of(context).textTheme.bodySmall),
+    if (!period.event.isParticipating) const Padding(padding: EdgeInsets.only(top: 6), child: Text('未参加 · タップして参加・お題を記録')),
+  ]))));
 }
 
-class _EventDetailScreenState extends State<EventDetailScreen> {
-  bool _deleting = false;
-
-  Future<void> _delete() async {
-    final confirmed = await showCupertinoDialog<bool>(
-      context: context,
-      builder: (context) => StairCupertinoAlertDialog(
-        title: const Text('この記録を削除しますか？'),
-        content: const Text('参加記録は削除されます。ひもづいている思考メモは独立したメモとして残ります。'),
-        actions: [
-          StairCupertinoDialogAction(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('キャンセル'),
-          ),
-          StairCupertinoDialogAction(
-            isDestructiveAction: true,
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('削除する'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    setState(() => _deleting = true);
-    try {
-      await widget.store.deleteEvent(widget.eventId);
-      if (mounted) Navigator.of(context).pop();
-    } catch (_) {
-      if (mounted) {
-        showStairMessage(context, '削除できませんでした。もう一度お試しください。', error: true);
-      }
-    } finally {
-      if (mounted) setState(() => _deleting = false);
-    }
-  }
-
-  Widget _line(String label, String value, {bool multiline = false}) =>
-      StairFieldRow(
-        label: label,
-        multiline: multiline,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: SelectableText(
-            value.isEmpty ? '未入力' : value,
-            textAlign: multiline ? TextAlign.left : TextAlign.right,
-            style: TextStyle(
-              color: value.isEmpty
-                  ? Theme.of(context).colorScheme.onSurfaceVariant
-                  : Theme.of(context).colorScheme.onSurface,
-            ),
-          ),
-        ),
-      );
-
+class EventListCard extends StatelessWidget {
+  const EventListCard({super.key, required this.store, required this.event, required this.onTap});
+  final GiriStore store;
+  final GiriEvent event;
+  final VoidCallback onTap;
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: widget.store,
-    builder: (context, _) {
-      final matches = widget.store.events.where(
-        (event) => event.id == widget.eventId,
-      );
-      final event = matches.isEmpty ? null : matches.first;
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('参加記録'),
-          actions: [
-            if (event != null)
-              IconButton(
-                tooltip: '編集する',
-                onPressed: _deleting
-                    ? null
-                    : () => Navigator.of(context).push<void>(
-                        CupertinoPageRoute(
-                          builder: (context) => EventEditor(
-                            store: widget.store,
-                            event: event,
-                            onSaved: () => Navigator.of(context).pop(),
-                          ),
-                        ),
-                      ),
-                icon: const Icon(CupertinoIcons.pencil),
-              ),
-          ],
-        ),
-        body: event == null
-            ? const Center(child: Text('この記録は削除されています。'))
-            : ListView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-                children: [
-                  StairSection(
-                    title: event.title,
-                    icon: event.kind == EventKind.live
-                        ? CupertinoIcons.person_2
-                        : CupertinoIcons.globe,
-                    accent: event.kind == EventKind.live
-                        ? StairColors.live
-                        : StairColors.online,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(
-                          '${event.kind == EventKind.live ? '生大喜利' : 'ネット大喜利'} · '
-                          '${event.meetingType == MeetingType.tournament ? '大会' : '通常会'} · '
-                          '${eventStatusLabel(event.status)}',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                        const Divider(height: 20),
-                        _line('主催者', event.organizer),
-                      ],
-                    ),
-                  ),
-                  if (event.kind == EventKind.live)
-                    StairSection(
-                      title: '会場・日時',
-                      icon: CupertinoIcons.placemark,
-                      accent: StairColors.venue,
-                      child: Column(
-                        children: [
-                          _line('会場', event.venue),
-                          const Divider(height: 1),
-                          if (event.eventDate != null) ...[
-                            _line('日付', formatCalendarDate(event.eventDate)),
-                            const Divider(height: 1),
-                          ],
-                          _line('開始', formatEventDate(event.startsAt)),
-                          const Divider(height: 1),
-                          _line('終了', formatEventDate(event.endsAt)),
-                          const Divider(height: 1),
-                          _line('参加者', event.participants.join('、')),
-                        ],
-                      ),
-                    )
-                  else
-                    StairSection(
-                      title: 'サイト・スケジュール',
-                      icon: CupertinoIcons.globe,
-                      accent: StairColors.online,
-                      child: Column(
-                        children: [
-                          _line('サイトURL', event.siteUrl),
-                          const Divider(height: 1),
-                          for (final round in event.effectiveRounds) ...[
-                            _line('段階', round.name),
-                            const Divider(height: 1),
-                            _line(
-                              '投稿開始',
-                              formatEventDate(round.submissionStart),
-                            ),
-                            const Divider(height: 1),
-                            _line('投稿締切', formatEventDate(round.submissionEnd)),
-                            const Divider(height: 1),
-                            _line('投票開始', formatEventDate(round.votingStart)),
-                            const Divider(height: 1),
-                            _line('投票締切', formatEventDate(round.votingEnd)),
-                            const Divider(height: 1),
-                          ],
-                        ],
-                      ),
-                    ),
-                  if (event.meetingType == MeetingType.tournament)
-                    StairSection(
-                      title: '大会の結果',
-                      icon: CupertinoIcons.rosette,
-                      accent: StairColors.result,
-                      child: Column(
-                        children: [
-                          _line('最終結果', tournamentResultSummary(event)),
-                          if (event.tournamentResult case final result?) ...[
-                            const Divider(height: 1),
-                            _line('対戦形式', tournamentFormatLabel(result.format)),
-                            if (result.teamName.isNotEmpty) ...[
-                              const Divider(height: 1),
-                              _line('チーム名', result.teamName),
-                            ],
-                            if (result.members.isNotEmpty) ...[
-                              const Divider(height: 1),
-                              _line(
-                                'メンバー',
-                                result.members.join('、'),
-                                multiline: true,
-                              ),
-                            ],
-                            for (final stage in result.stages) ...[
-                              const Divider(height: 1),
-                              _line(
-                                stage.name,
-                                resultStageSummary(stage),
-                                multiline: true,
-                              ),
-                            ],
-                            if (result.memo.isNotEmpty) ...[
-                              const Divider(height: 1),
-                              _line('結果メモ', result.memo, multiline: true),
-                            ],
-                          ],
-                        ],
-                      ),
-                    ),
-                  StairSection(
-                    title: '振り返り',
-                    icon: CupertinoIcons.text_alignleft,
-                    accent: StairColors.memo,
-                    child: _line('メモ', event.memo, multiline: true),
-                  ),
-                  const SizedBox(height: 16),
-                  OutlinedButton.icon(
-                    onPressed: _deleting ? null : _delete,
-                    icon: const Icon(CupertinoIcons.trash),
-                    label: Text(_deleting ? '削除中…' : 'この記録を削除'),
-                  ),
-                ],
-              ),
-      );
-    },
-  );
+  Widget build(BuildContext context) {
+    final now = DateTime.now(), date = _relevantDate(event, DateTime.now());
+    final venue = store.venueById(event.venueId) ?? store.venueDirectory.where((item) => item.name == event.venue).firstOrNull;
+    final round = _previewRound(event, now);
+    return StairCard(key: ValueKey('event-card-${event.id}'), accent: _accent(event), padding: EdgeInsets.zero, child: CupertinoButton(padding: const EdgeInsets.all(16), onPressed: onTap, child: DefaultTextStyle(style: Theme.of(context).textTheme.bodyLarge!, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Expanded(child: _CardDate(date: date)),
+        if (event.kind == EventKind.live) ...[Icon(CupertinoIcons.clock, size: 11, color: Theme.of(context).colorScheme.onSurfaceVariant), const SizedBox(width: 3), Text('${_time(event.startsAt)} / ${_time(event.endsAt)}', style: StairTypography.role(StairTextRole.caption)), const SizedBox(width: 7)],
+        _Badge(_kind(event), _accent(event)),
+      ]),
+      const SizedBox(height: 7),
+      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: Text(event.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: StairTypography.style(const TextStyle(fontSize: 16, fontWeight: FontWeight.w700), role: StairTextRole.sectionTitle))), const SizedBox(width: 8), _Badge(!event.isParticipating ? '未参加' : eventStatusLabel(event.status), _accent(event))]),
+      const SizedBox(height: 7),
+      if (event.kind == EventKind.live) ...[
+        _line(context, CupertinoIcons.placemark, [venue?.prefecture ?? '', event.venue].where((text) => text.isNotEmpty).join(' · ')),
+        if (event.participants.isNotEmpty) _line(context, CupertinoIcons.person_2, event.participants.join('・'), small: true),
+      ] else if (round != null) ...[
+        _line(context, CupertinoIcons.globe, _roundLabel(event, round)),
+        if (event.effectiveRounds.length > 1) Text('${event.effectiveRounds.length}日程', style: Theme.of(context).textTheme.bodySmall),
+        if (round.submissionEnabled && round.submissionEnd != null) Text('投稿締切 ${formatEventDate(round.submissionEnd)}', style: Theme.of(context).textTheme.bodySmall),
+        if (round.votingRequired && round.votingEnd != null) Text('投票締切 ${formatEventDate(round.votingEnd)}', style: Theme.of(context).textTheme.bodySmall),
+      ] else const Text('スケジュール未設定'),
+      if (event.hasRecordedResult) Padding(padding: const EdgeInsets.only(top: 8), child: Text(tournamentResultSummary(event), style: TextStyle(color: StairColors.result, fontWeight: FontWeight.w600))),
+      if (eventNeedsResult(event, now)) Padding(padding: const EdgeInsets.only(top: 8), child: Text('結果を入力', style: TextStyle(color: StairColors.action))),
+    ]))));
+  }
+  Widget _line(BuildContext context, IconData icon, String text, {bool small = false}) => Padding(padding: const EdgeInsets.only(top: 2), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Icon(icon, size: 13, color: _accent(event)), const SizedBox(width: 7), Expanded(child: Text(text.isEmpty ? '未設定' : text, maxLines: small ? 3 : 2, overflow: TextOverflow.ellipsis, style: StairTypography.style(TextStyle(fontSize: small ? 12 : 15, color: Theme.of(context).colorScheme.onSurfaceVariant))))]));
+}
+
+class _Badge extends StatelessWidget {
+  const _Badge(this.text, this.color);
+  final String text;
+  final Color color;
+  @override
+  Widget build(BuildContext context) => Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3), decoration: BoxDecoration(color: color.withValues(alpha: .1), borderRadius: BorderRadius.circular(6)), child: Text(text, maxLines: 1, style: StairTypography.style(TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color))));
+}
+
+class _CardDate extends StatelessWidget {
+  const _CardDate({required this.date});
+  final DateTime? date;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(builder: (context, constraints) {
+    final style = StairTypography.style(TextStyle(fontSize: 14, fontWeight: FontWeight.w700,
+      color: date == null ? null : calendarDateColor(context, date!)), role: StairTextRole.sectionTitle);
+    final full = _shortDate(date);
+    final painter = TextPainter(text: TextSpan(text: full, style: style), maxLines: 1,
+      textDirection: Directionality.of(context), textScaler: MediaQuery.textScalerOf(context))..layout();
+    final label = painter.width <= constraints.maxWidth ? full : _shortDate(date, compact: true);
+    painter.dispose();
+    return FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
+      child: Text(label, maxLines: 1, softWrap: false, style: style));
+  });
 }

@@ -170,7 +170,9 @@ class _StairNativeMenuState extends State<StairNativeMenu> {
       textDirection: Directionality.of(context),
       textScaler: MediaQuery.textScalerOf(context),
     )..layout();
-    final width = text.width + MediaQuery.textScalerOf(context).scale(22);
+    // UIKit's title and SF Symbol need more room than Flutter's text advance.
+    // A tight measurement made otherwise short Japanese values wrap in UIButton.
+    final width = text.width + MediaQuery.textScalerOf(context).scale(48);
     text.dispose();
     return SizedBox(
       width: width,

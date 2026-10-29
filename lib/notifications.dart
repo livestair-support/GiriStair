@@ -27,9 +27,9 @@ class GiriReminder {
   final DateTime when;
 }
 
-/// Only explicitly planned meetings produce reminders. A participant list is
-/// never treated as a result, and a calendar-only meeting is reminded at the
-/// chosen local morning time rather than at midnight.
+/// Live starts and posting deadlines follow planned participation. Required
+/// online voting continues after posting has ended or the player is eliminated.
+/// Calendar-only meetings use the chosen local morning rather than midnight.
 List<GiriReminder> planGiriReminders({
   required Iterable<GiriEvent> events,
   required AppPreferences preferences,
@@ -53,8 +53,9 @@ List<GiriReminder> planGiriReminders({
   }
 
   for (final event in events) {
-    if (event.status != EventStatus.planned) continue;
+    if (!event.isParticipating || event.status == EventStatus.canceled) continue;
     if (event.kind == EventKind.live) {
+      if (event.status != EventStatus.planned) continue;
       final start = event.startsAt;
       if (start != null) {
         add(
@@ -92,12 +93,20 @@ List<GiriReminder> planGiriReminders({
         final prefix = event.rounds.isEmpty
             ? ''
             : 'round:${Uri.encodeComponent(round.id)}:';
-        final roundLabel = event.rounds.isEmpty || round.name.trim().isEmpty
-            ? ''
-            : '${round.name.trim()}・';
+        final labels = <String>[
+          if (event.meetingType == MeetingType.tournament &&
+              event.rounds.isNotEmpty && round.name.trim().isNotEmpty)
+            round.name.trim(),
+          if (event.rounds.isNotEmpty) 'お題${round.promptNumber}',
+          if (event.affiliation.trim().isNotEmpty) event.affiliation.trim(),
+          if (event.block.trim().isNotEmpty) event.block.trim(),
+          if (round.block.trim().isNotEmpty) round.block.trim(),
+        ].toSet().toList();
+        final roundLabel = labels.isEmpty ? '' : '${labels.join('・')}・';
         for (final entry in [
-          ('submission', '投稿', round.submissionEnd),
-          ('voting', '投票', round.votingEnd),
+          if (event.status == EventStatus.planned && round.submissionEnabled)
+            ('submission', '投稿', round.submissionEnd),
+          if (round.votingRequired) ('voting', '投票', round.votingEnd),
         ]) {
           final deadline = entry.$3;
           if (deadline == null) continue;
@@ -119,7 +128,7 @@ List<GiriReminder> planGiriReminders({
   });
   // iOS keeps at most 64 pending local notifications. Both platforms use the
   // same nearest-first limit so settings have predictable behavior.
-  return List.unmodifiable(reminders.take(limit));
+  return List.unmodifiable(reminders.take(limit > 64 ? 64 : limit));
 }
 
 class GiriNotifications {

@@ -19,6 +19,8 @@
 		A71000000000000000000001 /* StairTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A72000000000000000000001 /* StairTabBar.swift */; };
 		A71000000000000000000002 /* StairNativeControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = A72000000000000000000002 /* StairNativeControls.swift */; };
 		A71000000000000000000003 /* StairSymbols.swift in Sources */ = {isa = PBXBuildFile; fileRef = A72000000000000000000003 /* StairSymbols.swift */; };
+		A71000000000000000000004 /* StairMaps.swift in Sources */ = {isa = PBXBuildFile; fileRef = A72000000000000000000004 /* StairMaps.swift */; };
+		A71000000000000000000005 /* StairNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A72000000000000000000005 /* StairNavigation.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -65,6 +67,8 @@
 		A72000000000000000000001 /* StairTabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StairTabBar.swift; sourceTree = "<group>"; };
 		A72000000000000000000002 /* StairNativeControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StairNativeControls.swift; sourceTree = "<group>"; };
 		A72000000000000000000003 /* StairSymbols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StairSymbols.swift; sourceTree = "<group>"; };
+		A72000000000000000000004 /* StairMaps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StairMaps.swift; sourceTree = "<group>"; };
+		A72000000000000000000005 /* StairNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StairNavigation.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -130,6 +134,8 @@
 				A72000000000000000000001 /* StairTabBar.swift */,
 				A72000000000000000000002 /* StairNativeControls.swift */,
 				A72000000000000000000003 /* StairSymbols.swift */,
+				A72000000000000000000004 /* StairMaps.swift */,
+				A72000000000000000000005 /* StairNavigation.swift */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
@@ -293,6 +299,8 @@
 				A71000000000000000000001 /* StairTabBar.swift in Sources */,
 				A71000000000000000000002 /* StairNativeControls.swift in Sources */,
 				A71000000000000000000003 /* StairSymbols.swift in Sources */,
+				A71000000000000000000004 /* StairMaps.swift in Sources */,
+				A71000000000000000000005 /* StairNavigation.swift in Sources */,
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,

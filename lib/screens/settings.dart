@@ -7,14 +7,18 @@ import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../analytics.dart';
 import '../models.dart';
 import '../notifications.dart';
 import '../store.dart';
 import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
+import 'aggregate.dart';
 import 'players.dart';
 import 'sharing.dart';
+import 'venues.dart';
+import 'profile_setup.dart';
+
+export 'aggregate.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({required this.store, super.key});
@@ -26,6 +30,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _expanded = <String>{
+    'profile',
+    'profile',
     'share',
     'stats',
     'directory',
@@ -301,6 +307,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
           children: [
+            _section('profile','自分のプロフィール',CupertinoIcons.person,StairColors.online,[
+              _link('自分の名前',()=>_push(SelfProfileScreen(store:widget.store)),detail:preferences.selfName.isEmpty?'未設定':preferences.selfName),
+            ]),
             _section('share', '共有ページ', CupertinoIcons.share, StairColors.live, [
               _link(
                 'Giri Summary',
@@ -336,8 +345,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _link(
                   '大喜利プレイヤー一覧',
                   () => _push(PlayerDirectoryScreen(store: widget.store)),
-                  detail: '名前・フリガナ',
+                  detail: '名前・フリガナ・プロフィール',
                 ),
+                _link('会場一覧',()=>_push(VenueDirectoryScreen(store:widget.store)),detail:'都道府県・マップ'),
               ],
             ),
             _section(
@@ -361,6 +371,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           preferences.copyWith(theme: value),
                         ),
                 ),
+                StairMenuRow<String>(label:'プレイヤーのアイコン',value:preferences.playerIconMode,items:const{'auto':'自動','show':'表示','hide':'非表示'},onChanged:_busy?null:(value)=>_savePreferences(preferences.copyWith(playerIconMode:value))),
+                StairMenuRow<int>(label:'投稿期間',value:preferences.submissionDays,items:{for(var days=1;days<=30;days++)days:'$days日',if(preferences.submissionDays>30)preferences.submissionDays:'${preferences.submissionDays}日'},onChanged:_busy?null:(value)=>_savePreferences(preferences.copyWith(submissionDays:value))),
+                StairMenuRow<int>(label:'投票期間',value:preferences.votingDays,items:{for(var days=1;days<=30;days++)days:'$days日',if(preferences.votingDays>30)preferences.votingDays:'${preferences.votingDays}日'},onChanged:_busy?null:(value)=>_savePreferences(preferences.copyWith(votingDays:value))),
+                StairMenuRow<int>(label:'投稿開始の日',value:preferences.submissionStartDayOffset,items:{for(var offset=-7;offset<=1;offset++)offset:offset==-1?'開催日の前日':offset==0?'開催日当日':offset<0?'${-offset}日前':'翌日',if(preferences.submissionStartDayOffset < -7 || preferences.submissionStartDayOffset > 1)preferences.submissionStartDayOffset:'${preferences.submissionStartDayOffset}日'},onChanged:_busy?null:(value)=>_savePreferences(preferences.copyWith(submissionStartDayOffset:value))),
+                Padding(padding:const EdgeInsets.symmetric(horizontal:16,vertical:8),child:StairTimeButton(label:'投稿開始の時刻',value:DateTime(2000,1,1,preferences.submissionStartHour,preferences.submissionStartMinute),date:DateTime(2000,1,1),onChanged:_busy?null:(value){if(value!=null)_savePreferences(preferences.copyWith(submissionStartHour:value.hour,submissionStartMinute:value.minute));})),
+
               ],
             ),
             _section(
@@ -569,134 +585,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   );
 }
 
-class AggregateScreen extends StatefulWidget {
-  const AggregateScreen({required this.store, super.key});
-  final GiriStore store;
-  @override
-  State<AggregateScreen> createState() => _AggregateScreenState();
-}
-
-class _AggregateScreenState extends State<AggregateScreen> {
-  int? _year;
-
-  Widget _row(String label, String value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 10),
-    child: Row(
-      children: [
-        Expanded(child: Text(label)),
-        const SizedBox(width: 12),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
-      ],
-    ),
-  );
-
-  Widget _ranking(
-    String title,
-    IconData icon,
-    Color accent,
-    List<MapEntry<String, int>> counts,
-  ) => StairSection(
-    title: title,
-    icon: icon,
-    accent: accent,
-    child: counts.isEmpty
-        ? Text(
-            '参加済みの記録に入力すると表示されます。',
-            style: Theme.of(context).textTheme.bodySmall,
-          )
-        : Column(
-            children: [
-              for (var i = 0; i < counts.length; i++) ...[
-                if (i != 0) const Divider(height: 1),
-                _row('${i + 1}. ${counts[i].key}', '${counts[i].value} 回'),
-              ],
-            ],
-          ),
-  );
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('集計')),
-    body: ListenableBuilder(
-      listenable: widget.store,
-      builder: (context, _) {
-        final years = GiriAnalytics.yearsOf(widget.store.events);
-        final selectedYear = years.contains(_year) ? _year : null;
-        final stats = GiriAnalytics(widget.store.events, year: selectedYear);
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
-          children: [
-            StairFormSection(
-              title: '表示する期間',
-              icon: CupertinoIcons.calendar,
-              accent: StairColors.result,
-              children: [
-                StairMenuRow<int>(
-                  label: '年',
-                  value: selectedYear ?? 0,
-                  items: {
-                    0: 'すべての期間',
-                    for (final year in years) year: '$year年',
-                  },
-                  onChanged: (value) =>
-                      setState(() => _year = value == 0 ? null : value),
-                ),
-              ],
-            ),
-            StairSection(
-              title: '参加の記録',
-              icon: CupertinoIcons.chart_bar,
-              accent: StairColors.result,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    '「参加済み」の記録を集計しています。',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  _row('参加回数', '${stats.attended.length} 回'),
-                  const Divider(height: 1),
-                  _row('生大喜利', '${stats.live.length} 回'),
-                  const Divider(height: 1),
-                  _row('ネット大喜利', '${stats.online.length} 回'),
-                  const Divider(height: 1),
-                  _row('大会への参加', '${stats.tournaments.length} 回'),
-                  const Divider(height: 1),
-                  _row('1位の記録', '${stats.firstPlaceCount} 回'),
-                  const Divider(height: 1),
-                  _row('3位以内の記録', '${stats.podiumCount} 回'),
-                  Text(
-                    '順位が入力された大会のみ順位を集計します。日付のない記録は「すべての期間」に含まれます。',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-            _ranking(
-              'よく行く会場',
-              CupertinoIcons.location,
-              StairColors.venue,
-              stats.venues,
-            ),
-            _ranking(
-              '一緒に参加した人',
-              CupertinoIcons.person_2,
-              StairColors.online,
-              stats.participants,
-            ),
-            _ranking(
-              '主催者別の参加回数',
-              CupertinoIcons.person_crop_circle,
-              StairColors.memo,
-              stats.organizers,
-            ),
-          ],
-        );
-      },
-    ),
-  );
-}
-
 class _GuideScreen extends StatelessWidget {
   const _GuideScreen({required this.title, required this.sections});
   final String title;
@@ -704,7 +592,7 @@ class _GuideScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(title)),
+    appBar: StairNavigationBar(title: Text(title)),
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -726,7 +614,7 @@ class _SupportScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('サポート・お問い合わせ')),
+    appBar: StairNavigationBar(title: const Text('サポート・お問い合わせ')),
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [

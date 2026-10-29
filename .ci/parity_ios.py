@@ -141,16 +141,19 @@ def capture(app: Path, output: Path) -> None:
         "--dataNetwork", "wifi", "--wifiMode", "active", "--wifiBars", "3",
         "--batteryState", "charged", "--batteryLevel", "100")
     run("xcrun", "simctl", "install", udid, str(app.resolve()))
-    launch = run(
-        "xcrun", "simctl", "launch", "--terminate-running-process", udid, bundle_id,
-        "--disable-vm-service", "--disable-vm-service-publication",
-        "--stair-font-diagnostics",
-    )
-    # Let the production startup resolve native fonts and the tab's measured
-    # safe-area height before capturing the real composed simulator window.
-    time.sleep(15)
-    screenshot = output / "registration-iphone-ja.png"
-    run("xcrun", "simctl", "io", udid, "screenshot", "--type=png", str(screenshot))
+    captures = []
+    for screen in ("registration", "detail", "calendar", "thinking", "venue"):
+        launch = run(
+            "xcrun", "simctl", "launch", "--terminate-running-process", udid, bundle_id,
+            "--disable-vm-service", "--disable-vm-service-publication",
+            "--stair-font-diagnostics", f"--stair-preview-screen={screen}",
+        )
+        # Resolve the real app's fonts, native tab/back items and map before
+        # capturing the composed simulator window. The harness has no user data.
+        time.sleep(15)
+        screenshot = output / f"{screen}-iphone-ja.png"
+        run("xcrun", "simctl", "io", udid, "screenshot", "--type=png", str(screenshot))
+        captures.append({"screen": screen, "screenshot": screenshot.name, "launch": launch.stdout})
     xcode = run("xcodebuild", "-version").stdout
     metadata = {
         "capturedAtUtc": datetime.now(timezone.utc).isoformat(),
@@ -165,13 +168,13 @@ def capture(app: Path, output: Path) -> None:
         "initialTab": 0,
         "store": "in-memory synthetic event only; no user data",
         "dateNote": "The blank registration date uses the real app's current local date.",
-        "launch": launch.stdout,
+        "captures": captures,
     }
     (output / "metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     logs = run(
-        "xcrun", "simctl", "spawn", udid, "log", "show", "--last", "2m",
+        "xcrun", "simctl", "spawn", udid, "log", "show", "--last", "5m",
         "--style", "compact", "--predicate", 'process == "Runner"',
     ).stdout
     (output / "simulator.log").write_text(logs, encoding="utf-8")

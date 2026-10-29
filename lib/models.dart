@@ -29,21 +29,23 @@ class EventRound {
     this.submissionEnd,
     this.votingStart,
     this.votingEnd,
+    this.stageId,
+    this.promptNumber = 1,
+    this.block = '',
+    this.submissionEnabled = true,
+    this.votingRequired = true,
   });
-
   final String id;
   final String name;
   final DateTime? submissionStart;
   final DateTime? submissionEnd;
   final DateTime? votingStart;
   final DateTime? votingEnd;
-
-  bool isSubmissionOpen(DateTime now) =>
-      submissionStart != null &&
-      submissionEnd != null &&
-      !now.isBefore(submissionStart!) &&
-      now.isBefore(submissionEnd!);
-
+  final String? stageId;
+  final int promptNumber;
+  final String block;
+  final bool submissionEnabled;
+  final bool votingRequired;
   EventRound copyWith({
     String? id,
     String? name,
@@ -51,23 +53,24 @@ class EventRound {
     Object? submissionEnd = _unchanged,
     Object? votingStart = _unchanged,
     Object? votingEnd = _unchanged,
+    Object? stageId = _unchanged,
+    int? promptNumber,
+    String? block,
+    bool? submissionEnabled,
+    bool? votingRequired,
   }) => EventRound(
     id: id ?? this.id,
     name: name ?? this.name,
-    submissionStart: identical(submissionStart, _unchanged)
-        ? this.submissionStart
-        : submissionStart as DateTime?,
-    submissionEnd: identical(submissionEnd, _unchanged)
-        ? this.submissionEnd
-        : submissionEnd as DateTime?,
-    votingStart: identical(votingStart, _unchanged)
-        ? this.votingStart
-        : votingStart as DateTime?,
-    votingEnd: identical(votingEnd, _unchanged)
-        ? this.votingEnd
-        : votingEnd as DateTime?,
+    submissionStart: identical(submissionStart, _unchanged) ? this.submissionStart : submissionStart as DateTime?,
+    submissionEnd: identical(submissionEnd, _unchanged) ? this.submissionEnd : submissionEnd as DateTime?,
+    votingStart: identical(votingStart, _unchanged) ? this.votingStart : votingStart as DateTime?,
+    votingEnd: identical(votingEnd, _unchanged) ? this.votingEnd : votingEnd as DateTime?,
+    stageId: identical(stageId, _unchanged) ? this.stageId : stageId as String?,
+    promptNumber: promptNumber ?? this.promptNumber,
+    block: block ?? this.block,
+    submissionEnabled: submissionEnabled ?? this.submissionEnabled,
+    votingRequired: votingRequired ?? this.votingRequired,
   );
-
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
@@ -75,16 +78,34 @@ class EventRound {
     'submissionEnd': _encodeDate(submissionEnd),
     'votingStart': _encodeDate(votingStart),
     'votingEnd': _encodeDate(votingEnd),
+    'stageId': stageId,
+    'promptNumber': promptNumber,
+    'block': block,
+    'submissionEnabled': submissionEnabled,
+    'votingRequired': votingRequired,
   };
+  factory EventRound.fromJson(Map<String, dynamic> json) {
+    final result = EventRound(
+      id: _requiredId(json),
+      name: _requiredString(json, 'name'),
+      submissionStart: _optionalDate(json, 'submissionStart'),
+      submissionEnd: _optionalDate(json, 'submissionEnd'),
+      votingStart: _optionalDate(json, 'votingStart'),
+      votingEnd: _optionalDate(json, 'votingEnd'),
+      stageId: _nullableString(json, 'stageId'),
+      promptNumber: _optionalInt(json, 'promptNumber') ?? 1,
+      block: _optionalString(json, 'block'),
+      submissionEnabled: _boolValue(json, 'submissionEnabled', true),
+      votingRequired: _boolValue(json, 'votingRequired', true),
+    );
+    if (result.promptNumber < 1) throw const FormatException('Invalid prompt number.');
+    return result;
+  }
 
-  factory EventRound.fromJson(Map<String, dynamic> json) => EventRound(
-    id: _requiredId(json),
-    name: _requiredString(json, 'name'),
-    submissionStart: _optionalDate(json, 'submissionStart'),
-    submissionEnd: _optionalDate(json, 'submissionEnd'),
-    votingStart: _optionalDate(json, 'votingStart'),
-    votingEnd: _optionalDate(json, 'votingEnd'),
-  );
+  String get effectiveStageId => stageId ?? id;
+  bool isSubmissionOpen(DateTime now) => submissionEnabled && submissionStart != null && submissionEnd != null && !now.isBefore(submissionStart!) && now.isBefore(submissionEnd!);
+  bool isVotingOpen(DateTime now) => votingRequired && votingStart != null && votingEnd != null && !now.isBefore(votingStart!) && now.isBefore(votingEnd!);
+
 }
 
 /// A result at one stage does not imply the final tournament outcome.
@@ -95,46 +116,94 @@ class ResultStage {
     this.outcome = TournamentOutcome.unrecorded,
     this.placement,
     this.memo = '',
+    this.roundId,
+    this.stageId,
+    this.teamPlacement,
+    this.individualPlacement,
+    this.voterCount,
+    this.points,
+    this.maxPointsPerVoter = 1,
   });
-
   final String id;
   final String name;
   final TournamentOutcome outcome;
   final int? placement;
   final String memo;
-
+  final String? roundId;
+  final String? stageId;
+  final int? teamPlacement;
+  final int? individualPlacement;
+  final int? voterCount;
+  final double? points;
+  final int maxPointsPerVoter;
   ResultStage copyWith({
     String? name,
     TournamentOutcome? outcome,
     Object? placement = _unchanged,
     String? memo,
+    Object? roundId = _unchanged,
+    Object? stageId = _unchanged,
+    Object? teamPlacement = _unchanged,
+    Object? individualPlacement = _unchanged,
+    Object? voterCount = _unchanged,
+    Object? points = _unchanged,
+    int? maxPointsPerVoter,
   }) => ResultStage(
     id: id,
     name: name ?? this.name,
     outcome: outcome ?? this.outcome,
-    placement: identical(placement, _unchanged)
-        ? this.placement
-        : placement as int?,
+    placement: identical(placement, _unchanged) ? this.placement : placement as int?,
     memo: memo ?? this.memo,
+    roundId: identical(roundId, _unchanged) ? this.roundId : roundId as String?,
+    stageId: identical(stageId, _unchanged) ? this.stageId : stageId as String?,
+    teamPlacement: identical(teamPlacement, _unchanged) ? this.teamPlacement : teamPlacement as int?,
+    individualPlacement: identical(individualPlacement, _unchanged) ? this.individualPlacement : individualPlacement as int?,
+    voterCount: identical(voterCount, _unchanged) ? this.voterCount : voterCount as int?,
+    points: identical(points, _unchanged) ? this.points : (points as num?)?.toDouble(),
+    maxPointsPerVoter: maxPointsPerVoter ?? this.maxPointsPerVoter,
   );
-
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
     'outcome': outcome.name,
     'placement': placement,
     'memo': memo,
+    'roundId': roundId,
+    'stageId': stageId,
+    'teamPlacement': teamPlacement,
+    'individualPlacement': individualPlacement,
+    'voterCount': voterCount,
+    'points': points,
+    'maxPointsPerVoter': maxPointsPerVoter,
   };
+  factory ResultStage.fromJson(Map<String, dynamic> json) {
+    final result = ResultStage(
+      id: _requiredId(json),
+      name: _requiredString(json, 'name'),
+      outcome: json['outcome'] == null ? TournamentOutcome.unrecorded : _enumValue(TournamentOutcome.values, json['outcome'], 'outcome'),
+      placement: _positiveInt(json, 'placement'),
+      memo: _optionalString(json, 'memo'),
+      roundId: _nullableString(json, 'roundId'),
+      stageId: _nullableString(json, 'stageId'),
+      teamPlacement: _positiveInt(json, 'teamPlacement'),
+      individualPlacement: _positiveInt(json, 'individualPlacement'),
+      voterCount: _optionalInt(json, 'voterCount'),
+      points: _nonnegativeNumber(json, 'points'),
+      maxPointsPerVoter: _optionalInt(json, 'maxPointsPerVoter') ?? 1,
+    );
+    if ((result.voterCount != null && result.voterCount! < 0) || result.maxPointsPerVoter < 1) throw const FormatException('Invalid scoring denominator.');
+    return result;
+  }
 
-  factory ResultStage.fromJson(Map<String, dynamic> json) => ResultStage(
-    id: _requiredId(json),
-    name: _requiredString(json, 'name'),
-    outcome: json['outcome'] == null
-        ? TournamentOutcome.unrecorded
-        : _enumValue(TournamentOutcome.values, json['outcome'], 'outcome'),
-    placement: _positiveInt(json, 'placement'),
-    memo: _optionalString(json, 'memo'),
-  );
+  double? get voteRate => voterCount != null && voterCount! > 0 &&
+      maxPointsPerVoter > 0 && points != null && points!.isFinite && points! >= 0
+      ? points! * 100 / (voterCount! * maxPointsPerVoter)
+      : null;
+  bool get hasRecord => outcome != TournamentOutcome.unrecorded ||
+      placement != null || teamPlacement != null || individualPlacement != null ||
+      voterCount != null || points != null || maxPointsPerVoter != 1 ||
+      memo.trim().isNotEmpty;
+
 }
 
 class TournamentResult {
@@ -155,15 +224,7 @@ class TournamentResult {
   final List<ResultStage> stages;
   final String memo;
 
-  bool get hasRecord =>
-      outcome != TournamentOutcome.unrecorded ||
-      stages.any(
-        (stage) =>
-            stage.outcome != TournamentOutcome.unrecorded ||
-            stage.placement != null ||
-            stage.memo.trim().isNotEmpty,
-      ) ||
-      memo.trim().isNotEmpty;
+  bool get hasRecord => outcome != TournamentOutcome.unrecorded || stages.any((stage) => stage.hasRecord) || memo.trim().isNotEmpty;
 
   TournamentResult copyWith({
     TournamentFormat? format,
@@ -230,8 +291,22 @@ class GiriEvent {
     this.status = EventStatus.planned,
     List<EventRound> rounds = const [],
     this.tournamentResult,
+    this.onlineSiteId,
+    this.cycleKey,
+    this.affiliation = '',
+    this.block = '',
+    List<GiriTeam> teams = const [],
+    this.teamSize,
+    this.myTeamId,
+    this.tournamentFormat = TournamentFormat.individual,
+    this.venueId,
+    List<TournamentStanding> standings = const [],
+    this.isParticipating = true,
+
   }) : participants = List.unmodifiable(participants),
-       rounds = List.unmodifiable(rounds);
+       rounds = List.unmodifiable(rounds),
+       teams = List.unmodifiable(teams),
+       standings = List.unmodifiable(standings);
 
   final String id;
   final String title;
@@ -257,6 +332,21 @@ class GiriEvent {
   final EventStatus status;
   final List<EventRound> rounds;
   final TournamentResult? tournamentResult;
+  final String? onlineSiteId;
+  final String? cycleKey;
+  final String affiliation;
+  final String block;
+  final List<GiriTeam> teams;
+  final int? teamSize;
+  final String? myTeamId;
+  final TournamentFormat tournamentFormat;
+  final String? venueId;
+  final List<TournamentStanding> standings;
+  final bool isParticipating;
+
+  bool isHostedBy(String name) => name.trim().isNotEmpty && organizer.trim().toLowerCase() == name.trim().toLowerCase();
+  bool get hasFinalResult => (tournamentResult != null && tournamentResult!.outcome != TournamentOutcome.unrecorded && tournamentResult!.outcome != TournamentOutcome.advanced) || (placement != null && placement! > 0) || resultText.trim().isNotEmpty;
+
 
   /// Old single-window records remain readable and can be edited as a round.
   List<EventRound> get effectiveRounds {
@@ -300,7 +390,7 @@ class GiriEvent {
   }
 
   DateTime? nextSubmissionEnd(DateTime now) {
-    if (kind != EventKind.online || status == EventStatus.canceled) return null;
+    if (kind != EventKind.online || !isParticipating || status == EventStatus.canceled) return null;
     final ends =
         effectiveRounds
             .where((round) => round.isSubmissionOpen(now))
@@ -314,6 +404,7 @@ class GiriEvent {
   /// The start is inclusive and the end is exclusive.
   bool isSubmissionOpen(DateTime now) =>
       kind == EventKind.online &&
+      isParticipating &&
       status != EventStatus.canceled &&
       effectiveRounds.any((round) => round.isSubmissionOpen(now));
 
@@ -340,9 +431,33 @@ class GiriEvent {
     EventStatus? status,
     List<EventRound>? rounds,
     Object? tournamentResult = _unchanged,
+    Object? onlineSiteId = _unchanged,
+    Object? cycleKey = _unchanged,
+    String? affiliation,
+    String? block,
+    List<GiriTeam>? teams,
+    Object? teamSize = _unchanged,
+    Object? myTeamId = _unchanged,
+    TournamentFormat? tournamentFormat,
+    Object? venueId = _unchanged,
+    List<TournamentStanding>? standings,
+    bool? isParticipating,
+
   }) {
     return GiriEvent(
       id: id ?? this.id,
+      onlineSiteId: identical(onlineSiteId, _unchanged) ? this.onlineSiteId : onlineSiteId as String?,
+      cycleKey: identical(cycleKey, _unchanged) ? this.cycleKey : cycleKey as String?,
+      affiliation: affiliation ?? this.affiliation,
+      block: block ?? this.block,
+      teams: teams ?? this.teams,
+      teamSize: identical(teamSize, _unchanged) ? this.teamSize : teamSize as int?,
+      myTeamId: identical(myTeamId, _unchanged) ? this.myTeamId : myTeamId as String?,
+      tournamentFormat: tournamentFormat ?? this.tournamentFormat,
+      venueId: identical(venueId, _unchanged) ? this.venueId : venueId as String?,
+      standings: standings ?? this.standings,
+      isParticipating: isParticipating ?? this.isParticipating,
+
       title: title ?? this.title,
       kind: kind ?? this.kind,
       meetingType: meetingType ?? this.meetingType,
@@ -406,10 +521,34 @@ class GiriEvent {
     'status': status.name,
     'rounds': rounds.map((round) => round.toJson()).toList(),
     'tournamentResult': tournamentResult?.toJson(),
+    'onlineSiteId': onlineSiteId,
+    'cycleKey': cycleKey,
+    'affiliation': affiliation,
+    'block': block,
+    'teams': teams.map((item) => item.toJson()).toList(),
+    'teamSize': teamSize,
+    'myTeamId': myTeamId,
+    'tournamentFormat': tournamentFormat.name,
+    'venueId': venueId,
+    'standings': standings.map((item) => item.toJson()).toList(),
+    'isParticipating': isParticipating,
+
   };
 
-  factory GiriEvent.fromJson(Map<String, dynamic> json) => GiriEvent(
-    id: _requiredString(json, 'id'),
+  factory GiriEvent.fromJson(Map<String, dynamic> json) => _checkedEvent(GiriEvent(
+    id: _requiredId(json),
+    onlineSiteId: _nullableString(json, 'onlineSiteId'),
+    cycleKey: _nullableString(json, 'cycleKey'),
+    affiliation: _optionalString(json, 'affiliation'),
+    block: _optionalString(json, 'block'),
+    teams: _recordList(json, 'teams', GiriTeam.fromJson),
+    teamSize: _positiveInt(json, 'teamSize'),
+    myTeamId: _nullableString(json, 'myTeamId'),
+    tournamentFormat: json['tournamentFormat'] == null ? (_optionalRecord(json, 'tournamentResult', TournamentResult.fromJson)?.format ?? TournamentFormat.individual) : _enumValue(TournamentFormat.values, json['tournamentFormat'], 'tournamentFormat'),
+    venueId: _nullableString(json, 'venueId'),
+    standings: _recordList(json, 'standings', TournamentStanding.fromJson),
+    isParticipating: _boolValue(json, 'isParticipating', true),
+
     title: _requiredString(json, 'title'),
     kind: _enumValue(EventKind.values, json['kind'], 'kind'),
     meetingType: _enumValue(
@@ -441,7 +580,7 @@ class GiriEvent {
     status: json['status'] == null
         ? EventStatus.planned
         : _enumValue(EventStatus.values, json['status'], 'status'),
-  );
+  ));
 }
 
 /// A note can be kept independently, or linked to one registered meeting.
@@ -458,6 +597,7 @@ class ThoughtNote {
     this.prompt = '',
     List<String> answers = const [],
     this.used = false,
+    this.imageDataBase64 = '',
   }) : answers = List.unmodifiable(answers);
 
   final String id;
@@ -471,6 +611,7 @@ class ThoughtNote {
   final String prompt;
   final List<String> answers;
   final bool used;
+  final String imageDataBase64;
 
   ThoughtNote copyWith({
     String? id,
@@ -484,6 +625,7 @@ class ThoughtNote {
     String? prompt,
     List<String>? answers,
     bool? used,
+    String? imageDataBase64,
   }) => ThoughtNote(
     id: id ?? this.id,
     title: title ?? this.title,
@@ -496,6 +638,7 @@ class ThoughtNote {
     prompt: prompt ?? this.prompt,
     answers: answers ?? this.answers,
     used: used ?? this.used,
+    imageDataBase64: imageDataBase64 ?? this.imageDataBase64,
   );
 
   Map<String, dynamic> toJson() => {
@@ -510,6 +653,7 @@ class ThoughtNote {
     'prompt': prompt,
     'answers': answers,
     'used': used,
+    'imageDataBase64': imageDataBase64,
   };
 
   factory ThoughtNote.fromJson(Map<String, dynamic> json) {
@@ -524,7 +668,7 @@ class ThoughtNote {
       throw const FormatException('eventId must be a string or null.');
     }
     return ThoughtNote(
-      id: _requiredString(json, 'id'),
+      id: _requiredId(json),
       title: _requiredString(json, 'title'),
       kind: _enumValue(NoteKind.values, json['kind'], 'kind'),
       createdAt: _requiredDate(json, 'createdAt'),
@@ -535,6 +679,7 @@ class ThoughtNote {
       prompt: _optionalString(json, 'prompt'),
       answers: _stringList(json, 'answers'),
       used: used,
+      imageDataBase64: _optionalString(json, 'imageDataBase64'),
     );
   }
 }
@@ -662,36 +807,62 @@ T _enumValue<T extends Enum>(List<T> values, Object? value, String key) {
 
 /// A reusable player profile. Events continue to store names for compatibility.
 class GiriPlayer {
-  const GiriPlayer({required this.id, required this.name, this.furigana = ''});
-
+  const GiriPlayer({
+    required this.id,
+    required this.name,
+    this.furigana = '',
+    this.region = '',
+    this.iconDataBase64 = '',
+    this.twitterUrl = '',
+    this.memo = '',
+  });
   final String id;
   final String name;
   final String furigana;
-
-  GiriPlayer copyWith({String? name, String? furigana}) => GiriPlayer(
-    id: id,
+  final String region;
+  final String iconDataBase64;
+  final String twitterUrl;
+  final String memo;
+  GiriPlayer copyWith({
+    String? id,
+    String? name,
+    String? furigana,
+    String? region,
+    String? iconDataBase64,
+    String? twitterUrl,
+    String? memo,
+  }) => GiriPlayer(
+    id: id ?? this.id,
     name: name ?? this.name,
     furigana: furigana ?? this.furigana,
+    region: region ?? this.region,
+    iconDataBase64: iconDataBase64 ?? this.iconDataBase64,
+    twitterUrl: twitterUrl ?? this.twitterUrl,
+    memo: memo ?? this.memo,
   );
-
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
     'furigana': furigana,
+    'region': region,
+    'iconDataBase64': iconDataBase64,
+    'twitterUrl': twitterUrl,
+    'memo': memo,
   };
-
   factory GiriPlayer.fromJson(Map<String, dynamic> json) {
-    final id = _requiredString(json, 'id');
-    final name = _requiredString(json, 'name');
-    if (id.trim().isEmpty || name.trim().isEmpty) {
-      throw const FormatException('A player needs an ID and name.');
-    }
-    return GiriPlayer(
-      id: id,
-      name: name,
+    final result = GiriPlayer(
+      id: _requiredId(json),
+      name: _requiredString(json, 'name'),
       furigana: _optionalString(json, 'furigana'),
+      region: _optionalString(json, 'region'),
+      iconDataBase64: _optionalString(json, 'iconDataBase64'),
+      twitterUrl: _optionalString(json, 'twitterUrl'),
+      memo: _optionalString(json, 'memo'),
     );
+    if (result.name.trim().isEmpty) throw const FormatException('A player needs a name.');
+    return result;
   }
+
 }
 
 class AppPreferences {
@@ -701,62 +872,379 @@ class AppPreferences {
     this.reminderMinutes = 60,
     this.reminderHour = 9,
     this.reminderMinute = 0,
+    this.selfName = '',
+    this.onboardingCompleted = false,
+    this.listCurrentMode = false,
+    this.submissionDays = 7,
+    this.votingDays = 7,
+    this.submissionStartDayOffset = -1,
+    this.submissionStartHour = 22,
+    this.submissionStartMinute = 0,
+    this.playerIconMode = 'auto',
   });
-
   final String theme;
   final bool notificationsEnabled;
   final int reminderMinutes;
   final int reminderHour;
   final int reminderMinute;
-
+  final String selfName;
+  final bool onboardingCompleted;
+  final bool listCurrentMode;
+  final int submissionDays;
+  final int votingDays;
+  final int submissionStartDayOffset;
+  final int submissionStartHour;
+  final int submissionStartMinute;
+  final String playerIconMode;
   AppPreferences copyWith({
     String? theme,
     bool? notificationsEnabled,
     int? reminderMinutes,
     int? reminderHour,
     int? reminderMinute,
+    String? selfName,
+    bool? onboardingCompleted,
+    bool? listCurrentMode,
+    int? submissionDays,
+    int? votingDays,
+    int? submissionStartDayOffset,
+    int? submissionStartHour,
+    int? submissionStartMinute,
+    String? playerIconMode,
   }) => AppPreferences(
     theme: theme ?? this.theme,
     notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
     reminderMinutes: reminderMinutes ?? this.reminderMinutes,
     reminderHour: reminderHour ?? this.reminderHour,
     reminderMinute: reminderMinute ?? this.reminderMinute,
+    selfName: selfName ?? this.selfName,
+    onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
+    listCurrentMode: listCurrentMode ?? this.listCurrentMode,
+    submissionDays: submissionDays ?? this.submissionDays,
+    votingDays: votingDays ?? this.votingDays,
+    submissionStartDayOffset: submissionStartDayOffset ?? this.submissionStartDayOffset,
+    submissionStartHour: submissionStartHour ?? this.submissionStartHour,
+    submissionStartMinute: submissionStartMinute ?? this.submissionStartMinute,
+    playerIconMode: playerIconMode ?? this.playerIconMode,
   );
-
   Map<String, dynamic> toJson() => {
     'theme': theme,
     'notificationsEnabled': notificationsEnabled,
     'reminderMinutes': reminderMinutes,
     'reminderHour': reminderHour,
     'reminderMinute': reminderMinute,
+    'selfName': selfName,
+    'onboardingCompleted': onboardingCompleted,
+    'listCurrentMode': listCurrentMode,
+    'submissionDays': submissionDays,
+    'votingDays': votingDays,
+    'submissionStartDayOffset': submissionStartDayOffset,
+    'submissionStartHour': submissionStartHour,
+    'submissionStartMinute': submissionStartMinute,
+    'playerIconMode': playerIconMode,
   };
-
   factory AppPreferences.fromJson(Map<String, dynamic> json) {
-    final theme = json['theme'] ?? 'light';
-    final enabled = json['notificationsEnabled'] ?? false;
-    final minutes = json['reminderMinutes'] ?? 60;
-    final hour = json['reminderHour'] ?? 9;
-    final minute = json['reminderMinute'] ?? 0;
-    if (theme is! String ||
-        !const ['system', 'light', 'dark', 'stair'].contains(theme) ||
-        enabled is! bool ||
-        minutes is! int ||
-        minutes < 0 ||
-        minutes > 10080 ||
-        hour is! int ||
-        hour < 0 ||
-        hour > 23 ||
-        minute is! int ||
-        minute < 0 ||
-        minute > 59) {
-      throw const FormatException('Invalid application preferences.');
-    }
-    return AppPreferences(
-      theme: theme,
-      notificationsEnabled: enabled,
-      reminderMinutes: minutes,
-      reminderHour: hour,
-      reminderMinute: minute,
+    final result = AppPreferences(
+      theme: json['theme'] == null ? 'light' : _requiredString(json, 'theme'),
+      notificationsEnabled: _boolValue(json, 'notificationsEnabled', false),
+      reminderMinutes: _optionalInt(json, 'reminderMinutes') ?? 60,
+      reminderHour: _optionalInt(json, 'reminderHour') ?? 9,
+      reminderMinute: _optionalInt(json, 'reminderMinute') ?? 0,
+      selfName: _optionalString(json, 'selfName'),
+      onboardingCompleted: _boolValue(json, 'onboardingCompleted', false),
+      listCurrentMode: _boolValue(json, 'listCurrentMode', false),
+      submissionDays: _optionalInt(json, 'submissionDays') ?? 7,
+      votingDays: _optionalInt(json, 'votingDays') ?? 7,
+      submissionStartDayOffset: _optionalInt(json, 'submissionStartDayOffset') ?? -1,
+      submissionStartHour: _optionalInt(json, 'submissionStartHour') ?? 22,
+      submissionStartMinute: _optionalInt(json, 'submissionStartMinute') ?? 0,
+      playerIconMode: json['playerIconMode'] == null ? 'auto' : _requiredString(json, 'playerIconMode'),
     );
+    if (!const ['system','light','dark','stair'].contains(result.theme) || result.reminderMinutes < 0 || result.reminderMinutes > 10080 || result.reminderHour < 0 || result.reminderHour > 23 || result.reminderMinute < 0 || result.reminderMinute > 59 || result.submissionDays < 1 || result.submissionDays > 365 || result.votingDays < 1 || result.votingDays > 365 || result.submissionStartDayOffset < -365 || result.submissionStartDayOffset > 365 || result.submissionStartHour < 0 || result.submissionStartHour > 23 || result.submissionStartMinute < 0 || result.submissionStartMinute > 59 || !const ['auto','show','hide'].contains(result.playerIconMode)) throw const FormatException('Invalid application preferences.');
+    return result;
   }
+
+}
+
+enum SiteRecurrence { irregular, weekly }
+
+class OnlineSite {
+  const OnlineSite({
+    required this.id,
+    required this.name,
+    this.url = '',
+    this.recurrence = SiteRecurrence.irregular,
+    this.weekday = 1,
+    this.startHour = 22,
+    this.startMinute = 0,
+    this.submissionDays = 7,
+    this.votingDays = 7,
+    this.affiliation = '',
+    this.block = '',
+    this.memo = '',
+  });
+  final String id;
+  final String name;
+  final String url;
+  final SiteRecurrence recurrence;
+  final int weekday;
+  final int startHour;
+  final int startMinute;
+  final int submissionDays;
+  final int votingDays;
+  final String affiliation;
+  final String block;
+  final String memo;
+  OnlineSite copyWith({
+    String? name,
+    String? url,
+    SiteRecurrence? recurrence,
+    int? weekday,
+    int? startHour,
+    int? startMinute,
+    int? submissionDays,
+    int? votingDays,
+    String? affiliation,
+    String? block,
+    String? memo,
+  }) => OnlineSite(
+    id: id,
+    name: name ?? this.name,
+    url: url ?? this.url,
+    recurrence: recurrence ?? this.recurrence,
+    weekday: weekday ?? this.weekday,
+    startHour: startHour ?? this.startHour,
+    startMinute: startMinute ?? this.startMinute,
+    submissionDays: submissionDays ?? this.submissionDays,
+    votingDays: votingDays ?? this.votingDays,
+    affiliation: affiliation ?? this.affiliation,
+    block: block ?? this.block,
+    memo: memo ?? this.memo,
+  );
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'url': url,
+    'recurrence': recurrence.name,
+    'weekday': weekday,
+    'startHour': startHour,
+    'startMinute': startMinute,
+    'submissionDays': submissionDays,
+    'votingDays': votingDays,
+    'affiliation': affiliation,
+    'block': block,
+    'memo': memo,
+  };
+  factory OnlineSite.fromJson(Map<String, dynamic> json) {
+    final result = OnlineSite(
+      id: _requiredId(json),
+      name: _requiredString(json, 'name'),
+      url: _optionalString(json, 'url'),
+      recurrence: json['recurrence'] == null ? SiteRecurrence.irregular : _enumValue(SiteRecurrence.values, json['recurrence'], 'recurrence'),
+      weekday: _optionalInt(json, 'weekday') ?? 1,
+      startHour: _optionalInt(json, 'startHour') ?? 22,
+      startMinute: _optionalInt(json, 'startMinute') ?? 0,
+      submissionDays: _optionalInt(json, 'submissionDays') ?? 7,
+      votingDays: _optionalInt(json, 'votingDays') ?? 7,
+      affiliation: _optionalString(json, 'affiliation'),
+      block: _optionalString(json, 'block'),
+      memo: _optionalString(json, 'memo'),
+    );
+    if (result.name.trim().isEmpty || result.weekday < 1 || result.weekday > 7 || result.startHour < 0 || result.startHour > 23 || result.startMinute < 0 || result.startMinute > 59 || result.submissionDays < 1 || result.votingDays < 1) throw const FormatException('Invalid online site.');
+    return result;
+  }
+
+}
+
+class GiriTeam {
+  GiriTeam({
+    required this.id,
+    this.name = '',
+    List<String> members = const [],
+    this.isMine = false,
+  }) : members = List.unmodifiable(members);
+  final String id;
+  final String name;
+  final List<String> members;
+  final bool isMine;
+  GiriTeam copyWith({
+    String? name,
+    List<String>? members,
+    bool? isMine,
+  }) => GiriTeam(
+    id: id,
+    name: name ?? this.name,
+    members: members ?? this.members,
+    isMine: isMine ?? this.isMine,
+  );
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'members': members,
+    'isMine': isMine,
+  };
+  factory GiriTeam.fromJson(Map<String, dynamic> json) {
+    final result = GiriTeam(
+      id: _requiredId(json),
+      name: _optionalString(json, 'name'),
+      members: _stringList(json, 'members'),
+      isMine: _boolValue(json, 'isMine', false),
+    );
+
+    return result;
+  }
+
+}
+
+class TournamentStanding {
+  TournamentStanding({
+    required this.id,
+    required this.placement,
+    List<String> playerNames = const [],
+    this.teamName = '',
+    this.memo = '',
+  }) : playerNames = List.unmodifiable(playerNames);
+  final String id;
+  final int placement;
+  final List<String> playerNames;
+  final String teamName;
+  final String memo;
+  TournamentStanding copyWith({
+    int? placement,
+    List<String>? playerNames,
+    String? teamName,
+    String? memo,
+  }) => TournamentStanding(
+    id: id,
+    placement: placement ?? this.placement,
+    playerNames: playerNames ?? this.playerNames,
+    teamName: teamName ?? this.teamName,
+    memo: memo ?? this.memo,
+  );
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'placement': placement,
+    'playerNames': playerNames,
+    'teamName': teamName,
+    'memo': memo,
+  };
+  factory TournamentStanding.fromJson(Map<String, dynamic> json) {
+    final result = TournamentStanding(
+      id: _requiredId(json),
+      placement: _requiredPositiveInt(json, 'placement'),
+      playerNames: _stringList(json, 'playerNames'),
+      teamName: _optionalString(json, 'teamName'),
+      memo: _optionalString(json, 'memo'),
+    );
+
+    return result;
+  }
+
+}
+
+class GiriVenue {
+  const GiriVenue({
+    required this.id,
+    required this.name,
+    this.prefecture = '',
+    this.mapUrl = '',
+    this.memo = '',
+    this.latitude,
+    this.longitude,
+    this.mapAddress = '',
+  });
+  final String id;
+  final String name;
+  final String prefecture;
+  final String mapUrl;
+  final String memo;
+  final double? latitude;
+  final double? longitude;
+  final String mapAddress;
+  GiriVenue copyWith({
+    String? id,
+    String? name,
+    String? prefecture,
+    String? mapUrl,
+    String? memo,
+    Object? latitude = _unchanged,
+    Object? longitude = _unchanged,
+    String? mapAddress,
+  }) => GiriVenue(
+    id: id ?? this.id,
+    name: name ?? this.name,
+    prefecture: prefecture ?? this.prefecture,
+    mapUrl: mapUrl ?? this.mapUrl,
+    memo: memo ?? this.memo,
+    latitude: identical(latitude, _unchanged) ? this.latitude : (latitude as num?)?.toDouble(),
+    longitude: identical(longitude, _unchanged) ? this.longitude : (longitude as num?)?.toDouble(),
+    mapAddress: mapAddress ?? this.mapAddress,
+  );
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'prefecture': prefecture,
+    'mapUrl': mapUrl,
+    'memo': memo,
+    'latitude': latitude,
+    'longitude': longitude,
+    'mapAddress': mapAddress,
+  };
+  factory GiriVenue.fromJson(Map<String, dynamic> json) {
+    final result = GiriVenue(
+      id: _requiredId(json),
+      name: _requiredString(json, 'name'),
+      prefecture: _optionalString(json, 'prefecture'),
+      mapUrl: _optionalString(json, 'mapUrl'),
+      memo: _optionalString(json, 'memo'),
+      latitude: _finiteNumber(json, 'latitude'),
+      longitude: _finiteNumber(json, 'longitude'),
+      mapAddress: _optionalString(json, 'mapAddress'),
+    );
+    if (result.name.trim().isEmpty) throw const FormatException('A venue needs a name.');
+    if ((result.latitude == null) != (result.longitude == null) ||
+        (result.latitude != null && (result.latitude! < -90 || result.latitude! > 90)) ||
+        (result.longitude != null && (result.longitude! < -180 || result.longitude! > 180))) {
+      throw const FormatException('Invalid venue coordinates.');
+    }
+    return result;
+  }
+
+}
+
+
+String? _nullableString(Map<String, dynamic> json, String key) {
+  if (json[key] == null) return null;
+  return _requiredString(json, key);
+}
+bool _boolValue(Map<String, dynamic> json, String key, bool fallback) {
+  final value = json[key] ?? fallback;
+  if (value is! bool) throw FormatException('$key must be a boolean.');
+  return value;
+}
+double? _nonnegativeNumber(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value == null) return null;
+  if (value is! num || !value.isFinite || value < 0) throw FormatException('Invalid $key.');
+  return value.toDouble();
+}
+
+int _requiredPositiveInt(Map<String, dynamic> json, String key) {
+  final value = _positiveInt(json, key);
+  if (value == null) throw FormatException('$key is required.');
+  return value;
+}
+
+GiriEvent _checkedEvent(GiriEvent event) {
+  if (event.teamSize != null && event.teamSize! < 2) {
+    throw const FormatException('A team needs at least two members.');
+  }
+  return event;
+}
+
+double? _finiteNumber(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value == null) return null;
+  if (value is! num || !value.isFinite) throw FormatException('Invalid $key.');
+  return value.toDouble();
 }

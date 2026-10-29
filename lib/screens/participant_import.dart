@@ -134,7 +134,7 @@ class _ParticipantImportScreenState extends State<ParticipantImportScreen> {
   Widget build(BuildContext context) {
     final count = _selectedNames.length;
     return Scaffold(
-      appBar: AppBar(
+      appBar: StairNavigationBar(
         title: Text(widget.startWithImages ? 'OCRで一括追加' : '文字から一括追加'),
         actions: [
           TextButton(

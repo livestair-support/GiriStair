@@ -135,7 +135,7 @@ void main() {
         FontWeight.w500,
       );
       expect(
-        paragraph(tester, find.text('通常会')).text.style!.fontWeight,
+        paragraph(tester, find.text('通常')).text.style!.fontWeight,
         FontWeight.w400,
       );
       final editable = tester.state<EditableTextState>(

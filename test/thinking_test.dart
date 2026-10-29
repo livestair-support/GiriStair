@@ -25,6 +25,16 @@ Future<void> _selectMenu(WidgetTester tester, String key, String label) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _promptMode(WidgetTester tester) async {
+  final segment = find.descendant(
+    of: find.byKey(const ValueKey('thinking-mode')),
+    matching: find.text('お題作成'),
+  );
+  await tester.ensureVisible(segment);
+  await tester.tap(segment);
+  await tester.pumpAndSettle();
+}
+
 class _FailingStorage extends MemoryGiriStorage {
   bool fail = false;
 
@@ -157,6 +167,7 @@ void main() {
     await store.load();
     await _showThinking(tester, store);
 
+    await _promptMode(tester);
     await tester.tap(find.text('お題を作る'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).at(0), '主催会のお題候補');
@@ -208,54 +219,30 @@ void main() {
     expect(find.text('考え中の回答'), findsOneWidget);
   });
 
-  testWidgets('メモの種類はプルダウンで絞り込み説明キャプションを表示しない', (tester) async {
+  testWidgets('上の切替で回答とお題を分け、回答・自由メモを絞り込める', (tester) async {
     final store = GiriStore(storage: MemoryGiriStorage());
     await store.load();
     final now = DateTime.now();
     for (final kind in NoteKind.values) {
-      await store.saveNote(
-        ThoughtNote(
-          id: kind.name,
-          title: '保存した${kind.name}',
-          kind: kind,
-          createdAt: now,
-          updatedAt: now,
-        ),
-      );
+      await store.saveNote(ThoughtNote(
+        id: kind.name, title: '保存した${kind.name}', kind: kind,
+        createdAt: now, updatedAt: now,
+      ));
     }
     await _showThinking(tester, store);
     expect(find.byType(ChoiceChip), findsNothing);
     expect(find.text('回答やお題の下書きを残せます。'), findsNothing);
-    expect(find.text('登録で投稿の開始・締切を設定すると、ここに表示されます。'), findsNothing);
-    final filter = find.byKey(const ValueKey('thinking-note-filter'));
-    await tester.ensureVisible(filter);
-    await tester.tap(filter);
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find
-          .descendant(
-            of: find.byType(CupertinoButton),
-            matching: find.text('お題'),
-          )
-          .last,
-    );
-    await tester.pumpAndSettle();
+    expect(find.text('保存したanswers'), findsOneWidget);
+    expect(find.text('保存したprompts'), findsNothing);
+    await _selectMenu(tester, 'thinking-note-filter', '自由');
+    expect(find.text('保存したanswers'), findsNothing);
+    expect(find.text('保存したfree'), findsOneWidget);
+    await _selectMenu(tester, 'thinking-note-filter', 'すべて');
+    expect(find.text('保存したanswers'), findsOneWidget);
+    await _promptMode(tester);
     expect(find.text('保存したprompts'), findsOneWidget);
     expect(find.text('保存したanswers'), findsNothing);
     expect(find.text('保存したfree'), findsNothing);
-    await tester.tap(filter);
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find
-          .descendant(
-            of: find.byType(CupertinoButton),
-            matching: find.text('すべて'),
-          )
-          .last,
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('保存したanswers'), findsOneWidget);
-    expect(find.text('保存したfree'), findsOneWidget);
     expect(store.notes, hasLength(3));
     expect(tester.takeException(), isNull);
   });
@@ -326,20 +313,16 @@ void main() {
       find.byKey(const ValueKey('active-round-round-event-final')),
       findsNothing,
     );
-    await tester.tap(
-      find.byKey(const ValueKey('active-round-round-event-preliminary-1')),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('round-add-topic')));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey('thought-editor-prompt')),
-      '未来の学校にある変な授業',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('thought-editor-body')),
-      '一つ目の回答案\n\n二つ目の回答案',
-    );
+    expect(find.text('お題と回答'), findsNothing);
+    expect(find.text('投稿'), findsOneWidget);
+    expect(find.text('投票'), findsOneWidget);
+    final prompt = find.byKey(const ValueKey('round-prompt-round-event-preliminary-1'));
+    await tester.ensureVisible(prompt);
+    await tester.enterText(prompt, '未来の学校にある変な授業');
+    final answers = find.byKey(const ValueKey('round-answers-round-event-preliminary-1'));
+    await tester.ensureVisible(answers);
+    await tester.enterText(answers, '一つ目の回答案\n\n二つ目の回答案');
+    await tester.ensureVisible(find.text('保存'));
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
     final note = store.notes.single;
@@ -359,6 +342,7 @@ void main() {
     final store = GiriStore(storage: MemoryGiriStorage());
     await store.load();
     await _showThinking(tester, store);
+    await _promptMode(tester);
     await tester.tap(find.text('お題を作る'));
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -467,4 +451,110 @@ void main() {
     expect(store.notes.single.roundId, 'deleted-round');
     expect(store.notes.single.answers, ['保存した回答']);
   });
+
+  testWidgets('未参加のサイト周期と投稿対象外の日程は思考へ出さない', (tester) async {
+    final store = GiriStore(storage: MemoryGiriStorage());
+    await store.load();
+    final now = DateTime.now();
+    EventRound round(String id, {bool submissionEnabled = true}) => EventRound(
+      id: id, name: '予選1回戦', submissionEnabled: submissionEnabled,
+      submissionStart: now.subtract(const Duration(days: 1)),
+      submissionEnd: now.add(const Duration(days: 1)),
+      votingStart: now, votingEnd: now.add(const Duration(days: 7)),
+    );
+    await store.saveEvent(GiriEvent(
+      id: 'not-joined', title: 'まだ参加していないサイト',
+      kind: EventKind.online, meetingType: MeetingType.casual,
+      isParticipating: false, createdAt: now, rounds: [round('week')],
+    ));
+    await store.saveEvent(GiriEvent(
+      id: 'voting-only', title: '敗退後も投票する大会',
+      kind: EventKind.online, meetingType: MeetingType.tournament,
+      createdAt: now, rounds: [round('next', submissionEnabled: false)],
+    ));
+    await _showThinking(tester, store);
+    expect(find.text('まだ参加していないサイト'), findsNothing);
+    expect(find.text('敗退後も投票する大会'), findsNothing);
+    expect(find.text('投稿期間中のネット大喜利はありません'), findsOneWidget);
+    expect(store.events.last.rounds.single.votingRequired, isTrue);
+  });
+
+  testWidgets('日程内の回答は画面遷移せず入力し保存失敗でも書きかけを保持する', (tester) async {
+    final storage = _FailingStorage();
+    final store = GiriStore(storage: storage);
+    await store.load();
+    final now = DateTime.now();
+    await store.saveEvent(GiriEvent(
+      id: 'inline', title: 'ネット大会', kind: EventKind.online,
+      meetingType: MeetingType.tournament, createdAt: now,
+      rounds: [EventRound(id: 'round', name: '予選1回戦')],
+    ));
+    await tester.binding.setSurfaceSize(const Size(430, 1100));
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      store.dispose();
+      await tester.binding.setSurfaceSize(null);
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: ListView(children: [
+      RoundThoughtWorkbench(store: store, eventId: 'inline', roundId: 'round'),
+    ]))));
+    await tester.pumpAndSettle();
+    final prompt = find.byKey(const ValueKey('round-prompt-inline-round'));
+    final answers = find.byKey(const ValueKey('round-answers-inline-round'));
+    await tester.enterText(prompt, 'この学校のおかしな校則とは？');
+    await tester.enterText(answers, 'ひとつめの案\nふたつめの案');
+    storage.fail = true;
+    await tester.ensureVisible(find.text('保存'));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(store.notes, isEmpty);
+    expect(tester.widget<TextField>(prompt).controller!.text, 'この学校のおかしな校則とは？');
+    expect(tester.widget<TextField>(answers).controller!.text, 'ひとつめの案\nふたつめの案');
+    expect(find.text('保存できませんでした。内容を残したまま再試行できます。'), findsOneWidget);
+    storage.fail = false;
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(store.notes.single.roundId, 'round');
+    expect(store.notes.single.answers, ['ひとつめの案', 'ふたつめの案']);
+    expect(find.text('お題と回答'), findsNothing);
+  });
+
+  testWidgets('画像お題の編集で画像選択をキャンセルしても保存画像を保持する', (tester) async {
+    final store = GiriStore(storage: MemoryGiriStorage());
+    await store.load();
+    const image = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZq0AAAAASUVORK5CYII=';
+    final now = DateTime.now();
+    await store.saveNote(ThoughtNote(
+      id: 'picture', title: '画像を見て一言', prompt: '画像を見て一言',
+      kind: NoteKind.answers, imageDataBase64: image,
+      createdAt: now, updatedAt: now, answers: const ['元の回答'], body: '元の回答',
+    ));
+    await tester.binding.setSurfaceSize(const Size(430, 1300));
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      store.dispose();
+      await tester.binding.setSurfaceSize(null);
+    });
+    await tester.pumpWidget(MaterialApp(home: ThinkingScreen(store: store, readImage: () async => null)));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('画像を見て一言'));
+    await tester.tap(find.text('画像を見て一言'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('thought-editor-image')));
+    await tester.tap(find.byKey(const ValueKey('thought-editor-image')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(store.notes.single.imageDataBase64, image);
+    expect(store.notes.single.answers, ['元の回答']);
+    await tester.ensureVisible(find.text('画像を見て一言'));
+    await tester.tap(find.text('画像を見て一言'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('thought-editor-remove-image')));
+    await tester.tap(find.byKey(const ValueKey('thought-editor-remove-image')));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(store.notes.single.imageDataBase64, isEmpty);
+  });
+
 }

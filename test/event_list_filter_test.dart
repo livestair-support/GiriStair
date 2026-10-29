@@ -68,21 +68,21 @@ void main() {
     );
     await showList(tester, store);
     expect(find.text('3日程'), findsOneWidget);
-    expect(find.text('本戦1回戦'), findsOneWidget);
-    expect(find.text('決勝'), findsNothing);
-    expect(find.text('終了した予選'), findsNothing);
+    expect(find.textContaining('本戦1回戦'), findsOneWidget);
+    expect(find.textContaining('決勝'), findsNothing);
+    expect(find.textContaining('終了した予選'), findsNothing);
     await tester.tap(find.text('長い大会'));
     await tester.pumpAndSettle();
-    expect(find.text('終了した予選'), findsOneWidget);
-    expect(find.text('本戦1回戦'), findsOneWidget);
-    expect(find.text('決勝'), findsOneWidget);
+    expect(find.textContaining('終了した予選'), findsOneWidget);
+    expect(find.textContaining('本戦1回戦'), findsOneWidget);
+    expect(find.textContaining('決勝'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     store.dispose();
   });
 
   testWidgets(
-    'dropdown filters combine with search and can return to all records',
+    'dropdown filters and search respect the planned and attended tabs',
     (tester) async {
       final store = GiriStore(storage: MemoryGiriStorage());
       await store.load();
@@ -160,9 +160,14 @@ void main() {
       await tester.enterText(find.byKey(const ValueKey('list-search')), '');
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pumpAndSettle();
-      for (final record in store.events) {
+      for (final record in store.events.where((event) => event.status != EventStatus.attended)) {
         expect(find.text(record.title), findsOneWidget);
       }
+      expect(find.text('参加済みの会'), findsNothing);
+      await tester.tap(find.text('参加済'));
+      await tester.pumpAndSettle();
+      expect(find.text('参加済みの会'), findsOneWidget);
+      expect(find.text('北の予定'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       store.dispose();

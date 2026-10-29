@@ -430,12 +430,14 @@ void main() {
       ),
     );
     await tester.pumpWidget(editor(store, event: original));
-    await enter(tester, find.byKey(const ValueKey('event-team-name')), 'スリザリン');
-    await enter(
-      tester,
-      find.byKey(const ValueKey('event-team-members')),
-      '本人\n先輩\n後輩',
-    );
+    final teamName = find.byWidgetPredicate((widget) => widget is TextFormField && widget.key is ValueKey<String> && (widget.key as ValueKey<String>).value.startsWith('team-name-'));
+    await enter(tester, teamName, 'スリザリン');
+    final addMember = find.text('メンバーを追加');
+    await tester.ensureVisible(addMember);
+    await tester.tap(addMember);
+    await tester.pumpAndSettle();
+    final members = find.byWidgetPredicate((widget) => widget.key is ValueKey<String> && (widget.key as ValueKey<String>).value.startsWith('team-member-'));
+    await enter(tester, members.last, '後輩');
     final add = find.byKey(const ValueKey('event-result-stage-add'));
     await tester.ensureVisible(add);
     await tester.tap(add);
