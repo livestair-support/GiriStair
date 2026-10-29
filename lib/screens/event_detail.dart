@@ -72,8 +72,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     final self = widget.store.preferences.selfName.trim();
     if (self.isNotEmpty &&
         !names.any((name) => playerSearchKey(name) == playerSearchKey(self))) {
-          names.add(self);
-        }
+      names.add(self);
+    }
     return _save(
       event.copyWith(
         isParticipating: true,
@@ -163,8 +163,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     try {
       if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
           mounted) {
-            showStairMessage(context, 'リンクを開けませんでした。', error: true);
-          }
+        showStairMessage(context, 'リンクを開けませんでした。', error: true);
+      }
     } catch (_) {
       if (mounted) showStairMessage(context, 'リンクを開けませんでした。', error: true);
     }

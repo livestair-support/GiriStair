@@ -231,7 +231,7 @@ void main() {
       find.byKey(const ValueKey('participant-import-source')),
       '追加しない人',
     );
-    await tester.tap(find.byType(BackButton));
+    await tester.tap(find.byType(StairBackButton));
     await tester.pumpAndSettle();
     expect(
       tester.widget<TextFormField>(participant(0)).controller!.text,

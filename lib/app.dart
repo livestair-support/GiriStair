@@ -14,6 +14,7 @@ import 'screens/profile_setup.dart';
 import 'store.dart';
 import 'notifications.dart';
 import 'ui/stair_theme.dart';
+import 'ui/brand.dart';
 import 'ui/stair_tab_bar.dart';
 import 'ui/stair_native_controls.dart';
 import 'ui/stair_symbols.dart';
@@ -108,9 +109,7 @@ class _GiriStairAppState extends State<GiriStairApp>
           future: _loading,
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
-              return const Scaffold(
-                body: Center(child: CupertinoActivityIndicator()),
-              );
+              return const BrandLaunchScreen();
             }
             if (snapshot.hasError) {
               return Scaffold(
@@ -227,8 +226,8 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     if (!mounted ||
         _showingResultPrompt ||
         !(ModalRoute.of(context)?.isCurrent ?? false)) {
-          return;
-        }
+      return;
+    }
     final pending =
         widget.store.events
             .where(

@@ -30,7 +30,7 @@ Form自体はSwiftUI Formではありません。曲率、OS更新によるリ�
 
 ## 検証方法
 
-Flutter 3.44.0で整形・静的解析・機能テストと、行高・余白・keyboard・字体役割・native channelの回帰検査を行います。Android向けフォントとnative UIの無効化も検査します。iOS preview workflowはXcode/iOS 26以降の実シミュレーターでGiriStairをビルドし、登録PNGと機種・OS・SDKのmetadataを保存します。これはLiveStair本体の画像ではありません。
+Flutter 3.44.0で整形・静的解析・機能テストと、行高・余白・keyboard・字体役割・native channelの回帰検査を行います。Android向けフォントとnative UIの無効化を検査し、Android debug buildもCIで確認します。iOS preview workflowはXcode/iOS 26以降の実シミュレーターでGiriStairをビルドし、登録・詳細・カレンダー・思考・会場のPNGと機種・OS・SDKのmetadataを保存します。これはLiveStair本体の画像ではありません。
 
 両アプリを同じiPhone・iOS・文字サイズ「標準」・ライト表示で開き、次を比較してください。
 
@@ -45,3 +45,5 @@ Flutter 3.44.0で整形・静的解析・機能テストと、行高・余白・
 ## 0.3の追加照合
 
 TicketScheduleGroups/TicketScheduleViewsの日時依存、ContentViewの月間カレンダーと一覧カード、LiveDetailViewの行配置、JapaneseHolidaysの休日規則、VenueDetailViewの190ptマップ、ScreenshotViewとLiveListShareViewの共有画像を追加参照しました。手入力日時を上書きせず、自動補完した未保存欄だけを開始日時へ連動させます。全ページの戻る＜は共通ナビゲーションへ統一します。追加依頼の機能と確認範囲はWORKFLOW_REVISION.md・PRに記載します。
+
+戻るボタンはiPhoneでは実際のUINavigationBarのback itemを描画し、Flutterのroute stackへ戻す方式です。保存中の無効化と未保存確認は呼び出し元が保持します。カレンダーは44ptの一覧／月間切替ボタン、21pt bold Roundedの年月、36ptの月移動操作、年月の2列ホイールを使用します。月移動では選択済みの日付を勝手に変更せず、「今日」で表示月と選択日を同時に戻します。カレンダー中は通常一覧の検索・参加状況を引き継がず、予定線の取りこぼしを防ぎます。

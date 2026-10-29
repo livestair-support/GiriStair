@@ -160,7 +160,9 @@ void main() {
       await tester.enterText(find.byKey(const ValueKey('list-search')), '');
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pumpAndSettle();
-      for (final record in store.events.where((event) => event.status != EventStatus.attended)) {
+      for (final record in store.events.where(
+        (event) => event.status != EventStatus.attended,
+      )) {
         expect(find.text(record.title), findsOneWidget);
       }
       expect(find.text('参加済みの会'), findsNothing);

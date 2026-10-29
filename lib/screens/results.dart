@@ -55,6 +55,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
             .where(
               (event) =>
                   event.meetingType == MeetingType.tournament &&
+                  event.isParticipating &&
                   event.status != EventStatus.canceled &&
                   (_kind == null || event.kind == _kind),
             )

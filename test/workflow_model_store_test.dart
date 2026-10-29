@@ -165,6 +165,8 @@ void main() {
       );
       expect(event.hasRecordedResult, isTrue);
       expect(event.hasFinalResult, isFalse);
+      expect(event.copyWith(resultText: '予選通過').hasFinalResult, isFalse);
+      expect(_event().copyWith(resultText: '旧形式の結果').hasFinalResult, isTrue);
       expect(event.effectivePlacement, isNull);
     },
   );

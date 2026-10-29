@@ -407,7 +407,7 @@ void main() {
     await tester.tap(find.text('回答メモ'));
     await tester.pumpAndSettle();
     await _selectMenu(tester, 'thought-editor-event', '終了した大会');
-    await _selectMenu(tester, 'thought-editor-round', '予選2回戦');
+    await _selectMenu(tester, 'thought-editor-round', '予選2回戦 · お題1');
     await tester.enterText(
       find.byKey(const ValueKey('thought-editor-prompt')),
       '振り返るお題',

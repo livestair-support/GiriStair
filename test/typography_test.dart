@@ -231,9 +231,11 @@ void main() {
       await tester.pumpWidget(japaneseApp(ShareRecordsScreen(store: store)));
       await tester.pumpAndSettle();
 
-      expectJapaneseText(tester, find.text('共有ページ'));
-      expectJapaneseText(tester, find.text('期間'));
-      expectJapaneseText(tester, find.text('参加の記録'));
+      expectJapaneseText(tester, find.text('Giri Summary'));
+      expectJapaneseText(tester, find.text('年'));
+      expectJapaneseText(tester, find.text('集計期間'));
+      expectJapaneseText(tester, find.text('GIRI SUMMARY'), display: true);
+      expectJapaneseText(tester, find.text('会場'));
       expectJapaneseText(tester, find.text('日本語の会場'));
       expectJapaneseText(tester, find.text('画像を共有'));
       expect(tester.takeException(), isNull);

@@ -519,16 +519,23 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
       final joined = store.events
           .where(
             (event) =>
+                event.isParticipating &&
                 event.status == EventStatus.attended &&
                 event.participants.any((name) => playerSearchKey(name) == key),
           )
           .toList();
       final hosted = store.events
-          .where((event) => playerSearchKey(event.organizer) == key)
+          .where(
+            (event) =>
+                event.isParticipating &&
+                event.status != EventStatus.canceled &&
+                playerSearchKey(event.organizer) == key,
+          )
           .toList();
       final standings = [
         for (final event in store.events.where(
           (event) =>
+              event.isParticipating &&
               event.meetingType == MeetingType.tournament &&
               event.status == EventStatus.attended,
         ))

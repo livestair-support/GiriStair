@@ -392,12 +392,14 @@ class GiriEvent {
   bool isHostedBy(String name) =>
       name.trim().isNotEmpty &&
       organizer.trim().toLowerCase() == name.trim().toLowerCase();
+  // Structured stage notes may be saved before the final outcome is known.
+  // Plain legacy prose still counts as an existing result when no structure exists.
   bool get hasFinalResult =>
       (tournamentResult != null &&
           tournamentResult!.outcome != TournamentOutcome.unrecorded &&
           tournamentResult!.outcome != TournamentOutcome.advanced) ||
-      (placement != null && placement! > 0) ||
-      resultText.trim().isNotEmpty;
+      effectivePlacement != null ||
+      (tournamentResult == null && resultText.trim().isNotEmpty);
 
   /// Old single-window records remain readable and can be edited as a round.
   List<EventRound> get effectiveRounds {

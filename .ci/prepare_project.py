@@ -13,6 +13,8 @@ import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 
+from brand_assets import apply_brand_assets
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -143,6 +145,7 @@ def prepare(root: Path = ROOT) -> None:
                 shutil.copytree(generated / platform, root / platform)
     set_ios_settings(root, config)
     set_android_settings(root, config)
+    apply_brand_assets(root)
     print(f"GiriStairのiOS/Android設定を準備しました: {config['bundle_id']}")
 
 

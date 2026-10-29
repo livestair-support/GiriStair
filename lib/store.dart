@@ -202,7 +202,7 @@ class GiriStore extends ChangeNotifier {
               )
               .toList(),
         );
-    }
+      }
       if (playerSearchKey(document.preferences.selfName) == oldKey) {
         document.preferences = document.preferences.copyWith(selfName: name);
       }

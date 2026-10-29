@@ -32,8 +32,12 @@ void _phone(WidgetTester tester) {
 }
 
 Future<void> _resume(WidgetTester tester) async {
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
   tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
   await tester.pump();
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
   tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
   await tester.pumpAndSettle();
 }
@@ -78,6 +82,7 @@ void main() {
     expect(find.byType(SelfProfileScreen), findsOneWidget);
     expect(find.byType(StairTabBar), findsNothing);
     await tester.enterText(find.byKey(const ValueKey('self-name')), '本人');
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('self-name-save')));
     await tester.pumpAndSettle();
     expect(find.byType(SelfProfileScreen), findsNothing);

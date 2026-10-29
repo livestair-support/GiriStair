@@ -103,8 +103,8 @@ Map<DateTime, String> _holidays(int year) => _cache.putIfAbsent(year, () {
   for (final date in dates) {
     if (date.isBefore(DateTime.utc(1973, 4, 12)) ||
         date.weekday != DateTime.sunday) {
-          continue;
-        }
+      continue;
+    }
     var next = date.add(const Duration(days: 1));
     if (year >= 2007) {
       while (national.containsKey(next)) {
@@ -123,12 +123,12 @@ Map<DateTime, String> _holidays(int year) => _cache.putIfAbsent(year, () {
     ) {
       if (result.containsKey(day) ||
           (year < 2007 && day.weekday == DateTime.sunday)) {
-            continue;
-          }
+        continue;
+      }
       if (national.containsKey(day.subtract(const Duration(days: 1))) &&
           national.containsKey(day.add(const Duration(days: 1)))) {
-            result[day] = '休日';
-          }
+        result[day] = '休日';
+      }
     }
   }
   return result;

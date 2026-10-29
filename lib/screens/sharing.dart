@@ -14,6 +14,7 @@ import '../models.dart';
 import '../participant_import.dart';
 import '../store.dart';
 import '../tournament_presentation.dart';
+import '../ui/brand.dart';
 import '../ui/stair_controls.dart';
 import '../ui/stair_theme.dart';
 
@@ -824,10 +825,23 @@ class _SharePaper extends StatelessWidget {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              'GiriStair',
-              style: _paperStyle(13, FontWeight.w700, muted),
+            padding: const EdgeInsets.only(top: 2, left: 10),
+            child: SizedBox(
+              width: list ? 96 : 72,
+              height: list ? 34 : 28,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(3),
+                    child: BrandWordmark(width: list ? 90 : 66),
+                  ),
+                ),
+              ),
             ),
           ),
         ],
