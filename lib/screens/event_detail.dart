@@ -170,10 +170,11 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
-  Widget _detailField({required String label, required Widget child}) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16),
-    child: StairFieldRow(label: label, child: child),
-  );
+  Widget _detailField({required String label, required Widget child}) =>
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: StairFieldRow(label: label, child: child),
+      );
 
   Widget _value(String label, String value, {Color? color}) => _detailField(
     label: label,
