@@ -30,3 +30,7 @@ ios/Runner/GeneratedPluginRegistrant.*
 *.p8
 *.p12
 *.mobileprovision
+
+# Generated SwiftUI wrapper
+native/project.json
+native/GiriStair.xcodeproj/

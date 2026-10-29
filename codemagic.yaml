@@ -1,35 +1,35 @@
-# GitHubの変更後、Codemagicから手動で実行します。
-# Appleのアカウント設定は docs/SETUP.md を参照してください。
+# iPhone is native SwiftUI; Android keeps the existing Flutter implementation.
 workflows:
   check:
-    name: 1. 確認（解析・テスト・iOSビルド）
+    name: 1. 確認（Swiftテスト・iOSビルド）
     instance_type: mac_mini_m2
     max_build_duration: 60
     environment:
-      flutter: 3.44.0
       xcode: 26.6
-      cocoapods: default
       vars:
+        HOMEBREW_NO_AUTO_UPDATE: "1"
         BUNDLE_ID: com.livestair.giristair
     scripts:
-      - name: プロジェクト生成の保護を確認
-        script: python3 -m unittest discover -s .ci -p 'test_*.py'
-      - name: iOS・Androidプロジェクトを準備
-        script: python3 .ci/prepare_project.py
-      - name: Flutterの依存関係を取得
-        script: flutter pub get
-      - name: フォーマットと解析
+      - name: SwiftUIプロジェクトを準備
         script: |
           set -euo pipefail
-          dart format --output=none --set-exit-if-changed lib test
-          flutter analyze --fatal-infos
-      - name: モデル・保存・画面のテスト
-        script: flutter test --coverage
-      - name: iOS確認ビルド（署名・アップロードなし）
-        script: flutter build ios --release --no-codesign
+          command -v xcodegen >/dev/null || brew install xcodegen
+          python3 .ci/native_project.py
+          xcodegen generate --spec native/project.json
+      - name: 保存互換性と日程のSwiftテスト
+        script: |
+          set -euo pipefail
+          swiftc -parse-as-library native/GiriStair/Models.swift native/GiriStair/Scheduling.swift native/GiriStair/Store.swift native/Tests/DomainRegression.swift -o build/native/domain-tests
+          build/native/domain-tests
+          python3 -m unittest discover -s .ci -p 'test_native*.py'
+      - name: SwiftUI iPhoneアプリをビルド（署名なし）
+        script: |
+          set -euo pipefail
+          xcodebuild -project native/GiriStair.xcodeproj -scheme GiriStair -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build/native/DerivedData \
+            CODE_SIGNING_ALLOWED=NO build
     artifacts:
-      - coverage/lcov.info
-      - /tmp/xcodebuild_logs/*.log
+      - build/native/DerivedData/Logs/Build/**
 
   android-check:
     name: 2. Android確認（デバッグAPK）
@@ -57,37 +57,38 @@ workflows:
     integrations:
       app_store_connect: LiveStair ASC
     environment:
-      flutter: 3.44.0
       xcode: 26.6
-      cocoapods: default
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.livestair.giristair
       vars:
+        HOMEBREW_NO_AUTO_UPDATE: "1"
         BUNDLE_ID: com.livestair.giristair
     scripts:
-      - name: iOS・Androidプロジェクトを準備
-        script: python3 .ci/prepare_project.py
-      - name: Flutterの依存関係を取得
-        script: flutter pub get
-      - name: コードの解析とテスト
+      - name: SwiftUIプロジェクトを準備
         script: |
           set -euo pipefail
-          flutter analyze --fatal-infos
-          flutter test
-      - name: GiriStairの署名プロファイルを適用
-        script: xcode-project use-profiles
-      - name: iPhone用アプリを作成
-        script: |
-          set -euo pipefail
+          command -v xcodegen >/dev/null || brew install xcodegen
           : "${PROJECT_BUILD_NUMBER:?CodemagicのPROJECT_BUILD_NUMBERが必要です}"
-          flutter build ipa --release \
-            --build-number="$PROJECT_BUILD_NUMBER" \
-            --export-options-plist="$HOME/export_options.plist"
+          python3 .ci/native_project.py --build-number "$PROJECT_BUILD_NUMBER"
+          xcodegen generate --spec native/project.json
+      - name: 保存互換性と日程のSwiftテスト
+        script: |
+          set -euo pipefail
+          swiftc -parse-as-library native/GiriStair/Models.swift native/GiriStair/Scheduling.swift native/GiriStair/Store.swift native/Tests/DomainRegression.swift -o build/native/domain-tests
+          build/native/domain-tests
+      - name: GiriStairの署名プロファイルを適用
+        script: xcode-project use-profiles --project native/GiriStair.xcodeproj
+      - name: SwiftUI iPhone用アプリを作成
+        script: |
+          set -euo pipefail
+          xcodebuild -project native/GiriStair.xcodeproj -scheme GiriStair -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath build/ios/archive/GiriStair.xcarchive archive
+          xcodebuild -exportArchive -archivePath build/ios/archive/GiriStair.xcarchive \
+            -exportOptionsPlist "$HOME/export_options.plist" -exportPath build/ios/ipa
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
-      - /tmp/xcodebuild_logs/*.log
     publishing:
       app_store_connect:
         auth: integration

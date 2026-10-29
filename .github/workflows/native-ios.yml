@@ -1,0 +1,55 @@
+name: SwiftUI iPhone checks
+on:
+  pull_request:
+    paths:
+      - 'native/**'
+      - '.ci/native*'
+      - '.ci/test_native*'
+      - '.github/workflows/native-ios.yml'
+      - 'codemagic.yaml'
+  workflow_dispatch:
+concurrency:
+  group: swiftui-iphone-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  native-iphone:
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode with the iOS 26 SDK
+        run: python3 .ci/parity_ios.py select-xcode
+      - name: Prepare the native SwiftUI project
+        id: project
+        run: |
+          command -v xcodegen >/dev/null || brew install xcodegen
+          python3 .ci/native_project.py
+          xcodegen generate --spec native/project.json
+      - name: Check project and migration configuration
+        run: python3 -m unittest discover -s .ci -p 'test_native*.py'
+      - name: Test native data compatibility and scheduling
+        run: |
+          mkdir -p build/native
+          swiftc -parse-as-library native/GiriStair/Models.swift native/GiriStair/Scheduling.swift native/GiriStair/Store.swift native/Tests/DomainRegression.swift -o build/native/domain-tests
+          build/native/domain-tests
+      - name: Build the actual SwiftUI iPhone application
+        if: (success() || failure()) && steps.project.outcome == 'success'
+        run: |
+          set -euo pipefail
+          xcodebuild -project native/GiriStair.xcodeproj -scheme GiriStair -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build/native/DerivedData \
+            CODE_SIGNING_ALLOWED=NO build > build/native/xcodebuild.log 2>&1 || {
+              tail -n 180 build/native/xcodebuild.log
+              exit 1
+            }
+          tail -n 5 build/native/xcodebuild.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: swiftui-iphone-build-log
+          path: build/native/xcodebuild.log
+          if-no-files-found: ignore

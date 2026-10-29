@@ -1,6 +1,5 @@
-name: iPhone UI preview
+name: Legacy Flutter iPhone preview (manual)
 on:
-  pull_request:
   workflow_dispatch:
 concurrency:
   group: iphone-parity-${{ github.ref }}

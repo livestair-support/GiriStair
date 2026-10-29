@@ -1,6 +1,15 @@
 name: Flutter checks
 on:
   pull_request:
+    paths:
+      - 'lib/**'
+      - 'test/**'
+      - 'android/**'
+      - 'pubspec.*'
+      - '.ci/prepare_project.py'
+      - '.ci/test_prepare_project.py'
+      - '.ci/brand_assets.py'
+      - '.github/workflows/check.yml'
 concurrency:
   group: flutter-${{ github.ref }}
   cancel-in-progress: true
