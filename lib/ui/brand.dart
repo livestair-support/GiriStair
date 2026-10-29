@@ -26,23 +26,24 @@ class BrandLaunchScreen extends StatelessWidget {
   const BrandLaunchScreen({super.key});
 
   @override
-  Widget build(BuildContext context) => const AnnotatedRegion<SystemUiOverlayStyle>(
-    value: SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.dark,
-      statusBarBrightness: Brightness.light,
-      systemNavigationBarColor: GiriBrand.background,
-      systemNavigationBarIconBrightness: Brightness.dark,
-    ),
-    child: Scaffold(
-      backgroundColor: GiriBrand.background,
-      body: SizedBox.expand(
-        child: Image(
-          image: AssetImage(GiriBrand.launchScreen),
-          fit: BoxFit.contain,
-          semanticLabel: 'GiriStair',
+  Widget build(BuildContext context) =>
+      const AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+          systemNavigationBarColor: GiriBrand.background,
+          systemNavigationBarIconBrightness: Brightness.dark,
         ),
-      ),
-    ),
-  );
+        child: Scaffold(
+          backgroundColor: GiriBrand.background,
+          body: SizedBox.expand(
+            child: Image(
+              image: AssetImage(GiriBrand.launchScreen),
+              fit: BoxFit.contain,
+              semanticLabel: 'GiriStair',
+            ),
+          ),
+        ),
+      );
 }
