@@ -89,6 +89,16 @@ void main() {
       ],
     );
     await store.saveEvent(event);
+    await store.saveEvent(
+      GiriEvent(
+        id: 'untimed-live',
+        title: '日付だけの生大喜利',
+        kind: EventKind.live,
+        meetingType: MeetingType.casual,
+        createdAt: now,
+        eventDate: DateTime(now.year, now.month, now.day),
+      ),
+    );
     await tester.pumpWidget(
       app(
         Column(
@@ -109,6 +119,16 @@ void main() {
     expect(store.preferences.listCurrentMode, isTrue);
     expect(find.byType(CurrentCalendar), findsOneWidget);
     expect(find.text('継続サイト · 投稿'), findsWidgets);
+    expect(find.textContaining('時刻未定'), findsOneWidget);
+    final liveCard = find.ancestor(
+      of: find.text('日付だけの生大喜利'),
+      matching: find.byType(StairCard),
+    );
+    expect(liveCard, findsOneWidget);
+    expect(
+      find.descendant(of: liveCard, matching: find.textContaining('00:00')),
+      findsNothing,
+    );
     expect(find.byKey(const ValueKey('list-search')), findsNothing);
     expect(find.byKey(const ValueKey('list-attendance-tabs')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('list-mode-button')));

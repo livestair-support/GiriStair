@@ -170,7 +170,12 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
-  Widget _value(String label, String value, {Color? color}) => StairFieldRow(
+  Widget _detailField({required String label, required Widget child}) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    child: StairFieldRow(label: label, child: child),
+  );
+
+  Widget _value(String label, String value, {Color? color}) => _detailField(
     label: label,
     child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -583,7 +588,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       _value('投票開始', formatEventDate(round.votingStart)),
       _value('投票締切', formatEventDate(round.votingEnd)),
       if (event.isParticipating) ...[
-        StairFieldRow(
+        _detailField(
           label: '投稿に参加',
           child: Align(
             alignment: Alignment.centerRight,
@@ -598,7 +603,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
             ),
           ),
         ),
-        StairFieldRow(
+        _detailField(
           label: '投票を続ける',
           child: Align(
             alignment: Alignment.centerRight,

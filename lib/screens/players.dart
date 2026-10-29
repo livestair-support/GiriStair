@@ -549,7 +549,7 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
         appBar: StairNavigationBar(
           title: const Text('プレイヤー'),
           actions: [
-            CupertinoButton(
+            StairBarButton(
               onPressed: () => _edit(player),
               child: const Text('編集'),
             ),

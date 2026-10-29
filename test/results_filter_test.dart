@@ -179,6 +179,7 @@ void main() {
     await tester.tap(find.text('チーム大会'));
     await tester.pumpAndSettle();
     expect(find.text('大喜利詳細'), findsOneWidget);
+    expect(tester.getTopLeft(find.text('形式')).dx, 32);
     expect(find.text('予選1回戦 · お題1'), findsOneWidget);
     expect(find.text('チーム星'), findsOneWidget);
     expect(find.text('A、B、C'), findsNothing);

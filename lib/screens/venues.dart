@@ -28,7 +28,7 @@ class _VenueDirectoryScreenState extends State<VenueDirectoryScreen> {
     appBar: StairNavigationBar(
       title: const Text('会場一覧'),
       actions: [
-        CupertinoButton(
+        StairBarButton(
           onPressed: () => Navigator.of(context).push<GiriVenue>(
             CupertinoPageRoute(
               builder: (_) => VenueEditorScreen(store: widget.store),
@@ -297,7 +297,7 @@ class _VenueDetailScreenState extends State<VenueDetailScreen> {
         appBar: StairNavigationBar(
           title: const Text('会場'),
           actions: [
-            CupertinoButton(
+            StairBarButton(
               onPressed: _savingMap ? null : () => _edit(venue),
               child: const Text('編集'),
             ),

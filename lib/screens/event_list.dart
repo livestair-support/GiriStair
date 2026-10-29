@@ -431,7 +431,9 @@ class _EventListScreenState extends State<EventListScreen> {
               ),
             const SizedBox(height: 6),
             Text(
-              '${formatEventDate(period.start)} 〜 ${formatEventDate(period.end)}',
+              period.kind == CurrentPeriodKind.live
+                  ? formatLiveEventDate(period.event)
+                  : '${formatEventDate(period.start)} 〜 ${formatEventDate(period.end)}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             if (!period.event.isParticipating)

@@ -5,6 +5,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'stair_native_controls.dart';
 
+/// Toolbar actions have 44pt available; vertical padding must not clip labels.
+class StairBarButton extends StatelessWidget {
+  const StairBarButton({
+    super.key,
+    required this.onPressed,
+    required this.child,
+  });
+
+  final VoidCallback? onPressed;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => CupertinoButton(
+    padding: const EdgeInsets.symmetric(horizontal: 12),
+    minimumSize: const Size(44, 44),
+    onPressed: onPressed,
+    child: child,
+  );
+}
+
 class StairBackButton extends StatelessWidget {
   const StairBackButton({super.key, this.onPressed, this.enabled = true});
   final VoidCallback? onPressed;
