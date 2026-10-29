@@ -26,6 +26,28 @@ final class StairNativeControls: NSObject, FlutterPlugin {
 
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
+    case "previewOptions":
+      #if DEBUG
+      let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--stair-preview-screen=") }?.components(separatedBy: "=").last ?? "registration"
+      NSLog("GiriStairPreview %@", screen)
+      result(["screen": screen])
+      #else
+      result(FlutterMethodNotImplemented)
+      #endif
+    case "previewReady":
+      #if DEBUG
+      guard let arguments = call.arguments as? [String: Any],
+        let screen = arguments["screen"] as? String,
+        ["registration", "calendar", "thinking", "detail", "venue"].contains(screen)
+      else {
+        result(FlutterError(code: "invalid-preview", message: "Unsupported preview screen", details: nil))
+        return
+      }
+      NSLog("GiriStairPreviewReady %@", screen)
+      result(nil)
+      #else
+      result(FlutterMethodNotImplemented)
+      #endif
     case "initialize":
       let fonts = Self.fonts()
       if ProcessInfo.processInfo.arguments.contains("--stair-font-diagnostics") {
@@ -181,6 +203,7 @@ private final class StairNativeTimeContainer: UIView {
     clipsToBounds = true
     picker.locale = Locale(identifier: "ja_JP")
     picker.datePickerMode = .time
+    picker.minuteInterval = 5
     picker.calendar = Calendar(identifier: .gregorian)
     picker.preferredDatePickerStyle = .compact
     picker.tintColor = .systemPink
@@ -258,6 +281,7 @@ private final class StairNativeMenu: NSObject, FlutterPlatformView {
     let scale = CGFloat((arguments["textScale"] as? Double) ?? 1)
     var configuration = UIButton.Configuration.plain()
     configuration.title = title
+    configuration.titleLineBreakMode = .byTruncatingTail
     configuration.image = UIImage(systemName: "chevron.up.chevron.down", withConfiguration:
       UIImage.SymbolConfiguration(pointSize: 12 * scale, weight: .regular))
     configuration.imagePlacement = .trailing
@@ -270,6 +294,7 @@ private final class StairNativeMenu: NSObject, FlutterPlatformView {
       return attributes
     }
     button.configuration = configuration
+    button.titleLabel?.numberOfLines = 1
     button.accessibilityLabel = arguments["label"] as? String
     button.accessibilityValue = title
     button.menu = UIMenu(children: labels.enumerated().map { index, label in
@@ -310,6 +335,7 @@ private final class StairNativeDateController: UIViewController, UIAdaptivePrese
     picker.locale = Locale(identifier: "ja_JP")
     picker.calendar = Calendar(identifier: .gregorian)
     picker.datePickerMode = (arguments["mode"] as? String == "time") ? .time : .dateAndTime
+    picker.minuteInterval = 5
     picker.preferredDatePickerStyle = .wheels
     picker.date = Calendar(identifier: .gregorian).date(from: DateComponents(year: components[0], month: components[1], day: components[2], hour: components[3], minute: components[4])) ?? Date()
     picker.translatesAutoresizingMaskIntoConstraints = false

@@ -1,7 +1,7 @@
 name: giristair
 description: 生大喜利とネット大喜利の予定、戦績、思考を残すプレイヤーの記録帳。
 publish_to: none
-version: 0.2.1+1
+version: 0.3.0+1
 
 environment:
   sdk: '>=3.8.0 <4.0.0'
@@ -14,6 +14,7 @@ dependencies:
   path_provider: ^2.1.5
   cupertino_icons: ^1.0.8
   image_picker: ^1.2.1
+  url_launcher: ^6.3.2
   google_mlkit_text_recognition: ^0.15.1
   share_plus: ^12.0.1
   file_selector: ^1.0.4
@@ -30,3 +31,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/brand/source/

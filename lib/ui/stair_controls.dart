@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'stair_theme.dart';
+import '../japanese_holidays.dart';
 import 'stair_native_controls.dart';
 
 /// A native-style choice row, shared by the registration form's menus.
@@ -204,6 +205,9 @@ class StairMenuRow<T> extends StatelessWidget {
               Flexible(
                 child: Text(
                   items[value] ?? '',
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.right,
                   style: StairTypography.role(
                     StairTextRole.value,
@@ -811,7 +815,7 @@ class _StairCalendarState extends State<StairCalendar> {
                     ? Theme.of(context).disabledColor
                     : selected
                     ? Colors.white
-                    : date.weekday == DateTime.sunday
+                    : date.weekday == DateTime.sunday || isJapaneseHoliday(date)
                     ? CupertinoColors.systemRed.withValues(
                         alpha: isCurrentMonth ? 1 : .28,
                       )
@@ -889,7 +893,13 @@ class _DatePickerSheet extends StatefulWidget {
 }
 
 class _DatePickerSheetState extends State<_DatePickerSheet> {
-  late DateTime _selection = widget.initial;
+  late DateTime _selection = DateTime(
+    widget.initial.year,
+    widget.initial.month,
+    widget.initial.day,
+    widget.initial.hour,
+    widget.initial.minute ~/ 5 * 5,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -929,7 +939,8 @@ class _DatePickerSheetState extends State<_DatePickerSheet> {
             Expanded(
               child: CupertinoDatePicker(
                 mode: widget.mode,
-                initialDateTime: widget.initial,
+                initialDateTime: _selection,
+                minuteInterval: 5,
                 dateOrder: DatePickerDateOrder.ymd,
                 use24hFormat: true,
                 onDateTimeChanged: (value) => _selection = value,

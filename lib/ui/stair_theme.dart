@@ -7,6 +7,7 @@ import 'stair_symbols.dart';
 import 'stair_typography.dart';
 export 'stair_typography.dart';
 export 'stair_feedback.dart';
+export 'stair_navigation.dart';
 
 /// Shared visual language, taken from LiveStair's default/system theme.
 abstract final class StairColors {
@@ -128,9 +129,9 @@ ThemeData stairTheme(Brightness brightness, {bool warm = false}) {
       ),
       dividerTheme: DividerThemeData(
         color: (dark ? Colors.white : Colors.black).withValues(
-          alpha: dark ? 0.14 : 0.12,
+          alpha: dark ? 0.22 : 0.20,
         ),
-        thickness: 0.5,
+        thickness: 0.75,
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: false,
@@ -481,8 +482,8 @@ class StairFormSection extends StatelessWidget {
         ),
         for (var index = 0; index < children.length; index++) ...[
           Divider(
-            height: 0.5,
-            thickness: 0.5,
+            height: 0.75,
+            thickness: 0.75,
             indent: index == 0 ? 0 : StairFormMetrics.horizontalInset,
             endIndent: index == 0 ? 0 : StairFormMetrics.horizontalInset,
             color: Theme.of(context).dividerTheme.color,
@@ -521,6 +522,9 @@ class StairFormRow extends StatelessWidget {
             Flexible(
               child: Text(
                 label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
                 style: StairTypography.role(StairTextRole.formLabel).copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
@@ -530,7 +534,7 @@ class StairFormRow extends StatelessWidget {
           ],
         );
         final stacked =
-            constraints.maxWidth < 270 ||
+            constraints.maxWidth < 220 ||
             MediaQuery.textScalerOf(context).scale(17) > 22;
         return ConstrainedBox(
           constraints: const BoxConstraints(

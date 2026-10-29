@@ -26,18 +26,24 @@ iPhone 16 / iOS 26.2の最初の実撮影で、Flutterのラベル等が明朝�
 
 寸法、余白、色、文字の役割、行順、選択値更新、キーボード対応はFlutter側で合わせられます。タブ、Pickerメニュー、compact時刻のOS依存部分は実際のUIKitを使います。Roundedや日本語faceを端末から取得しても、Flutterの文字組み・fallbackがSwiftUIと完全に同じとはコード上だけで証明できません。
 
-Form自体はSwiftUI Formではありません。曲率、OS更新によるリスト余白、カーソル・選択ハンドル、画面遷移の細かい物理特性、FlutterのCupertino確認ダイアログには差が残る可能性があります。LiveStairの未定時刻は最初のタップで18時・19時を設定しますが、GiriStairの開始・終了に無関係な時刻を保存しないよう、未定を保持して選択させます。投稿・投票日時はGiriStairの確定シートを維持します。時刻の刻みはLiveStairが5分、GiriStairは既存の1分単位の入力を維持します。カレンダーの日本の祝日色は移植せず、週末色を合わせます。
+Form自体はSwiftUI Formではありません。曲率、OS更新によるリスト余白、カーソル・選択ハンドル、画面遷移の細かい物理特性、FlutterのCupertino確認ダイアログには差が残る可能性があります。LiveStairの未定時刻は最初のタップで18時・19時を設定しますが、GiriStairの開始・終了に無関係な時刻を保存しないよう、未定を保持して選択させます。投稿・投票日時はGiriStairの確定シートを維持します。追加依頼に従い時刻選択はすべて5分刻みへ変更し、既存日時はキャンセル時に変更しません。祝日計算はJapaneseHolidays.swiftから移植し、日曜・祝日を赤、土曜を青にします。
 
 ## 検証方法
 
-Flutter 3.44.0で整形・静的解析・機能テストと、行高・余白・keyboard・字体役割・native channelの回帰検査を行います。Android向けフォントとnative UIの無効化も検査します。iOS preview workflowはXcode/iOS 26以降の実シミュレーターでGiriStairをビルドし、登録PNGと機種・OS・SDKのmetadataを保存します。これはLiveStair本体の画像ではありません。
+Flutter 3.44.0で整形・静的解析・機能テストと、行高・余白・keyboard・字体役割・native channelの回帰検査を行います。Android向けフォントとnative UIの無効化を検査し、Android debug buildもCIで確認します。iOS preview workflowはXcode/iOS 26以降の実シミュレーターでGiriStairをビルドし、登録・詳細・カレンダー・思考・会場のPNGと機種・OS・SDKのmetadataを保存します。これはLiveStair本体の画像ではありません。
 
 両アプリを同じiPhone・iOS・文字サイズ「標準」・ライト表示で開き、次を比較してください。
 
-1. 登録タイトル、基本情報、形式ラベル、通常会の値、placeholder、保存の字形とベースライン。
+1. 登録タイトル、基本情報、形式ラベル、通常の値、placeholder、保存の字形とベースライン。
 2. 形式・参加状況の右側を押し、チェック、表示位置、外側タップ、選択更新、触覚の違い。
 3. 日付の月・年移動と日を押して閉じる動作。時刻を選ばなければ未定のままであること。
 4. タブの選択pill・SF Symbols・文字・下端距離、キーボードとタブ再表示、入力保持。
 5. 一覧・戦績・思考・設定・詳細・編集の見出しとカード、拡大文字・ダーク・横向きの崩れ。
 
 検査結果はPRに記載します。シミュレーター画像と、実機で2アプリを同条件にした比較は区別します。署名付きビルド・TestFlight配信・実機確認を実施済みとは扱いません。
+
+## 0.3の追加照合
+
+TicketScheduleGroups/TicketScheduleViewsの日時依存、ContentViewの月間カレンダーと一覧カード、LiveDetailViewの行配置、JapaneseHolidaysの休日規則、VenueDetailViewの190ptマップ、ScreenshotViewとLiveListShareViewの共有画像を追加参照しました。手入力日時を上書きせず、自動補完した未保存欄だけを開始日時へ連動させます。全ページの戻る＜は共通ナビゲーションへ統一します。追加依頼の機能と確認範囲はWORKFLOW_REVISION.md・PRに記載します。
+
+戻るボタンはiPhoneでは実際のUINavigationBarのback itemを描画し、Flutterのroute stackへ戻す方式です。保存中の無効化と未保存確認は呼び出し元が保持します。カレンダーは44ptの一覧／月間切替ボタン、21pt bold Roundedの年月、36ptの月移動操作、年月の2列ホイールを使用します。月移動では選択済みの日付を勝手に変更せず、「今日」で表示月と選択日を同時に戻します。カレンダー中は通常一覧の検索・参加状況を引き継がず、予定線の取りこぼしを防ぎます。

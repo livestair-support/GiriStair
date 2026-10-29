@@ -75,6 +75,7 @@ void main() {
         tournament('ネットの未入力', EventKind.online),
         tournament('中止した大会', EventKind.live, status: EventStatus.canceled),
         tournament('通常会', EventKind.live, meetingType: MeetingType.casual),
+        tournament('未参加の大会', EventKind.online).copyWith(isParticipating: false),
       ]) {
         await store.saveEvent(event);
       }
@@ -84,6 +85,7 @@ void main() {
       expect(find.text('大会の結果や順位を、記録から追記できます。'), findsNothing);
       expect(find.text('中止した大会'), findsNothing);
       expect(find.text('通常会'), findsNothing);
+      expect(find.text('未参加の大会'), findsNothing);
       expect(find.text('生の結果あり'), findsOneWidget);
       expect(find.text('ネットの未入力'), findsOneWidget);
 
@@ -109,7 +111,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('生の未入力'), findsOneWidget);
       expect(find.text('ネットの結果あり'), findsNothing);
-      expect(store.events, hasLength(6));
+      expect(store.events, hasLength(7));
       expect(tester.takeException(), isNull);
     },
   );
@@ -176,10 +178,14 @@ void main() {
     expect(find.text('優勝'), findsOneWidget);
     await tester.tap(find.text('チーム大会'));
     await tester.pumpAndSettle();
-    expect(find.text('参加記録'), findsOneWidget);
-    expect(find.text('予選1回戦'), findsOneWidget);
+    expect(find.text('大喜利詳細'), findsOneWidget);
+    expect(tester.getTopLeft(find.text('形式')).dx, 32);
+    expect(find.text('予選1回戦 · お題1'), findsOneWidget);
     expect(find.text('チーム星'), findsOneWidget);
-    expect(find.text('A、B、C'), findsOneWidget);
+    expect(find.text('A、B、C'), findsNothing);
+    for (final member in ['A', 'B', 'C']) {
+      expect(find.text(member), findsOneWidget);
+    }
     await tester.ensureVisible(find.text('敗者復活'));
     expect(find.text('通過 · 同点決選'), findsOneWidget);
     expect(tester.takeException(), isNull);

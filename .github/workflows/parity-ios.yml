@@ -8,7 +8,7 @@ concurrency:
 permissions:
   contents: read
 jobs:
-  iphone-preview:
+  build-iphone:
     runs-on: macos-15-intel
     timeout-minutes: 40
     steps:
@@ -23,12 +23,6 @@ jobs:
       - run: flutter pub get
       - name: Prepare native project
         run: python3 .ci/prepare_project.py
-      - name: Start iPhone simulator while the app builds
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/iphone-parity
-          python3 -u .ci/parity_ios.py prepare-simulator \
-            --output artifacts/iphone-parity 2>&1 | tee artifacts/iphone-parity/prepare-simulator.log
       - name: Build real iPhone simulator app
         run: |
           set -euo pipefail
@@ -58,15 +52,48 @@ jobs:
             exit 1
           fi
           tail -n 12 artifacts/iphone-parity/build.log
-      - name: Capture Japanese iPhone registration screen
+      - name: Archive the built simulator app for independent capture retries
+        run: ditto -c -k --keepParent build/ios/iphonesimulator/Runner.app artifacts/Runner.app.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iphone-simulator-app
+          path: artifacts/Runner.app.zip
+          retention-days: 1
+          overwrite: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iphone-build-logs
+          path: artifacts/iphone-parity
+          overwrite: true
+          if-no-files-found: warn
+  iphone-preview:
+    needs: build-iphone
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select installed Xcode with iOS 26 SDK
+        run: python3 .ci/parity_ios.py select-xcode
+      - uses: actions/download-artifact@v4
+        with:
+          name: iphone-simulator-app
+          path: artifacts/built-app
+      - name: Extract the actual compiled app
+        run: |
+          mkdir -p "$RUNNER_TEMP/giristair-preview"
+          ditto -x -k artifacts/built-app/Runner.app.zip "$RUNNER_TEMP/giristair-preview"
+      - name: Capture the five rendered Japanese iPhone screens
         run: |
           set -euo pipefail
+          mkdir -p artifacts/iphone-parity
           python3 -u .ci/parity_ios.py capture \
-            --app build/ios/iphonesimulator/Runner.app \
+            --app "$RUNNER_TEMP/giristair-preview/Runner.app" \
             --output artifacts/iphone-parity 2>&1 | tee artifacts/iphone-parity/capture.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: iphone-parity
           path: artifacts/iphone-parity
+          overwrite: true
           if-no-files-found: warn

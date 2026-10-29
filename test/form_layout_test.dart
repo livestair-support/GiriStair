@@ -30,7 +30,12 @@ void main() {
       await tester.pumpAndSettle();
 
       final header = tester.getRect(find.byType(StairPageHeader));
-      final save = tester.getRect(find.byType(OutlinedButton).first);
+      final save = tester.getRect(
+        find.descendant(
+          of: find.byType(StairSaveButton),
+          matching: find.byType(OutlinedButton),
+        ),
+      );
       final firstRow = tester.getRect(find.byType(StairMenuRow<EventKind>));
       final basic = find.byType(StairFormSection).first;
       final participants = find.byType(StairFormSection).at(1);

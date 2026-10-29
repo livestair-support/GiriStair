@@ -26,7 +26,7 @@ SkiaのCoreText照合は `kCTFontFamilyNameAttribute` を必須条件にする�
 
 セクション見出しは28のbadge・glyph14 semibold・文字18 bold Rounded。登録badgeの背景はアクセント色の0.12、汎用は0.14です。メイン見出しは38のbadge・glyph19 boldと34 boldの文字、余白は左右18・上8・下14、保存は44高です。
 
-用途色は `StairColors` にまとめます。カードは淡いtint、continuousの角丸、細い枠、左3のアクセントです。Form行の区切り線は左右16、見出し直下は全幅です。OSが描くFormの正確な曲率はRoundedSuperellipseで近似します。時刻は70×32・モノスペース数字、未定操作との境界に短い縦線を置きます。
+用途色は `StairColors` にまとめます。カードは淡いtint、continuousの角丸、細い枠、左3のアクセントです。Form行の区切り線は左右16、見出し直下は全幅です。追加依頼に従い線は0.75pt、黒0.20／白0.22へ強めます。OSが描くFormの正確な曲率はRoundedSuperellipseで近似します。時刻は70×32・モノスペース数字、未定操作との境界に短い縦線を置きます。
 
 キーボードで画面をリサイズし、入力を保持します。下部タブを隠したときは末尾余白を縮めます。編集画面は44高のナビゲーションと別の大きな見出しを使います。
 
@@ -34,9 +34,15 @@ SkiaのCoreText照合は `kCTFontFamilyNameAttribute` を必須条件にする�
 
 - タブは実際のUITabBarControllerです。独自カプセルや選択pillをFlutterで描きません。SF Symbols・文字・背景・選択形状・アニメーション・safe areaはOSが決定します。iOS 26の外観はiOS 26 SDK以降でリンクしたビルドで確認します。
 - Pickerは右側に実際のUIButton/UIMenuを置き、ラベル・ⓘとは別のタップ領域にします。チェック・位置・開閉・キャンセルをOSへ任せます。外側で閉じても値を変えません。参加状況だけselection feedbackを付けます。
-- 時刻はcompact UIDatePickerです。未定を押しただけで架空の時刻を保存しません。投稿・投票日時はnative wheelと確定・キャンセルを使います。
+- 時刻はcompact UIDatePickerです。すべての時刻選択は5分刻みです。既存の1分単位の日時はキャンセル時に丸めて保存しません。未定を押しただけで架空の時刻を保存しません。投稿・投票日時はnative wheelと確定・キャンセルを使います。
+- サブページはStairNavigationBar/StairBackButtonを使います。iPhoneの戻る＜はUINavigationBarの標準back itemで描画し、Flutter側のルート・未保存確認・戻るジェスチャーを維持します。
+- 会場のマップはMapKitの検索・選択・190pt/角丸16のプレビューです。検索は押したときだけ行い、位置情報許可は要求しません。Android等は地図URLと外部マップを使えます。
 - 日付はLiveStair独自カレンダーをFlutterで合わせ、日を押して確定します。月・年移動、未定への解除、外側タップのキャンセルを用意します。
 - badgeのアイコンは端末のSF Symbolsを実際に描画して使い、非iOS・未対応アイコンはFlutterへfallbackします。
 - 5タブ、IndexedStackの状態保持、各画面の機能を維持します。Androidと広い画面はCupertinoTabBarへfallbackします。
 
-保存データ・集計ロジックは変更しません。近似箇所と検証範囲は照合記録に明記します。
+一覧はLiveStairの一覧／月間カレンダー切替・年月移動を基準にします。期間線にサイト名と投稿／投票を明記し、生・ネットに表示上の優劣を付けません。土曜は青、日曜・祝日は赤です。祝日はJapaneseHolidays.swiftと同じ規則で計算します。
+
+0.3のデータ・集計・周期管理仕様はSPEC.md、要件はWORKFLOW_REVISION.mdを参照します。保存互換性を保ち、近似箇所と検証範囲は照合記録・PRに明記します。
+
+ブランド素材はユーザー提供のアイコン・横長ロゴ・起動画面を使用します。原本、OS用サイズ、読込画面と共有画像への適用は [BRAND_ASSETS.md](BRAND_ASSETS.md) に定義します。起動背景のクリーム色はブランド画像用で、既存の画面アクセント色を一律に変更しません。
