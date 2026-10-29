@@ -124,6 +124,23 @@ def verify_font_diagnostics(logs: str) -> dict:
     raise RuntimeError("No native font diagnostics were captured; glyph selection is unverified.")
 
 
+def wait_for_preview_ready(udid: str, pid: int, screen: str, output: Path) -> None:
+    deadline = time.monotonic() + 150
+    logs = ""
+    while time.monotonic() < deadline:
+        logs = run(
+            "xcrun", "simctl", "spawn", udid, "log", "show", "--last", "10m",
+            "--style", "compact", "--predicate", f"processIdentifier == {pid}",
+            timeout=60,
+        ).stdout
+        if f"GiriStairPreviewReady {screen}" in logs:
+            (output / f"{screen}-ready.log").write_text(logs, encoding="utf-8")
+            return
+        time.sleep(3)
+    (output / f"{screen}-ready.log").write_text(logs, encoding="utf-8")
+    raise RuntimeError(f"The real {screen} screen did not finish rendering; refusing a startup screenshot.")
+
+
 def capture(app: Path, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     with (app / "Info.plist").open("rb") as source:
@@ -149,12 +166,14 @@ def capture(app: Path, output: Path) -> None:
             "--disable-vm-service", "--disable-vm-service-publication",
             "--stair-font-diagnostics", f"--stair-preview-screen={screen}",
         )
-        # Resolve the real app's fonts, native tab/back items and map before
-        # capturing the composed simulator window. The harness has no user data.
-        time.sleep(15)
+        pid = re.search(r": (\d+)\s*$", launch.stdout)
+        if pid is None:
+            raise RuntimeError(f"Could not identify the preview process: {launch.stdout!r}")
+        wait_for_preview_ready(udid, int(pid.group(1)), screen, output)
         screenshot = output / f"{screen}-iphone-ja.png"
         run("xcrun", "simctl", "io", udid, "screenshot", "--type=png", str(screenshot))
-        captures.append({"screen": screen, "screenshot": screenshot.name, "launch": launch.stdout})
+        captures.append({"screen": screen, "screenshot": screenshot.name, "launch": launch.stdout,
+                         "readyConfirmed": True})
     xcode = run("xcodebuild", "-version").stdout
     metadata = {
         "capturedAtUtc": datetime.now(timezone.utc).isoformat(),
@@ -175,7 +194,7 @@ def capture(app: Path, output: Path) -> None:
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     logs = run(
-        "xcrun", "simctl", "spawn", udid, "log", "show", "--last", "5m",
+        "xcrun", "simctl", "spawn", udid, "log", "show", "--last", "20m",
         "--style", "compact", "--predicate", 'process == "Runner"',
     ).stdout
     (output / "simulator.log").write_text(logs, encoding="utf-8")

@@ -34,6 +34,20 @@ final class StairNativeControls: NSObject, FlutterPlugin {
       #else
       result(FlutterMethodNotImplemented)
       #endif
+    case "previewReady":
+      #if DEBUG
+      guard let arguments = call.arguments as? [String: Any],
+        let screen = arguments["screen"] as? String,
+        ["registration", "calendar", "thinking", "detail", "venue"].contains(screen)
+      else {
+        result(FlutterError(code: "invalid-preview", message: "Unsupported preview screen", details: nil))
+        return
+      }
+      NSLog("GiriStairPreviewReady %@", screen)
+      result(nil)
+      #else
+      result(FlutterMethodNotImplemented)
+      #endif
     case "initialize":
       let fonts = Self.fonts()
       if ProcessInfo.processInfo.arguments.contains("--stair-font-diagnostics") {

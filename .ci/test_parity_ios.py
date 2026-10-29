@@ -1,11 +1,15 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
+from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
-from parity_ios import choose_phone, run, start_phone, verify_font_diagnostics
+from parity_ios import (
+    choose_phone, run, start_phone, verify_font_diagnostics, wait_for_preview_ready,
+)
 
 
 class SimulatorSelectionTest(unittest.TestCase):
@@ -60,6 +64,35 @@ class SimulatorSelectionTest(unittest.TestCase):
                     run("xcrun", "simctl", "bootstatus", timeout=600)
         self.assertIn("Waiting for SpringBoard", output.getvalue())
         self.assertIn("Simulator diagnostic", output.getvalue())
+
+
+class PreviewReadinessTest(unittest.TestCase):
+    def test_only_the_requested_screen_from_the_current_process_is_ready(self):
+        replies = [
+            subprocess.CompletedProcess([], 0, "GiriStairPreviewReady calendar"),
+            subprocess.CompletedProcess([], 0, "GiriStairPreviewReady detail"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            with patch("parity_ios.run", side_effect=replies) as command:
+                with patch("parity_ios.time.sleep"):
+                    wait_for_preview_ready("phone", 123, "detail", output)
+            self.assertEqual(command.call_count, 2)
+            for call in command.call_args_list:
+                self.assertEqual(call.args[-1], "processIdentifier == 123")
+            self.assertIn(
+                "GiriStairPreviewReady detail",
+                (output / "detail-ready.log").read_text(),
+            )
+
+    def test_requested_route_without_render_completion_cannot_be_a_screenshot(self):
+        reply = subprocess.CompletedProcess([], 0, "GiriStairPreview detail")
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("parity_ios.run", return_value=reply):
+                with patch("parity_ios.time.monotonic", side_effect=[0, 0, 151]):
+                    with patch("parity_ios.time.sleep"):
+                        with self.assertRaisesRegex(RuntimeError, "refusing a startup screenshot"):
+                            wait_for_preview_ready("phone", 123, "detail", Path(directory))
 
 
 class FontDiagnosticsTest(unittest.TestCase):
