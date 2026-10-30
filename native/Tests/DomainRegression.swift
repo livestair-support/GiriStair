@@ -17,11 +17,13 @@ struct DomainRegression {
         }
         // UI dates keep LiveStair's Gregorian Japanese roles and local day.
         do {
-        let originalTimeZone = NSTimeZone.default
-        guard let tokyo = TimeZone(identifier: "Asia/Tokyo") else { throw GiriDataError.invalid("Missing Japan test timezone") }
-        NSTimeZone.default = tokyo
-        defer { NSTimeZone.default = originalTimeZone }
-        let cultureDay = Date(timeIntervalSince1970: 1_793_664_300) // 2026-11-03 09:05 JST
+        // Build local fixtures in the same calendar/timezone as the UI. On
+        // macOS, changing NSTimeZone.default does not change TimeZone.current.
+        let displayCalendar = Calendar(identifier: .gregorian)
+        guard let cultureDay = displayCalendar.date(from: DateComponents(year: 2026, month: 11, day: 3, hour: 9, minute: 5)),
+              let yearBoundary = displayCalendar.date(from: DateComponents(year: 2027, month: 1, day: 1, hour: 0, minute: 5)) else {
+            throw GiriDataError.invalid("Could not create local display date fixtures")
+        }
         try check(GiriDateText.day(cultureDay) == "2026年11月3日(火祝)", "full date and holiday badge match LiveStair")
         try check(GiriDateText.day(cultureDay, compact: true) == "2026/11/3(火祝)", "narrow list dates retain the year")
         try check(GiriDateText.time(cultureDay) == "9:05", "display hours do not add a leading zero")
@@ -30,8 +32,7 @@ struct DomainRegression {
         try check(GiriDateText.calendarDay(cultureDay) == "11月3日(火祝)", "selected calendar day omits the year")
         try check(GiriDateText.timeRange(nil, cultureDay) == "9:05" && GiriDateText.timeRange(nil, nil) == "--:--", "missing times never become fictitious midnight or duplicated placeholders")
         try check(GiriDateText.day(nil) == "日付未定" && GiriDateText.dateTime(nil) == "未定", "undated records keep their placeholder")
-        let yearBoundary = Date(timeIntervalSince1970: 1_798_729_500) // 2027-01-01 00:05 JST
-        try check(GiriDateText.day(yearBoundary) == "2027年1月1日(金祝)", "UTC timestamps display in the local Gregorian day at year rollover")
+        try check(GiriDateText.day(yearBoundary) == "2027年1月1日(金祝)", "local Gregorian year rollover retains the holiday marker")
         let ordinaryDay = cultureDay.addingTimeInterval(86400)
         try check(GiriDateText.day(ordinaryDay) == "2026年11月4日(水)", "ordinary weekdays have no holiday marker")
         }
