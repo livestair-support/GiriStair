@@ -4,9 +4,15 @@ import UIKit
 /// Native detail rows reuse LiveDetailView's Form sections and toolbar editing.
 struct GiriEventDetail: View {
     @EnvironmentObject private var store: GiriStore
+    @EnvironmentObject private var navigation: GiriNavigation
     @Environment(\.dismiss) private var dismiss
     let eventID: String
     @State private var deleteQuestion = false
+    @State private var showResultPrompt = false
+    @State private var promptRoundID: String?
+    @State private var showResultEditor = false
+    @State private var showCycleEditor = false
+    @State private var nextDraft: GiriRoundDraftAction?
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
 
@@ -15,29 +21,30 @@ struct GiriEventDetail: View {
             if let event {
                 Form {
                     basic(event)
-                    if !event.participants.isEmpty { participants(event) }
+                    if !event.participants.isEmpty && !(event.eventFormat != .live && event.meetingType == .tournament) { participants(event) }
                     teams(event)
-                    if event.kind == .online {
+                    thoughtsLink(event)
+                    if event.eventFormat.hasOnlineRounds {
                         ForEach(event.effectiveRounds) { round in
-                            GiriRoundWorkspaceSections(eventID: eventID, roundID: round.id)
+                            roundSection(event, round: round)
                         }
-                        Section {
-                            Button { addRound(event, sameStage: false) } label: { Label(event.meetingType == .tournament ? "次の段階を追加" : "日程を追加", systemImage: "plus.circle") }
-                            if event.meetingType == .tournament && !event.effectiveRounds.isEmpty {
-                                Button { addRound(event, sameStage: true) } label: { Label("同じ段階のお題を追加", systemImage: "plus.square.on.square") }
-                            }
-                        }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
+                        if event.meetingType == .tournament {
+                            Section {
+                                Button { nextDraft = .nextStage } label: { Label("次の段階を追加", systemImage: "plus.circle") }
+                                if !event.effectiveRounds.isEmpty {
+                                    Button { nextDraft = .sameStage } label: { Label("同じ段階の次回を追加", systemImage: "plus.square.on.square") }
+                                }
+                            }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
+                        }
                     }
+                    if event.meetingType == .casual && event.onlineSiteId != nil { cycleResults(event) }
                     if event.meetingType == .tournament { resultSections(event) }
                     if !event.memo.isEmpty {
                         Section {
-                            GiriEventCardSectionTitle(title: "振り返り", systemImage: "text.alignleft", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
+                            GiriEventCardSectionTitle(title: "メモ", systemImage: "text.alignleft", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
                             Text(event.memo).textSelection(.enabled)
                         }.appEventDetailCardStyle(accentColor: AppSectionAccent.memo)
                     }
-                    Section {
-                        Button("この記録を削除", role: .destructive) { deleteQuestion = true }
-                    }.appEventDetailCardStyle(accentColor: AppSectionAccent.live)
                 }
                 .appEditorFormStyle()
             } else {
@@ -54,7 +61,12 @@ struct GiriEventDetail: View {
                     NavigationLink { GiriEventEditor(event: event) } label: { Text("編集") }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    ShareLink(item: shareText(event)) { Image(systemName: "square.and.arrow.up") }
+                    Menu {
+                        ShareLink(item: shareText(event)) { Label("共有", systemImage: "square.and.arrow.up") }
+                        Divider()
+                        Button("削除", systemImage: "trash", role: .destructive) { deleteQuestion = true }
+                    } label: { Image(systemName: "ellipsis") }
+                    .accessibilityLabel("記録の操作")
                 }
             }
         }
@@ -68,17 +80,34 @@ struct GiriEventDetail: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("お題と回答のメモは残ります。") }
+        .task { offerResultIfNeeded() }
+        .alert("結果を入力しますか？", isPresented: $showResultPrompt) {
+            Button("後で", role: .cancel) {}
+            Button("入力する") {
+                if event?.meetingType == .casual && event?.onlineSiteId != nil { showCycleEditor = true }
+                else { showResultEditor = true }
+            }
+        } message: { Text(resultPromptMessage) }
+        .sheet(isPresented: $showResultEditor) {
+            NavigationStack { GiriResultEntry(eventID: eventID, initialRoundID: promptRoundID) }
+        }
+        .sheet(isPresented: $showCycleEditor) { NavigationStack { GiriCycleResultEditor(eventID: eventID) } }
+        .sheet(item: $nextDraft) { action in
+            NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
+        }
     }
 
     private func basic(_ event: GiriEvent) -> some View {
         Section {
             GiriEventCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live).listRowSeparator(.hidden)
-            detailValue("形式", event.kind.title)
+            detailValue("形式", event.eventFormat.title)
             detailValue("会の種類", event.meetingType.title)
-            if !event.isParticipating {
+            if !event.isActualParticipant && event.status != .canceled {
                 Button {
                     guard var current = self.event else { return }
                     current.isParticipating = true
+                    current.isInterested = false
+                    if current.status == .canceled { current.status = .planned }
                     let me = store.preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !me.isEmpty && !current.participants.contains(where: { playerSearchKey($0) == playerSearchKey(me) }) {
                         current.participants.append(me)
@@ -90,14 +119,14 @@ struct GiriEventDetail: View {
                 } label: { Label("この回に参加する", systemImage: "person.badge.plus") }
                     .tint(accentActionColor)
             }
-            Picker(selection: Binding(get: { self.event?.status ?? event.status }, set: { value in
-                guard var current = self.event else { return }
-                current.status = value
-                store.run { try store.saveEvent(current) }
-            })) {
-                ForEach(EventStatus.allCases) { Text($0.title).tag($0) }
-            } label: { Text("参加状況").foregroundStyle(.secondary) }
-            .pickerStyle(.menu).tint(.primary)
+            if event.eventFormat == .live {
+                Picker("参加", selection: participationChoice) {
+                    Text("参加").tag("participating")
+                    Text("興味あり").tag("interested")
+                    Text("キャンセル").tag("canceled")
+                }.pickerStyle(.menu).tint(.primary)
+            }
+            detailValue("参加状況", event.participationState().title)
             adaptiveName(event.title)
             if !event.organizer.isEmpty {
                 if let player = store.playerByName(event.organizer) {
@@ -106,7 +135,7 @@ struct GiriEventDetail: View {
                     }
                 } else { detailValue("主催者", event.organizer) }
             }
-            if event.kind == .live {
+            if event.eventFormat.hasLiveTiming {
                 if let day = event.eventDate ?? event.startsAt {
                     HStack {
                         Text("日付").foregroundStyle(.secondary)
@@ -127,7 +156,7 @@ struct GiriEventDetail: View {
                         detailValueText(giriDetailTime(event.endsAt))
                     }
                 }
-                if let venue = store.venueDirectory.first(where: { $0.id == event.venueId || $0.name == event.venue && !event.venue.isEmpty }) {
+                if (event.eventFormat == .live || event.eventFormat == .hybrid), let venue = store.venueDirectory.first(where: { $0.id == event.venueId || $0.name == event.venue && !event.venue.isEmpty }) {
                     NavigationLink { GiriVenueDetail(venueID: venue.id) } label: {
                         HStack {
                             Text("会場").foregroundStyle(.secondary)
@@ -136,13 +165,14 @@ struct GiriEventDetail: View {
                                 .lineLimit(1).minimumScaleFactor(0.62).allowsTightening(true)
                         }
                     }
-                } else { detailValue("会場", event.venue.isEmpty ? "未設定" : event.venue) }
-            } else {
+                } else if event.eventFormat == .live || event.eventFormat == .hybrid { detailValue("会場", event.venue.isEmpty ? "未設定" : event.venue) }
+            }
+            if event.eventFormat != .live {
                 if !event.siteUrl.isEmpty, let url = URL(string: event.siteUrl), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
                     Link(destination: url) { Label(event.siteUrl, systemImage: "globe").lineLimit(2) }
                 }
                 if !event.affiliation.isEmpty { detailValue("所属・部", event.affiliation) }
-                if !event.block.isEmpty { detailValue("自分のブロック", event.block) }
+                if !event.block.isEmpty { detailValue("ブロック", event.block) }
             }
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.live)
     }
@@ -201,7 +231,11 @@ struct GiriEventDetail: View {
                 NavigationLink { GiriResultEntry(eventID: eventID) } label: { Text(event.hasRecordedResult ? "編集" : "記録").font(.subheadline) }
                     .tint(accentActionColor)
             }.listRowSeparator(.hidden)
-            detailValue("最終結果", event.tournamentResult?.outcome.title ?? (event.placement == nil ? "未記録" : "\(event.placement ?? 0)位"))
+            if event.hasFinalResult {
+                detailValue("最終結果", event.tournamentResult?.outcome.title ?? (event.placement == nil ? "未記録" : "\(event.placement ?? 0)位"))
+            } else {
+                detailValue("進行状況", latestProgress(event))
+            }
             if let rank = event.effectivePlacement { detailValue("最終順位", "\(rank)位") }
             if let result = event.tournamentResult, !result.memo.isEmpty { Text(result.memo).textSelection(.enabled) }
             else if !event.resultText.isEmpty { Text(event.resultText).textSelection(.enabled) }
@@ -276,16 +310,127 @@ struct GiriEventDetail: View {
         }
     }
 
-    private func addRound(_ event: GiriEvent, sameStage: Bool) {
-        var updated = event
-        updated.rounds = event.effectiveRounds
-        let next = nextEventRound(rounds: updated.rounds, id: UUID().uuidString, preferences: store.preferences, sameStage: sameStage, tournament: event.meetingType == .tournament, referenceDate: event.eventDate ?? Date())
-        updated.rounds.append(next)
-        store.run { try store.saveEvent(updated) }
+    private var participationChoice: Binding<String> {
+        Binding(get: {
+            guard let event else { return "participating" }
+            return event.status == .canceled ? "canceled" : event.isInterested ? "interested" : "participating"
+        }, set: { value in
+            guard var current = event else { return }
+            current.isInterested = value == "interested"
+            current.isParticipating = value == "participating"
+            if value == "canceled" { current.status = .canceled }
+            else if current.status == .canceled || value == "interested" { current.status = .planned }
+            store.run { try store.saveEvent(current) }
+        })
+    }
+
+    private func roundTitle(_ round: EventRound) -> String { "\(round.name) \(round.promptNumber)回目" }
+
+    private func thoughtsLink(_ event: GiriEvent) -> some View {
+        Section {
+            GiriEventCardSectionTitle(title: "お題・回答", systemImage: "lightbulb", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
+            Button { navigation.openThoughts(eventID: event.id) } label: {
+                HStack {
+                    Label("思考でお題・回答を開く", systemImage: "arrow.up.forward.square")
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                }
+            }.tint(accentActionColor)
+        }.appEventDetailCardStyle(accentColor: AppSectionAccent.memo)
+    }
+
+    private func roundSection(_ event: GiriEvent, round: EventRound) -> some View {
+        Section {
+            GiriEventCardSectionTitle(title: roundTitle(round), systemImage: "calendar", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
+            if !round.block.isEmpty { detailValue("ブロック", round.block) }
+            scheduleValue("投稿開始", round.submissionStart)
+            scheduleValue("投稿締切", round.submissionEnd)
+            scheduleValue("投票開始", round.votingStart)
+            scheduleValue("投票締切", round.votingEnd)
+            NavigationLink("日程を編集") { GiriRoundEditor(eventID: eventID, round: round) }
+            Button { navigation.openThoughts(eventID: eventID, roundID: round.id) } label: {
+                Label("この回のお題・回答を思考で開く", systemImage: "lightbulb")
+            }.tint(accentActionColor)
+            if event.meetingType == .tournament {
+                NavigationLink { GiriResultEntry(eventID: eventID, initialRoundID: round.id) } label: {
+                    HStack {
+                        Text("この回の結果")
+                        Spacer()
+                        Text(roundResult(event, round: round)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
+    }
+
+    private func scheduleValue(_ title: String, _ date: Date?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Text(GiriDateText.dateTime(date)).font(.subheadline).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+        }
+    }
+
+    private func cycleResults(_ event: GiriEvent) -> some View {
+        Section {
+            GiriEventCardSectionTitle(title: "この回の結果", systemImage: "chart.bar", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
+            if !event.affiliation.isEmpty { detailValue("今回の所属", event.affiliation) }
+            if let placement = event.cyclePlacement { detailValue("順位", "\(placement)位") }
+            if !event.cycleResult.isEmpty { Text(event.cycleResult).textSelection(.enabled) }
+            if !event.nextAffiliation.isEmpty { detailValue("次回の所属", event.nextAffiliation) }
+            NavigationLink(event.cycleResult.isEmpty && event.cyclePlacement == nil ? "結果を入力" : "結果を編集") { GiriCycleResultEditor(eventID: eventID) }
+        }.appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
+    private func roundResult(_ event: GiriEvent, round: EventRound) -> String {
+        guard let stage = event.tournamentResult?.stages.first(where: { $0.roundId == round.id && $0.hasRecord }) else { return "未入力" }
+        var values: [String] = []
+        if stage.outcome != .unrecorded { values.append(stage.outcome.title) }
+        if let placement = stage.placement { values.append("\(placement)位") }
+        return values.isEmpty ? "入力済み" : values.joined(separator: "・")
+    }
+
+    private func latestProgress(_ event: GiriEvent) -> String {
+        let stages = event.tournamentResult?.stages ?? []
+        for round in event.effectiveRounds.reversed() {
+            if let stage = stages.first(where: { $0.roundId == round.id && $0.outcome != .unrecorded }) { return stage.outcome.title }
+        }
+        return stages.last(where: { $0.outcome != .unrecorded })?.outcome.title ?? "未記録"
+    }
+
+    private func offerResultIfNeeded() {
+        guard let event, event.isActualParticipant else { return }
+        let now = Date()
+        if event.eventFormat.hasOnlineRounds && !event.effectiveRounds.isEmpty {
+            let finished = event.effectiveRounds.filter { round in
+                guard let end = round.votingEnd, end <= now else { return false }
+                let key = "round:" + round.id
+                guard !event.promptedResultKeys.contains(key) else { return false }
+                if event.meetingType == .casual { return event.cycleResult.isEmpty && event.cyclePlacement == nil }
+                return !event.hasRecordedResult(for: round)
+            }.sorted { ($0.votingEnd ?? .distantPast) > ($1.votingEnd ?? .distantPast) }
+            guard let round = finished.first else { return }
+            do {
+                try store.markResultPrompted(eventID: eventID, key: "round:" + round.id)
+                promptRoundID = round.id
+                showResultPrompt = true
+            } catch { store.errorMessage = error.localizedDescription }
+        } else if event.meetingType == .tournament && event.hasEnded() && !event.hasFinalResult && !event.promptedResultKeys.contains("final") {
+            do {
+                try store.markResultPrompted(eventID: eventID, key: "final")
+                promptRoundID = nil
+                showResultPrompt = true
+            } catch { store.errorMessage = error.localizedDescription }
+        }
+    }
+
+    private var resultPromptMessage: String {
+        if let id = promptRoundID, let round = event?.effectiveRounds.first(where: { $0.id == id }) { return roundTitle(round) }
+        return event?.title ?? ""
     }
 
     private func shareText(_ event: GiriEvent) -> String {
-        var lines = [event.title, event.kind.title + "・" + event.meetingType.title]
+        var lines = [event.title, event.eventFormat.title + "・" + event.meetingType.title]
         if let day = event.eventDate ?? event.startsAt { lines.append(giriDetailDate(day)) }
         if !event.venue.isEmpty { lines.append(event.venue) }
         if !event.siteUrl.isEmpty { lines.append(event.siteUrl) }

@@ -334,11 +334,17 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var venueId: String? = nil
     var standings: [TournamentStanding] = []
     var isParticipating: Bool = true
+    var format: EventFormat? = nil
+    var isInterested: Bool = false
+    var promptedResultKeys: [String] = []
+    var cycleResult: String = ""
+    var cyclePlacement: Int? = nil
+    var nextAffiliation: String = ""
 }
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -411,6 +417,13 @@ extension GiriEvent {
 
         if !c.contains(.tournamentFormat) { tournamentFormat = tournamentResult?.format ?? .individual } else if try c.decodeNil(forKey: .tournamentFormat) { tournamentFormat = tournamentResult?.format ?? .individual }
 
+        format = try c.decodeIfPresent(EventFormat.self, forKey: .format)
+        isInterested = try c.decodeIfPresent(Bool.self, forKey: .isInterested) ?? false
+        promptedResultKeys = try c.decodeIfPresent([String].self, forKey: .promptedResultKeys) ?? []
+        cycleResult = try c.decodeIfPresent(String.self, forKey: .cycleResult) ?? ""
+        cyclePlacement = try c.decodeIfPresent(Int.self, forKey: .cyclePlacement)
+        nextAffiliation = try c.decodeIfPresent(String.self, forKey: .nextAffiliation) ?? ""
+
         try validate()
     }
     func encode(to encoder: Encoder) throws {
@@ -482,6 +495,13 @@ extension GiriEvent {
 
         try c.encode(isParticipating, forKey: .isParticipating)
 
+        try c.encode(format, forKey: .format)
+        try c.encode(isInterested, forKey: .isInterested)
+        try c.encode(promptedResultKeys, forKey: .promptedResultKeys)
+        try c.encode(cycleResult, forKey: .cycleResult)
+        try c.encode(cyclePlacement, forKey: .cyclePlacement)
+        try c.encode(nextAffiliation, forKey: .nextAffiliation)
+
     }
 }
 
@@ -498,11 +518,15 @@ struct ThoughtNote: Codable, Equatable, Identifiable {
     var answers: [String] = []
     var used: Bool = false
     var imageDataBase64: String = ""
+    var answerRecords: [AnswerRecord] = []
+    var isOthersAnswer: Bool = false
+    var answerer: String = ""
+    var usesAnswerRecords: Bool = false
 }
 
 extension ThoughtNote {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, createdAt, updatedAt, body, eventId, roundId, prompt, answers, used, imageDataBase64
+        case id, title, kind, createdAt, updatedAt, body, eventId, roundId, prompt, answers, used, imageDataBase64, answerRecords, isOthersAnswer, answerer, usesAnswerRecords
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -530,6 +554,11 @@ extension ThoughtNote {
         used = try c.decodeIfPresent(Bool.self, forKey: .used) ?? false
 
         imageDataBase64 = try c.decodeIfPresent(String.self, forKey: .imageDataBase64) ?? ""
+
+        answerRecords = try c.decodeIfPresent([AnswerRecord].self, forKey: .answerRecords) ?? []
+        isOthersAnswer = try c.decodeIfPresent(Bool.self, forKey: .isOthersAnswer) ?? false
+        answerer = try c.decodeIfPresent(String.self, forKey: .answerer) ?? ""
+        usesAnswerRecords = try c.decodeIfPresent(Bool.self, forKey: .usesAnswerRecords) ?? false
 
         try validate()
     }
@@ -559,6 +588,11 @@ extension ThoughtNote {
         try c.encode(used, forKey: .used)
 
         try c.encode(imageDataBase64, forKey: .imageDataBase64)
+
+        try c.encode(answerRecords, forKey: .answerRecords)
+        try c.encode(isOthersAnswer, forKey: .isOthersAnswer)
+        try c.encode(answerer, forKey: .answerer)
+        try c.encode(usesAnswerRecords, forKey: .usesAnswerRecords)
 
     }
 }
@@ -631,11 +665,12 @@ struct AppPreferences: Codable, Equatable {
     var submissionStartHour: Int = 22
     var submissionStartMinute: Int = 0
     var playerIconMode: String = "auto"
+    var hasShownInitialResultPrompt: Bool = false
 }
 
 extension AppPreferences {
     private enum CodingKeys: String, CodingKey {
-        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode
+        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -667,6 +702,8 @@ extension AppPreferences {
         submissionStartMinute = try c.decodeIfPresent(Int.self, forKey: .submissionStartMinute) ?? 0
 
         playerIconMode = try c.decodeIfPresent(String.self, forKey: .playerIconMode) ?? "auto"
+
+        hasShownInitialResultPrompt = try c.decodeIfPresent(Bool.self, forKey: .hasShownInitialResultPrompt) ?? false
 
         try validate()
     }
@@ -701,6 +738,8 @@ extension AppPreferences {
 
         try c.encode(playerIconMode, forKey: .playerIconMode)
 
+        try c.encode(hasShownInitialResultPrompt, forKey: .hasShownInitialResultPrompt)
+
     }
 }
 
@@ -717,11 +756,13 @@ struct OnlineSite: Codable, Equatable, Identifiable {
     var affiliation: String = ""
     var block: String = ""
     var memo: String = ""
+    var hasAffiliations: Bool = false
+    var format: EventFormat = .onlineLong
 }
 
 extension OnlineSite {
     private enum CodingKeys: String, CodingKey {
-        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo
+        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -749,6 +790,9 @@ extension OnlineSite {
         block = try c.decodeIfPresent(String.self, forKey: .block) ?? ""
 
         memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
+
+        hasAffiliations = try c.decodeIfPresent(Bool.self, forKey: .hasAffiliations) ?? !affiliation.isEmpty
+        format = try c.decodeIfPresent(EventFormat.self, forKey: .format) ?? .onlineLong
 
         try validate()
     }
@@ -778,6 +822,9 @@ extension OnlineSite {
         try c.encode(block, forKey: .block)
 
         try c.encode(memo, forKey: .memo)
+
+        try c.encode(hasAffiliations, forKey: .hasAffiliations)
+        try c.encode(format, forKey: .format)
 
     }
 }
@@ -1147,6 +1194,8 @@ extension GiriEvent {
         try uniqueIDs(rounds); try uniqueIDs(teams); try uniqueIDs(standings)
         try rounds.forEach { try $0.validate() }; try teams.forEach { try $0.validate() }; try standings.forEach { try $0.validate() }
         try tournamentResult?.validate()
+        try positive(cyclePlacement, "順位")
+        try require(Set(promptedResultKeys).count == promptedResultKeys.count, "結果案内のキーが重複しています。")
     }
     func isHostedBy(_ name: String) -> Bool { !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && playerSearchKey(organizer) == playerSearchKey(name) }
     var effectiveRounds: [EventRound] {
@@ -1171,14 +1220,20 @@ extension GiriEvent {
     }
     var hasFinalResult: Bool { hasStructuredFinalResult || effectivePlacement != nil || (tournamentResult == nil && !resultText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
     var hasRecordedResult: Bool { tournamentResult?.hasRecord == true || !resultText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (placement ?? 0) > 0 }
-    func isSubmissionOpen(_ now: Date) -> Bool { kind == .online && isParticipating && status != .canceled && effectiveRounds.contains { $0.isSubmissionOpen(now) } }
+    func isSubmissionOpen(_ now: Date) -> Bool { eventFormat.hasOnlineRounds && isActualParticipant && effectiveRounds.contains { $0.isSubmissionOpen(now) } }
     func nextSubmissionEnd(_ now: Date) -> Date? {
-        guard kind == .online && isParticipating && status != .canceled else { return nil }
+        guard eventFormat.hasOnlineRounds && isActualParticipant else { return nil }
         return effectiveRounds.filter { $0.isSubmissionOpen(now) }.compactMap(\.submissionEnd).min()
     }
 }
 
-extension ThoughtNote { func validate() throws { try validID(id) } }
+extension ThoughtNote {
+    func validate() throws {
+        try validID(id)
+        try uniqueIDs(answerRecords)
+        try answerRecords.forEach { try $0.validate() }
+    }
+}
 extension GiriPlayer { func validate() throws { try validID(id); try require(!name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "プレイヤー名がありません。") } }
 extension GiriTeam { func validate() throws { try validID(id) } }
 extension TournamentStanding { func validate() throws { try validID(id); try positive(placement, "順位") } }

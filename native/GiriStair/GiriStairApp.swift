@@ -5,11 +5,13 @@ import SwiftUI
 @MainActor
 struct GiriStairApp: App {
     @StateObject private var store = GiriStore()
+    @StateObject private var navigation = GiriNavigation()
 
     var body: some Scene {
         WindowGroup {
             GiriRootView()
                 .environmentObject(store)
+                .environmentObject(navigation)
                 .environment(\.locale, Locale(identifier: "ja_JP"))
                 .preferredColorScheme(preferredAppearance)
         }
@@ -27,9 +29,8 @@ struct GiriStairApp: App {
 @MainActor
 private struct GiriRootView: View {
     @EnvironmentObject private var store: GiriStore
+    @EnvironmentObject private var navigation: GiriNavigation
     @Environment(\.scenePhase) private var scenePhase
-    @State private var selection = 1
-    @State private var promptedResults: Set<String> = []
     @State private var pendingResult: GiriEvent?
     @State private var resultEditor: GiriEvent?
 
@@ -86,14 +87,14 @@ private struct GiriRootView: View {
     }
 
     private var tabs: some View {
-        TabView(selection: $selection) {
-            NavigationStack { GiriEventEditor(onSaved: { selection = 1 }) }
+        TabView(selection: $navigation.selectedTab) {
+            NavigationStack { GiriEventEditor(onSaved: { navigation.selectedTab = 1 }) }
                 .tabItem { Label("登録", systemImage: "plus.circle.fill") }.tag(0)
             NavigationStack { GiriListView() }
                 .tabItem { Label("一覧", systemImage: "clock.fill") }.tag(1)
             NavigationStack { GiriResultsView() }
                 .tabItem { Label("戦績", systemImage: "trophy.fill") }.tag(2)
-            NavigationStack { GiriThinkingView() }
+            GiriThinkingView()
                 .tabItem { Label("思考", systemImage: "checklist") }.tag(3)
             NavigationStack { GiriSettingsView() }
                 .tabItem { Label("設定", systemImage: "gearshape.fill") }.tag(4)
@@ -108,16 +109,22 @@ private struct GiriRootView: View {
     }
 
     private func promptForResult() {
-        guard store.loaded, store.preferences.onboardingCompleted, pendingResult == nil, resultEditor == nil else { return }
+        guard store.loaded, store.preferences.onboardingCompleted,
+              !store.preferences.hasShownInitialResultPrompt,
+              pendingResult == nil, resultEditor == nil else { return }
         let now = Date()
         let candidate = store.events.filter { event in
-            guard event.kind == .live, event.meetingType == .tournament, event.isParticipating,
-                  event.status != .canceled, !event.hasFinalResult, !promptedResults.contains(event.id) else { return false }
-            if let end = event.endsAt { return end <= now }
-            guard let date = event.eventDate ?? event.startsAt else { return false }
-            return Calendar.current.startOfDay(for: date) < Calendar.current.startOfDay(for: now)
+            event.eventFormat == .live && event.meetingType == .tournament &&
+            event.isActualParticipant && !event.hasFinalResult && event.hasEnded(now: now)
         }.sorted { ($0.eventDate ?? $0.startsAt ?? $0.createdAt) > ($1.eventDate ?? $1.startsAt ?? $1.createdAt) }.first
-        if let candidate { promptedResults.insert(candidate.id); pendingResult = candidate }
+        if let candidate {
+            var preferences = store.preferences
+            preferences.hasShownInitialResultPrompt = true
+            store.run {
+                try store.savePreferences(preferences)
+                pendingResult = candidate
+            }
+        }
     }
 }
 

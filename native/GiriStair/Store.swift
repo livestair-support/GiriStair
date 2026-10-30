@@ -81,7 +81,7 @@ final class GiriStore: ObservableObject {
 
     var playerDirectory: [GiriPlayer] {
         var profiles = Dictionary(players.map { (playerSearchKey($0.name), $0) }, uniquingKeysWith: { first, _ in first })
-        for name in [preferences.selfName] + events.flatMap(referencedNames) {
+        for name in [preferences.selfName] + events.flatMap(referencedNames) + notes.filter(\.isOthersAnswer).map(\.answerer) {
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             let key = playerSearchKey(trimmed)
             if !trimmed.isEmpty && profiles[key] == nil { profiles[key] = GiriPlayer(id: "history:\(key)", name: trimmed) }
@@ -119,7 +119,8 @@ final class GiriStore: ObservableObject {
         }
     }
 
-    func saveEvent(_ event: GiriEvent) throws {
+    func saveEvent(_ candidate: GiriEvent) throws {
+        let event = Self.normalizedEvent(candidate)
         try event.validate()
         let names = referencedNames(event)
         try mutate { next in
@@ -137,7 +138,62 @@ final class GiriStore: ObservableObject {
             for index in next.notes.indices where next.notes[index].eventId == id { next.notes[index].eventId = nil; next.notes[index].roundId = nil }
         }
     }
-    func saveNote(_ note: ThoughtNote) throws { try note.validate(); try mutate { Self.upsert(note, into: &$0.notes) } }
+    private static func normalizedEvent(_ candidate: GiriEvent) -> GiriEvent {
+        var event = candidate
+        if let format = event.format { event.kind = format == .live ? .live : .online }
+        if event.isInterested { event.isParticipating = false }
+        return event
+    }
+    private static func normalizedNote(_ candidate: ThoughtNote) -> ThoughtNote {
+        var note = candidate
+        if note.usesAnswerRecords || !note.answerRecords.isEmpty {
+            note.usesAnswerRecords = true
+            note.answers = note.answerRecords.map(\.text)
+        }
+        return note
+    }
+    func saveNote(_ candidate: ThoughtNote) throws {
+        let note = Self.normalizedNote(candidate)
+        try note.validate()
+        try mutate { Self.upsert(note, into: &$0.notes) }
+    }
+    /// Own result and per-answer scores form one durable document mutation.
+    func saveResult(event candidate: GiriEvent, notes candidates: [ThoughtNote]) throws {
+        let event = Self.normalizedEvent(candidate)
+        let notes = candidates.map(Self.normalizedNote)
+        try event.validate()
+        try notes.forEach { try $0.validate() }
+        guard Set(notes.map(\.id)).count == notes.count else { throw GiriDataError.invalid("回答メモのIDが重複しています。") }
+        try mutate { next in
+            Self.upsert(event, into: &next.events)
+            for note in notes { Self.upsert(note, into: &next.notes) }
+        }
+    }
+    func markResultPrompted(eventID: String, key: String) throws {
+        guard !key.isEmpty, let index = events.firstIndex(where: { $0.id == eventID }) else { return }
+        guard !events[index].promptedResultKeys.contains(key) else { return }
+        try mutate { $0.events[index].promptedResultKeys.append(key) }
+    }
+    /// Save this cycle's historical snapshot and only the next-cycle default.
+    func saveCycleResult(event candidate: GiriEvent, nextAffiliation: String? = nil) throws {
+        var event = Self.normalizedEvent(candidate)
+        if let nextAffiliation { event.nextAffiliation = nextAffiliation.trimmingCharacters(in: .whitespacesAndNewlines) }
+        try event.validate()
+        try mutate { next in
+            Self.upsert(event, into: &next.events)
+            guard event.isActualParticipant, let nextAffiliation, let siteID = event.onlineSiteId,
+                  let siteIndex = next.onlineSites.firstIndex(where: { $0.id == siteID }),
+                  next.onlineSites[siteIndex].hasAffiliations else { return }
+            let reference = event.participationStartDate ?? event.createdAt
+            let laterJoined = next.events.contains { $0.id != event.id && $0.onlineSiteId == siteID && $0.isActualParticipant && ($0.participationStartDate ?? $0.createdAt) > reference }
+            guard !laterJoined else { return }
+            let affiliation = nextAffiliation.trimmingCharacters(in: .whitespacesAndNewlines)
+            next.onlineSites[siteIndex].affiliation = affiliation
+            for index in next.events.indices where next.events[index].onlineSiteId == siteID && !next.events[index].isParticipating && !next.events[index].isInterested && (next.events[index].participationStartDate ?? next.events[index].createdAt) > reference {
+                next.events[index].affiliation = affiliation
+            }
+        }
+    }
     func deleteNote(_ id: String) throws { try mutate { $0.notes.removeAll { $0.id == id } } }
     func savePlayer(_ candidate: GiriPlayer) throws {
         var player = candidate
@@ -183,6 +239,7 @@ final class GiriStore: ObservableObject {
             for standing in next.events[index].standings.indices { next.events[index].standings[standing].playerNames = next.events[index].standings[standing].playerNames.map(rename) }
             if var result = next.events[index].tournamentResult { result.members = result.members.map(rename); next.events[index].tournamentResult = result }
         }
+        for index in next.notes.indices where next.notes[index].isOthersAnswer { next.notes[index].answerer = rename(next.notes[index].answerer) }
         if playerSearchKey(next.preferences.selfName) == key { next.preferences.selfName = name }
     }
 
@@ -221,8 +278,12 @@ final class GiriStore: ObservableObject {
         let start = submissionStart ?? siteCycleStart(site, weekOf: weekOf, weekOffset: weekOffset)
         let key = cycleKeyFor(start)
         if var event = events.first(where: { $0.onlineSiteId == siteID && $0.cycleKey == key }) {
-            if join && !event.isParticipating {
+            if join && !event.isActualParticipant {
                 event.isParticipating = true
+                event.isInterested = false
+                event.status = .planned
+                event.eventFormat = site.format
+                event.affiliation = site.hasAffiliations ? site.affiliation : ""
                 let name = preferences.selfName
                 if !name.isEmpty && !event.participants.contains(where: { playerSearchKey($0) == playerSearchKey(name) }) { event.participants.append(name) }
                 try saveEvent(event)
@@ -233,8 +294,8 @@ final class GiriStore: ObservableObject {
         round.stageId = round.id; round.block = site.block; round.submissionStart = start
         round = completeRoundSchedule(round, submissionDays: site.submissionDays, votingDays: site.votingDays)
         var event = GiriEvent()
-        event.title = site.name; event.kind = .online; event.meetingType = .casual
-        event.onlineSiteId = site.id; event.cycleKey = key; event.affiliation = site.affiliation; event.block = site.block
+        event.title = site.name; event.eventFormat = site.format; event.meetingType = .casual
+        event.onlineSiteId = site.id; event.cycleKey = key; event.affiliation = site.hasAffiliations ? site.affiliation : ""; event.block = site.block
         event.siteUrl = site.url; event.memo = site.memo; event.rounds = [round]; event.isParticipating = join
         if join && !preferences.selfName.isEmpty { event.participants = [preferences.selfName] }
         try saveEvent(event)

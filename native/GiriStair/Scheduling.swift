@@ -53,20 +53,35 @@ func nextStageName(_ name: String) -> String {
     if trimmed.contains("決勝") { return "追加日程" }
     return "予選1回戦"
 }
-func addNextRound(_ previous: EventRound?, id: String = UUID().uuidString, sameStage: Bool = false, tournament: Bool = true, defaultStart: Date, submissionDays: Int = 7, votingDays: Int = 7) -> EventRound {
+func addNextRound(_ previous: EventRound?, id: String = UUID().uuidString, sameStage: Bool = false, tournament: Bool = true, defaultStart: Date, submissionDays: Int = 7, votingDays: Int = 7, calendar: Calendar = .current) -> EventRound {
     var round = EventRound(id: id)
     round.name = tournament ? (sameStage ? previous?.name ?? nextStageName("") : nextStageName(previous?.name ?? "")) : "投稿・投票"
     round.stageId = sameStage ? previous?.effectiveStageId ?? id : id
     round.promptNumber = sameStage ? (previous?.promptNumber ?? 0) + 1 : 1
     round.block = previous?.block ?? ""
     round.submissionStart = previous?.votingEnd ?? previous?.submissionEnd ?? defaultStart
-    return completeRoundSchedule(round, submissionDays: submissionDays, votingDays: votingDays)
+    guard let start = round.submissionStart else { return round }
+    func inherit(_ from: Date?, _ to: Date?, onto base: Date, fallbackDays: Int) -> Date {
+        guard let from, let to else { return addCalendarDays(base, fallbackDays, calendar: calendar) }
+        // Calendar components preserve the previous wall-clock duration across
+        // DST, including an intentional gap/overlap before voting starts.
+        let duration = calendar.dateComponents([.day, .hour, .minute, .second, .nanosecond], from: from, to: to)
+        return calendar.date(byAdding: duration, to: base) ?? base.addingTimeInterval(to.timeIntervalSince(from))
+    }
+    round.submissionEnd = inherit(previous?.submissionStart, previous?.submissionEnd, onto: start, fallbackDays: submissionDays)
+    if let end = round.submissionEnd {
+        round.votingStart = inherit(previous?.submissionEnd, previous?.votingStart, onto: end, fallbackDays: 0)
+    }
+    if let voting = round.votingStart {
+        round.votingEnd = inherit(previous?.votingStart, previous?.votingEnd, onto: voting, fallbackDays: votingDays)
+    }
+    return round
 }
-func nextEventRound(rounds: [EventRound], id: String = UUID().uuidString, preferences: AppPreferences, sameStage: Bool = false, tournament: Bool = true, referenceDate: Date = Date()) -> EventRound {
-    addNextRound(rounds.last, id: id, sameStage: sameStage, tournament: tournament, defaultStart: defaultSubmissionStart(referenceDate, preferences: preferences), submissionDays: preferences.submissionDays, votingDays: preferences.votingDays)
+func nextEventRound(rounds: [EventRound], id: String = UUID().uuidString, preferences: AppPreferences, sameStage: Bool = false, tournament: Bool = true, referenceDate: Date = Date(), calendar: Calendar = .current) -> EventRound {
+    addNextRound(rounds.last, id: id, sameStage: sameStage, tournament: tournament, defaultStart: defaultSubmissionStart(referenceDate, preferences: preferences, calendar: calendar), submissionDays: preferences.submissionDays, votingDays: preferences.votingDays, calendar: calendar)
 }
 func eventNeedsResult(_ event: GiriEvent, now: Date = Date()) -> Bool {
-    guard event.kind == .live, event.meetingType == .tournament, event.status != .canceled, event.isParticipating, !event.hasFinalResult else { return false }
+    guard event.eventFormat == .live, event.meetingType == .tournament, event.isActualParticipant, !event.hasFinalResult else { return false }
     if let end = event.endsAt { return now >= end }
     guard let day = event.eventDate ?? event.startsAt else { return false }
     let next = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: day)) ?? day

@@ -7,8 +7,16 @@ import UIKit
 /// Match the existing statistics boundary: actual attendance only. The date of
 /// an online cycle is its last known deadline, not its registration timestamp.
 func giriAnalyticsDate(_ event: GiriEvent) -> Date? {
-    if event.kind == .live { return event.eventDate ?? event.startsAt }
-    return event.effectiveRounds.flatMap { [$0.submissionStart, $0.submissionEnd, $0.votingStart, $0.votingEnd].compactMap { $0 } }.max()
+    if event.eventFormat == .live { return event.eventDate ?? event.startsAt }
+    return event.participationEndDate ?? event.eventDate ?? event.startsAt
+}
+private func giriStatisticsFormatColor(_ format: EventFormat) -> Color {
+    switch format {
+    case .live: return AppSectionAccent.live
+    case .onlineLong: return AppSectionAccent.artist
+    case .onlineShort: return AppSectionAccent.song
+    case .hybrid: return AppSectionAccent.venue
+    }
 }
 private struct GiriRankEntry: Identifiable { var name: String; var count: Int; var id: String { name } }
 private func giriRanks(_ names: [String]) -> [GiriRankEntry] {
@@ -29,8 +37,8 @@ struct GiriStatisticsView: View {
     @State private var meeting = "all"
     private var records: [GiriEvent] {
         store.events.filter { event in
-            guard event.isParticipating && event.status == .attended else { return false }
-            if kind != "all" && event.kind.rawValue != kind { return false }
+            guard event.isCountableParticipation() else { return false }
+            if kind != "all" && event.eventFormat.rawValue != kind { return false }
             if meeting != "all" && event.meetingType.rawValue != meeting { return false }
             let date = giriAnalyticsDate(event)
             if year != 0 && date.map({ Calendar.current.component(.year, from: $0) }) != year { return false }
@@ -45,14 +53,18 @@ struct GiriStatisticsView: View {
                 AppCardSectionTitle(title: "表示・絞り込み", systemImage: "line.3.horizontal.decrease", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
                 Picker("年", selection: $year) { Text("全期間").tag(0); ForEach(years, id: \.self) { Text("\($0)年").tag($0) } }.pickerStyle(.menu).tint(.primary)
                 Picker("月", selection: $month) { Text("すべて").tag(0); ForEach(1...12, id: \.self) { Text("\($0)月").tag($0) } }.pickerStyle(.menu).tint(.primary)
-                Picker("形式", selection: $kind) { Text("すべて").tag("all"); Text("生大喜利").tag("live"); Text("ネット大喜利").tag("online") }.pickerStyle(.menu).tint(.primary)
+                Picker("形式", selection: $kind) {
+                    Text("すべて").tag("all")
+                    ForEach(EventFormat.allCases) { format in Text(format.title).tag(format.rawValue) }
+                }.pickerStyle(.menu).tint(.primary)
                 Picker("会の種類", selection: $meeting) { Text("すべて").tag("all"); Text("通常").tag("casual"); Text("大会").tag("tournament") }.pickerStyle(.menu).tint(.primary)
             }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
             Section {
                 AppCardSectionTitle(title: "参加回数", systemImage: "chart.bar", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
                 LabeledContent("合計", value: "\(records.count)回")
-                LabeledContent("生大喜利", value: "\(records.filter { $0.kind == .live }.count)回")
-                LabeledContent("ネット大喜利", value: "\(records.filter { $0.kind == .online }.count)回")
+                ForEach(EventFormat.allCases) { format in
+                    LabeledContent(format.title, value: "\(records.filter { $0.eventFormat == format }.count)回")
+                }
                 NavigationLink("参加記録を確認") { GiriStatisticsRecords(title: "参加記録", records: records) }
             }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
             Section {
@@ -70,10 +82,10 @@ struct GiriStatisticsView: View {
                 LabeledContent("準優勝", value: "\(tournaments.filter { $0.effectivePlacement == 2 }.count)回")
                 LabeledContent("入賞", value: "\(tournaments.filter { $0.effectivePlacement != 1 && $0.effectivePlacement != 2 && ($0.effectivePlacement == 3 || $0.tournamentResult?.outcome == .placed) }.count)回")
             }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
-            ranking("会場別の参加回数", "mappin.and.ellipse", .venue, giriRanks(records.filter { $0.kind == .live }.map(\.venue))) { entry in records.filter { $0.kind == .live && $0.venue == entry.name } }
+            ranking("会場別の参加回数", "mappin.and.ellipse", .venue, giriRanks(records.filter { $0.eventFormat.hasLiveTiming }.map(\.venue))) { entry in records.filter { $0.eventFormat.hasLiveTiming && $0.venue == entry.name } }
             ranking("主催者別の参加回数", "person.crop.circle", .memo, giriRanks(records.map(\.organizer))) { entry in records.filter { $0.organizer == entry.name } }
             ranking("一緒に参加した人", "person.2", .artist, giriRanks(records.flatMap { Array(Set($0.participants.filter { $0 != store.preferences.selfName })) })) { entry in records.filter { $0.participants.contains(entry.name) } }
-            ranking("サイト別の参加回数", "globe", .artist, giriRanks(records.filter { $0.kind == .online }.map { giriSiteName($0, sites: store.onlineSites) })) { entry in records.filter { $0.kind == .online && giriSiteName($0, sites: store.onlineSites) == entry.name } }
+            ranking("サイト別の参加回数", "globe", .artist, giriRanks(records.filter { $0.eventFormat.hasOnlineRounds }.map { giriSiteName($0, sites: store.onlineSites) })) { entry in records.filter { $0.eventFormat.hasOnlineRounds && giriSiteName($0, sites: store.onlineSites) == entry.name } }
         }.appIndexListStyle().toolbar(.visible, for: .navigationBar).navigationTitle("集計").navigationBarTitleDisplayMode(.inline)
     }
     private enum RankingAccent { case venue, memo, artist; var color: Color { switch self { case .venue: AppSectionAccent.venue; case .memo: AppSectionAccent.memo; case .artist: AppSectionAccent.artist } } }
@@ -114,14 +126,19 @@ private struct GiriMonthChart: View {
         var counts: [Date: [String: Int]] = [:]
         for event in records {
             guard let date = giriAnalyticsDate(event), let month = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: date)) else { continue }
-            counts[month, default: [:]][event.kind == .live ? "生大喜利" : "ネット大喜利", default: 0] += 1
+            counts[month, default: [:]][event.eventFormat.title, default: 0] += 1
         }
-        return counts.keys.sorted().flatMap { date in ["生大喜利", "ネット大喜利"].map { GiriMonthlyCount(date: date, kind: $0, count: counts[date]?[$0] ?? 0) } }
+        return counts.keys.sorted().flatMap { date in EventFormat.allCases.map { GiriMonthlyCount(date: date, kind: $0.title, count: counts[date]?[$0.title] ?? 0) } }
     }
     var body: some View {
         Chart(values) { value in
             BarMark(x: .value("月", value.date, unit: .month), y: .value("参加回数", value.count)).foregroundStyle(by: .value("形式", value.kind))
-        }.chartForegroundStyleScale(["生大喜利": AppSectionAccent.live, "ネット大喜利": AppSectionAccent.artist])
+        }.chartForegroundStyleScale([
+            EventFormat.live.title: AppSectionAccent.live,
+            EventFormat.onlineLong.title: AppSectionAccent.artist,
+            EventFormat.onlineShort.title: AppSectionAccent.song,
+            EventFormat.hybrid.title: AppSectionAccent.venue,
+        ])
             .chartXAxis { AxisMarks(values: .stride(by: .month)) { _ in AxisGridLine(); AxisValueLabel(format: .dateTime.year(.twoDigits).month(.defaultDigits)) } }
     }
 }
@@ -131,7 +148,7 @@ struct GiriSharingView: View {
     private var listMode: Bool
     @State private var year = 0
     @State private var monthPeriod = 0
-    @State private var status = "attended"
+    @State private var status = "completed"
     @State private var kind = "all"
     @State private var showVenues = true
     @State private var showResults = true
@@ -149,9 +166,11 @@ struct GiriSharingView: View {
     init(initialList: Bool = false) { listMode = initialList }
     private var records: [GiriEvent] {
         store.events.filter { event in
-            guard event.isParticipating && event.status != .canceled else { return false }
-            if status != "all" && event.status.rawValue != status { return false }
-            if kind != "all" && event.kind.rawValue != kind { return false }
+            guard event.isActualParticipant else { return false }
+            let phase = event.participationState()
+            if status == "completed" && !event.isCountableParticipation() { return false }
+            if status == "active" && phase != .upcoming && phase != .ongoing { return false }
+            if kind != "all" && event.eventFormat.rawValue != kind { return false }
             let date = giriAnalyticsDate(event)
             if year != 0 && date.map({ Calendar.current.component(.year, from: $0) }) != year { return false }
             if monthPeriod != 0 {
@@ -174,10 +193,17 @@ struct GiriSharingView: View {
         Form {
             Section {
                 AppCardSectionTitle(title: "表示・絞り込み", systemImage: "line.3.horizontal.decrease", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
-                Picker("参加状況", selection: $status) { Text("すべて").tag("all"); Text("参加予定").tag("planned"); Text("参加済み").tag("attended") }.pickerStyle(.segmented)
+                Picker("参加状況", selection: $status) {
+                    Text("すべて").tag("all")
+                    Text("参加中・参加予定").tag("active")
+                    Text("参加済").tag("completed")
+                }.pickerStyle(.segmented)
                 Picker("年", selection: $year) { Text("全期間").tag(0); ForEach(years, id: \.self) { Text("\($0)年").tag($0) } }.pickerStyle(.menu).tint(.primary)
                 Picker("期間", selection: $monthPeriod) { Text("すべて").tag(0); Text("上半期").tag(101); Text("下半期").tag(102); ForEach(201...204, id: \.self) { quarter in Text("\((quarter - 201) * 3 + 1)〜\((quarter - 200) * 3)月").tag(quarter) }; ForEach(1...12, id: \.self) { Text("\($0)月").tag($0) } }.pickerStyle(.menu).tint(.primary)
-                Picker("形式", selection: $kind) { Text("すべて").tag("all"); Text("生大喜利").tag("live"); Text("ネット大喜利").tag("online") }.pickerStyle(.menu).tint(.primary)
+                Picker("形式", selection: $kind) {
+                    Text("すべて").tag("all")
+                    ForEach(EventFormat.allCases) { format in Text(format.title).tag(format.rawValue) }
+                }.pickerStyle(.menu).tint(.primary)
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
             Section {
                 AppCardSectionTitle(title: "表示設定", systemImage: "paintpalette", accentColor: AppSectionAccent.photo).listRowSeparator(.hidden)
@@ -240,14 +266,18 @@ struct GiriSharingView: View {
     private var summaryPaper: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack(alignment: .firstTextBaseline, spacing: 12) { Text("\(records.count)").font(.system(size: 92, weight: .bold, design: .rounded)); Text("回参加").font(.system(size: 24, weight: .semibold)) }
-            HStack(spacing: 24) { paperCount("生大喜利", records.filter { $0.kind == .live }.count, AppSectionAccent.live); paperCount("ネット大喜利", records.filter { $0.kind == .online }.count, AppSectionAccent.artist) }
+            LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 18) {
+                ForEach(EventFormat.allCases) { format in
+                    paperCount(format.title, records.filter { $0.eventFormat == format }.count, giriStatisticsFormatColor(format))
+                }
+            }
             if showResults {
-                let tournaments = records.filter { $0.meetingType == .tournament }
+                let tournaments = records.filter { $0.meetingType == .tournament && $0.isCountableParticipation() }
                 HStack(spacing: 20) { paperCount("優勝", tournaments.filter { $0.effectivePlacement == 1 }.count, AppSectionAccent.ticket); paperCount("準優勝", tournaments.filter { $0.effectivePlacement == 2 }.count, AppSectionAccent.ticket); paperCount("大会参加", tournaments.count, foreground) }
             }
             GiriMonthChart(records: records).frame(height: 150)
-            if showVenues { paperRanking("会場", giriRanks(records.filter { $0.kind == .live }.map(\.venue))) }
-            paperRanking("サイト", giriRanks(records.filter { $0.kind == .online }.map { giriSiteName($0, sites: store.onlineSites) }))
+            if showVenues { paperRanking("会場", giriRanks(records.filter { $0.eventFormat.hasLiveTiming }.map(\.venue))) }
+            paperRanking("サイト", giriRanks(records.filter { $0.eventFormat.hasOnlineRounds }.map { giriSiteName($0, sites: store.onlineSites) }))
             if showOrganizers { paperRanking("主催者", giriRanks(records.map(\.organizer))) }
             if showParticipants { paperRanking("一緒に参加した人", giriRanks(records.flatMap { Array(Set($0.participants.filter { $0 != store.preferences.selfName })) })) }
         }
@@ -333,9 +363,9 @@ struct GiriSharingView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(event.title).font(.system(size: 14.5, weight: .bold))
                             .lineLimit(3).fixedSize(horizontal: false, vertical: true)
-                        Text(event.kind == .live ? "生大喜利" : "ネット大喜利")
+                        Text(event.eventFormat.title)
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(event.kind == .live ? AppSectionAccent.live : AppSectionAccent.artist)
+                            .foregroundStyle(giriStatisticsFormatColor(event.eventFormat))
                         if showVenues && !event.venue.isEmpty {
                             HStack(alignment: .firstTextBaseline, spacing: 3) {
                                 Image(systemName: "mappin.and.ellipse")
@@ -346,7 +376,7 @@ struct GiriSharingView: View {
                         }
                         if showOrganizers && !event.organizer.isEmpty { Text("主催　" + event.organizer).font(.system(size: 12)).opacity(0.7) }
                         if showParticipants && !event.participants.isEmpty { Text(event.participants.joined(separator: " / ")).font(.system(size: 12)).lineLimit(2).opacity(0.7) }
-                        if showResults {
+                        if showResults && event.isCountableParticipation() {
                             if let rank = event.effectivePlacement { Text(rank == 1 ? "優勝" : rank == 2 ? "準優勝" : "\(rank)位").font(.system(size: 13, weight: .bold)).foregroundStyle(AppSectionAccent.ticket) }
                             else if !event.resultText.isEmpty { Text(event.resultText).font(.system(size: 12)).lineLimit(2) }
                         }

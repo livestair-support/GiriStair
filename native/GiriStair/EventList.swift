@@ -1,131 +1,151 @@
 import SwiftUI
 import UIKit
 
-// Adapted from LiveStair ContentView.swift and LiveListEventCard.swift at
-// 074206d2d92cefdf6e1a076900ed7af807ae1eb8. Native text, Menu and card metrics
-// are shared with the reference; only GiriStair's fields and routes differ.
+// LiveStair-native filters and cards, with four independent GiriStair formats.
 struct GiriListView: View {
     @EnvironmentObject private var store: GiriStore
     @State private var search = ""
+    @State private var selectedFormat: EventFormat = .live
     @State private var attended = false
     @State private var year = "all"
-    @State private var kind = "all"
     @State private var meeting = "all"
     @State private var status = "all"
     @State private var venue = "all"
-    @State private var player = "all"
+    @State private var selectedPlayers: Set<String> = []
+    @State private var showsPlayerDropdown = false
+    @State private var playerSearch = ""
     @State private var site = "all"
+    @State private var stage = "all"
     @State private var ascending: Bool?
     @State private var isCollapsed = false
     @State private var destinationID: String?
     @State private var deletingEvent: GiriEvent?
 
-    private let accent = AppSectionAccent.artist
+    private var accent: Color { GiriEventPresentation.accent(selectedFormat) }
     private var isCalendar: Bool { store.preferences.listCurrentMode }
     private var searchableEvents: [GiriEvent] {
-        store.events.filter { $0.onlineSiteId == nil || $0.isParticipating }
+        store.events.filter {
+            $0.eventFormat == selectedFormat && ($0.onlineSiteId == nil || $0.isActualParticipant || $0.isInterested)
+        }
     }
     private var years: [String] {
         Array(Set(searchableEvents.compactMap {
-            GiriEventPresentation.date($0).map { String(Calendar.current.component(.year, from: $0)) }
+            GiriEventPresentation.date($0).map { String(Calendar(identifier: .gregorian).component(.year, from: $0)) }
         })).sorted(by: >)
     }
-    private var venueNames: [String] {
-        Array(Set(searchableEvents.map(\.venue).filter { !$0.isEmpty })).sorted()
-    }
+    private var venueNames: [String] { Array(Set(searchableEvents.map(\.venue).filter { !$0.isEmpty })).sorted() }
     private var playerNames: [String] {
-        Array(Set(searchableEvents.flatMap(\.participants))).sorted { first, second in
-            let firstReading = store.players.first { $0.name == first }?.furigana ?? first
-            let secondReading = store.players.first { $0.name == second }?.furigana ?? second
+        Array(Set(searchableEvents.flatMap { $0.participants + $0.teams.flatMap(\.members) }.filter {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        })).sorted { first, second in
+            let firstPlayer = store.players.first { playerSearchKey($0.name) == playerSearchKey(first) }
+            let secondPlayer = store.players.first { playerSearchKey($0.name) == playerSearchKey(second) }
+            let firstReading = firstPlayer.flatMap { $0.furigana.isEmpty ? nil : $0.furigana } ?? first
+            let secondReading = secondPlayer.flatMap { $0.furigana.isEmpty ? nil : $0.furigana } ?? second
             return firstReading.localizedStandardCompare(secondReading) == .orderedAscending
         }
     }
+    private var stageNames: [String] { Array(Set(searchableEvents.flatMap { $0.effectiveRounds.map(\.name) })).sorted() }
     private var filteredEvents: [GiriEvent] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let now = Date()
         return searchableEvents.filter { event in
-            if kind != "all" && event.kind.rawValue != kind { return false }
             if meeting != "all" && event.meetingType.rawValue != meeting { return false }
-            if status != "all" {
-                if event.status.rawValue != status { return false }
-            } else if (event.status == .attended) != attended { return false }
+            switch status {
+            case "interested": if !event.isInterested { return false }
+            case "canceled": if event.status != .canceled { return false }
+            default:
+                guard event.isActualParticipant else { return false }
+                let phase = event.participationState(now: now)
+                if attended ? phase != .completed : (phase != .upcoming && phase != .ongoing) { return false }
+            }
             if year != "all" {
                 guard let date = GiriEventPresentation.date(event),
-                      String(Calendar.current.component(.year, from: date)) == year else { return false }
+                      String(Calendar(identifier: .gregorian).component(.year, from: date)) == year else { return false }
             }
             if venue != "all" && event.venue != venue { return false }
-            if player != "all" && !event.participants.contains(player) { return false }
+            // LiveStair selectedArtists is an AND filter, retaining all selected people.
+            if !selectedPlayers.isEmpty && !selectedPlayers.allSatisfy({ person in
+                (event.participants + event.teams.flatMap(\.members)).contains { playerSearchKey($0) == playerSearchKey(person) }
+            }) { return false }
             if site != "all" && event.onlineSiteId != site { return false }
+            if stage != "all" && !event.effectiveRounds.contains(where: { $0.name == stage }) { return false }
             let venueRecord = store.venues.first { $0.id == event.venueId || $0.name == event.venue }
             let siteRecord = store.onlineSites.first { $0.id == event.onlineSiteId }
-            let text = ([event.title, event.organizer, event.venue, event.memo,
-                         event.affiliation, event.block, venueRecord?.prefecture ?? "",
-                         siteRecord?.name ?? ""] + event.participants).joined(separator: " ")
+            let text = ([event.title, event.organizer, event.venue, event.memo, event.affiliation, event.block,
+                         venueRecord?.prefecture ?? "", siteRecord?.name ?? ""] + event.participants +
+                        event.teams.flatMap { [$0.name] + $0.members }).joined(separator: " ")
             return query.isEmpty || text.localizedStandardContains(query)
         }.sorted { a, b in
             let ad = GiriEventPresentation.date(a), bd = GiriEventPresentation.date(b)
             if ad == nil && bd == nil { return a.createdAt > b.createdAt }
-            guard let ad else { return false }
-            guard let bd else { return true }
+            guard let ad else { return false }; guard let bd else { return true }
             if ad == bd { return a.title.localizedStandardCompare(b.title) == .orderedAscending }
             return (ascending ?? !attended) ? ad < bd : ad > bd
         }
     }
     private var visibleSites: [OnlineSite] {
-        guard !attended, kind != "live", meeting != "tournament", status != "canceled" else { return [] }
+        guard selectedFormat == .onlineLong, !attended, meeting != "tournament", status == "all" else { return [] }
         return store.onlineSites.filter { record in
-            (site == "all" || site == record.id) &&
-            (search.isEmpty || [record.name, record.affiliation, record.block, record.memo]
-                .joined(separator: " ").localizedStandardContains(search))
+            record.format == selectedFormat && (site == "all" || site == record.id) &&
+            (search.isEmpty || [record.name, record.affiliation, record.block, record.memo].joined(separator: " ").localizedStandardContains(search))
         }
     }
+    private var hasParticipantFilter: Bool { selectedFormat.hasLiveTiming }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if isCalendar {
-                ScrollView { GiriCalendarView(events: store.events) }
-            } else {
-                filterHeader
-                eventList
+        TimelineView(.periodic(from: .now, by: 60)) { _ in
+            VStack(spacing: 0) {
+                if isCalendar {
+                    ScrollView { GiriCalendarView(events: store.events) }
+                } else {
+                    filterHeader
+                    eventList
+                }
             }
         }
         .scrollDismissesKeyboard(.interactively)
         .background(appBackgroundColor)
         .safeAreaInset(edge: .top, spacing: 0) { pageHeader }
+        .overlay(alignment: .topTrailing) {
+            if showsPlayerDropdown {
+                Color.black.opacity(0.001)
+                    .ignoresSafeArea()
+                    .onTapGesture { closePlayerDropdown() }
+                    .zIndex(998)
+                playerDropdownPanel
+                    .padding(.top, 112).padding(.trailing, 18)
+                    .zIndex(999)
+            }
+        }
         .toolbar(.hidden, for: .navigationBar)
-        .navigationDestination(isPresented: Binding(
-            get: { destinationID != nil },
-            set: { if !$0 { destinationID = nil } }
-        )) {
+        .onChange(of: selectedFormat) { _, _ in
+            year = "all"; meeting = "all"; status = "all"; venue = "all"; site = "all"; stage = "all"; selectedPlayers.removeAll()
+            closePlayerDropdown()
+        }
+        .onChange(of: isCalendar) { _, _ in closePlayerDropdown() }
+        .onChange(of: isCollapsed) { _, collapsed in if collapsed { closePlayerDropdown() } }
+        .navigationDestination(isPresented: Binding(get: { destinationID != nil }, set: { if !$0 { destinationID = nil } })) {
             if let id = destinationID { GiriEventDetail(eventID: id) }
         }
-        .confirmationDialog("この記録を削除しますか？", isPresented: Binding(
-            get: { deletingEvent != nil }, set: { if !$0 { deletingEvent = nil } }
-        ), titleVisibility: .visible) {
+        .confirmationDialog("この記録を削除しますか？", isPresented: Binding(get: { deletingEvent != nil }, set: { if !$0 { deletingEvent = nil } }), titleVisibility: .visible) {
             Button("削除", role: .destructive) {
                 guard let event = deletingEvent else { return }
-                store.run { try store.deleteEvent(event.id); playLiveStairDeleteFeedback() }
-                deletingEvent = nil
+                store.run { try store.deleteEvent(event.id); playLiveStairDeleteFeedback() }; deletingEvent = nil
             }
             Button("キャンセル", role: .cancel) { deletingEvent = nil }
         }
     }
-
-    // ContentView.liveListEventList / liveListCardList: conditions stay above
-    // the native list; row gutters and swipe behaviour follow the source.
     private var eventList: some View {
         ZStack {
             if filteredEvents.isEmpty && visibleSites.isEmpty {
-                CenteredEmptyMessage(
-                    systemImage: "calendar.badge.exclamationmark",
-                    title: searchableEvents.isEmpty ? "記録がありません" : "該当する記録がありません"
-                )
+                CenteredEmptyMessage(systemImage: "calendar.badge.exclamationmark", title: searchableEvents.isEmpty ? "記録がありません" : "該当する記録がありません")
             } else {
                 List {
                     ForEach(visibleSites) { record in
                         siteCard(record)
                             .listRowInsets(EdgeInsets(top: record.id == visibleSites.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden).listRowBackground(Color.clear)
                     }
                     ForEach(filteredEvents) { event in
                         Button { destinationID = event.id } label: { GiriEventCard(event: event) }
@@ -138,148 +158,183 @@ struct GiriListView: View {
                                 Button(role: .destructive) { deletingEvent = event } label: { Label("削除", systemImage: "trash") }
                             }
                             .listRowInsets(EdgeInsets(top: visibleSites.isEmpty && event.id == filteredEvents.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden).listRowBackground(Color.clear)
                     }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .contentMargins(.bottom, 104, for: .scrollContent)
-                .scrollIndicators(.hidden)
+                .listStyle(.plain).scrollContentBackground(.hidden)
+                .contentMargins(.bottom, 104, for: .scrollContent).scrollIndicators(.hidden)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(appBackgroundColor)
+        .frame(maxWidth: .infinity, maxHeight: .infinity).background(appBackgroundColor)
     }
-
     private var pageHeader: some View {
         AppPageHeader(title: "一覧", systemImage: "list.bullet.rectangle", accentColor: accent)
             .overlay(alignment: .trailing) {
                 HStack(spacing: 10) {
                     Button {
-                        var preferences = store.preferences
-                        preferences.listCurrentMode.toggle()
+                        var preferences = store.preferences; preferences.listCurrentMode.toggle()
                         store.run { try store.savePreferences(preferences) }
-                    } label: {
-                        headerIcon(isCalendar ? "list.bullet" : "calendar")
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(isCalendar ? "一覧表示に切り替える" : "カレンダー表示に切り替える")
+                    } label: { headerIcon(isCalendar ? "list.bullet" : "calendar") }
+                    .buttonStyle(.plain).accessibilityLabel(isCalendar ? "一覧表示に切り替える" : "カレンダー表示に切り替える")
                     if !isCalendar {
                         AppMenu {
-                            Button { ascending = true } label: {
-                                Label("日付の早い順", systemImage: (ascending ?? !attended) ? "checkmark" : "")
-                            }
-                            Button { ascending = false } label: {
-                                Label("日付の遅い順", systemImage: !(ascending ?? !attended) ? "checkmark" : "")
-                            }
+                            Button { ascending = true } label: { Label("日付の早い順", systemImage: (ascending ?? !attended) ? "checkmark" : "") }
+                            Button { ascending = false } label: { Label("日付の遅い順", systemImage: !(ascending ?? !attended) ? "checkmark" : "") }
                         } label: { headerIcon("arrow.up.arrow.down") }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("並び順")
+                        .buttonStyle(.plain).accessibilityLabel("並び順")
                     }
-                }
-                .padding(.trailing, 18)
+                }.padding(.trailing, 18)
             }
     }
     private func headerIcon(_ image: String) -> some View {
-        Image(systemName: image)
-            .font(.system(size: appFontSize(19), weight: .semibold))
-            .foregroundStyle(.primary)
-            .frame(width: 44, height: 44)
-            .background(appCardColor)
-            .clipShape(Circle())
+        Image(systemName: image).font(.system(size: appFontSize(19), weight: .semibold)).foregroundStyle(.primary)
+            .frame(width: 44, height: 44).background(appCardColor).clipShape(Circle())
             .overlay { Circle().stroke(Color.primary.opacity(0.10), lineWidth: 1) }
     }
     private var filterHeader: some View {
         VStack(spacing: 5) {
-                HStack(spacing: 10) {
-                    Image(systemName: "line.3.horizontal.decrease")
-                        .font(.system(size: appFontSize(16), weight: .semibold))
-                        .foregroundStyle(accent).frame(width: 22)
-                    Text("表示・絞り込み")
-                        .font(.system(size: appFontSize(18), weight: .bold, design: .rounded))
-                    Spacer()
-                    Text("\(filteredEvents.count)件").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    AppHeaderCollapseButton(isCollapsed: $isCollapsed, tintColor: accent)
+            HStack(spacing: 10) {
+                Image(systemName: "line.3.horizontal.decrease").font(.system(size: appFontSize(16), weight: .semibold)).foregroundStyle(accent).frame(width: 22)
+                Text("表示・絞り込み").font(.system(size: appFontSize(18), weight: .bold, design: .rounded))
+                Spacer()
+                Text("\(filteredEvents.count)件").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                AppHeaderCollapseButton(isCollapsed: $isCollapsed, tintColor: accent)
+            }
+            GiriFormatPicker(selection: $selectedFormat)
+            if !isCollapsed {
+                AppSearchField(text: $search, placeholder: selectedFormat.hasLiveTiming ? "会・大会名・会場・主催者・参加者・メモ" : "大会・サイト・段階・ブロック・メモ")
+                    .padding(.bottom, 2)
+            }
+            Picker("表示", selection: Binding(get: { attended }, set: { attended = $0; status = "all" })) {
+                Text("参加中・参加予定").tag(false)
+                Text("参加済").tag(true)
+            }.pickerStyle(.segmented).tint(accent)
+            if !isCollapsed {
+                separator
+                HStack(spacing: 0) {
+                    GiriListFilterMenu(title: "年", selection: $year, options: [("all", "全期間")] + years.map { ($0, $0) }, valueWidth: 64)
+                    Divider().overlay(appSeparatorColor).frame(height: 30).padding(.horizontal, 9)
+                    GiriListFilterMenu(title: "会の種類", selection: $meeting, options: [("all", "すべて"), ("casual", "通常"), ("tournament", "大会")], valueWidth: 64)
                 }
-                if !isCollapsed {
-                    AppSearchField(text: $search, placeholder: "会・大会名・会場・主催者・参加者・メモ")
-                        .padding(.bottom, 2)
+                if hasParticipantFilter {
+                    separator
+                    participantFilter
+                    separator
+                    GiriListFilterMenu(title: "会場", selection: $venue, options: [("all", "全会場")] + venueNames.map { ($0, $0) })
                 }
-                Picker("表示", selection: Binding(
-                    get: { attended }, set: { attended = $0; status = "all" }
-                )) {
-                    Text("参加予定").tag(false)
-                    Text("参加済").tag(true)
+                if selectedFormat == .onlineLong {
+                    separator
+                    GiriListFilterMenu(title: "サイト", selection: $site, options: [("all", "全サイト")] + store.onlineSites.filter { $0.format == selectedFormat }.map { ($0.id, $0.name) })
                 }
-                .pickerStyle(.segmented).tint(accent)
-                if !isCollapsed {
+                if selectedFormat.hasOnlineRounds && meeting != "casual" {
                     separator
-                    HStack(spacing: 0) {
-                        GiriListFilterMenu(title: "年", selection: $year,
-                                           options: [("all", "全期間")] + years.map { ($0, $0) }, valueWidth: 64)
-                        Divider().overlay(appSeparatorColor).frame(height: 30).padding(.horizontal, 9)
-                        GiriListFilterMenu(title: "形式", selection: $kind, options: [
-                            ("all", "全形式"), ("live", "生大喜利"), ("online", "ネット大喜利")], valueWidth: 88)
-                    }
-                    separator
-                    GiriListFilterMenu(title: "会の種類", selection: $meeting,
-                                       options: [("all", "すべて"), ("casual", "通常"), ("tournament", "大会")])
-                    separator
-                    GiriListFilterMenu(title: "参加者", selection: $player,
-                                       options: [("all", "全参加者")] + playerNames.map { ($0, $0) })
-                    separator
-                    GiriListFilterMenu(title: "会場", selection: $venue,
-                                       options: [("all", "全会場")] + venueNames.map { ($0, $0) })
-                    separator
-                    GiriListFilterMenu(title: "サイト", selection: $site,
-                                       options: [("all", "全サイト")] + store.onlineSites.map { ($0.id, $0.name) })
-                    separator
-                    GiriListFilterMenu(title: "参加状況", selection: $status, options: [
-                        ("all", "すべて"), ("planned", "参加予定"), ("attended", "参加済"), ("canceled", "キャンセル")])
-                } else {
-                    let conditions = [year == "all" ? "" : year,
-                                      kind == "all" ? "" : kind == "live" ? "生大喜利" : "ネット大喜利",
-                                      meeting == "all" ? "" : meeting == "casual" ? "通常" : "大会",
-                                      venue == "all" ? "" : venue, player == "all" ? "" : player,
-                                      search.isEmpty ? "" : "検索「\(search)」"]
-                        .filter { !$0.isEmpty }
-                    if !conditions.isEmpty {
-                        AppHeaderConditionSummary(conditions: conditions)
-                    }
+                    GiriListFilterMenu(title: "段階", selection: $stage, options: [("all", "すべて")] + stageNames.map { ($0, $0) })
                 }
+                separator
+                GiriListFilterMenu(title: "参加状況", selection: $status, options: [("all", "参加記録"), ("interested", "興味あり"), ("canceled", "キャンセル")])
+            } else {
+                let conditions = [year == "all" ? "" : year, meeting == "all" ? "" : meeting == "casual" ? "通常" : "大会",
+                                  venue == "all" ? "" : venue, selectedPlayers.isEmpty ? "" : selectedPlayers.sorted().joined(separator: " / "),
+                                  stage == "all" ? "" : stage, search.isEmpty ? "" : "検索「\(search)」"].filter { !$0.isEmpty }
+                if !conditions.isEmpty { AppHeaderConditionSummary(conditions: conditions) }
+            }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 16).padding(.vertical, 14)
         .appTintedCard(accentColor: accent, cornerRadius: 20, railVerticalInset: 14, lightTintOpacity: 0.065)
-        .padding(.horizontal, 18)
-        .padding(.bottom, 12)
+        .padding(.horizontal, 18).padding(.bottom, 12)
+    }
+    private var participantFilter: some View {
+        Button {
+            if showsPlayerDropdown { closePlayerDropdown() }
+            else { showsPlayerDropdown = true }
+        } label: {
+            LiveListFullWidthFilterLabel(title: "参加者", value: selectedPlayers.isEmpty ? "全参加者" : selectedPlayers.sorted().joined(separator: " / "), symbolName: showsPlayerDropdown ? "chevron.up" : "chevron.down", tintColor: accent)
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity)
+    }
+    // ContentView.swift liveListArtistDropdownPanel / liveListArtistDropdownRow.
+    // Individual selections keep this panel open so many people can be chosen.
+    private var playerDropdownPanel: some View {
+        let query = playerSearchKey(playerSearch)
+        let names = playerNames.filter { name in
+            guard !query.isEmpty else { return true }
+            let reading = store.playerByName(name)?.furigana ?? ""
+            return playerSearchKey(name).contains(query) || playerSearchKey(reading).contains(query)
+        }
+        return VStack(alignment: .leading, spacing: 8) {
+            TextField("参加者を検索", text: $playerSearch)
+                .font(.caption).textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled().textInputAutocapitalization(.never)
+            Button {
+                selectedPlayers.removeAll()
+                closePlayerDropdown()
+            } label: {
+                playerDropdownLabel("全参加者", isSelected: selectedPlayers.isEmpty, minimumHeight: 44)
+            }.buttonStyle(.plain)
+            Divider()
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if !names.isEmpty {
+                        Text("参加者").font(.caption).foregroundStyle(.secondary)
+                            .padding(.top, 4).padding(.bottom, 6)
+                    }
+                    ForEach(names, id: \.self) { name in
+                        Button {
+                            if selectedPlayers.contains(name) { selectedPlayers.remove(name) }
+                            else { selectedPlayers.insert(name) }
+                        } label: {
+                            playerDropdownLabel(name, isSelected: selectedPlayers.contains(name))
+                        }.buttonStyle(.plain)
+                    }
+                    if names.isEmpty {
+                        Text("該当なし").font(.caption).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center).padding(.vertical, 24)
+                    }
+                }
+            }.frame(height: 300)
+        }
+        .padding(10).frame(width: 280)
+        .background(appCardColor)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(accent.opacity(0.32), lineWidth: 1) }
+        .shadow(color: .black.opacity(0.14), radius: 8, x: 0, y: 3)
+    }
+    private func playerDropdownLabel(_ title: String, isSelected: Bool, minimumHeight: CGFloat = 40) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: isSelected ? "checkmark" : "")
+                .font(.caption).foregroundStyle(.primary).frame(width: 18)
+            Text(title).font(.subheadline).foregroundStyle(.primary).lineLimit(1)
+            Spacer()
+        }
+        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .leading)
+        .contentShape(Rectangle())
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+    private func closePlayerDropdown() {
+        showsPlayerDropdown = false
+        playerSearch = ""
     }
     private var separator: some View { Divider().overlay(appSeparatorColor) }
     private func siteCard(_ record: OnlineSite) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "globe").foregroundStyle(accent)
-                Text(record.name).font(.system(size: appFontSize(18), weight: .bold, design: .rounded))
+                NavigationLink { GiriSiteDetail(siteID: record.id) } label: {
+                    Text(record.name).font(.system(size: appFontSize(18), weight: .bold, design: .rounded)).foregroundStyle(.primary)
+                }.buttonStyle(.plain)
                 Spacer()
-                NavigationLink { GiriSitesView() } label: {
-                    Image(systemName: "ellipsis").font(.body.weight(.semibold)).frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("サイトを編集")
+                NavigationLink { GiriSiteDetail(siteID: record.id) } label: { Image(systemName: "ellipsis").font(.body.weight(.semibold)).frame(width: 28, height: 28) }
+                    .buttonStyle(.plain).accessibilityLabel("サイトを編集")
             }
             if !record.affiliation.isEmpty || !record.block.isEmpty {
-                Text([record.affiliation, record.block].filter { !$0.isEmpty }.joined(separator: "・"))
-                    .font(.subheadline).foregroundStyle(.secondary)
+                Text([record.affiliation, record.block].filter { !$0.isEmpty }.joined(separator: "・")).font(.subheadline).foregroundStyle(.secondary)
             }
-            HStack(spacing: 10) {
-                siteCycleButton(record, offset: 0)
-                siteCycleButton(record, offset: 1)
-            }
+            HStack(spacing: 10) { siteCycleButton(record, offset: 0); siteCycleButton(record, offset: 1) }
         }
-        .padding(14)
-        .appTintedCard(accentColor: accent)
-        .padding(.horizontal, 18).padding(.vertical, 6)
+        .padding(14).appTintedCard(accentColor: accent)
     }
     private func siteCycleButton(_ record: OnlineSite, offset: Int) -> some View {
         Button {
@@ -290,8 +345,18 @@ struct GiriListView: View {
         } label: {
             Text(record.recurrence == .weekly ? (offset == 0 ? "今週" : "来週") : (offset == 0 ? "今回" : "次の回"))
                 .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered).tint(accentActionColor)
+        }.buttonStyle(.bordered).tint(accentActionColor)
+    }
+}
+
+struct GiriFormatPicker: View {
+    @Binding var selection: EventFormat
+    var body: some View {
+        Picker("形式", selection: $selection) {
+            ForEach(EventFormat.allCases) { format in
+                Text(format.shortTitle).tag(format).accessibilityLabel(format.title)
+            }
+        }.pickerStyle(.segmented)
     }
 }
 
@@ -532,8 +597,8 @@ struct GiriListFilterMenu: View {
                 Spacer(minLength: 6)
                 AppMenu { choices } label: {
                     HStack(spacing: 6) {
-                        Text(selectedLabel).font(.body.weight(.medium)).foregroundStyle(.primary)
-                            .lineLimit(1).minimumScaleFactor(0.86).allowsTightening(true)
+                        Text(selectedLabel).font(.system(size: appFontSize(17), weight: .semibold)).foregroundStyle(.primary)
+                            .lineLimit(1).allowsTightening(true)
                             .frame(width: valueWidth, alignment: .trailing)
                         Image(systemName: "chevron.up.chevron.down").font(.caption2.weight(.bold))
                             .foregroundStyle(AppSectionAccent.artist).frame(width: 14)
@@ -570,6 +635,7 @@ struct GiriEventCard: View {
     @EnvironmentObject private var store: GiriStore
     let event: GiriEvent
     var showsResult = false
+    var resultActionTitle: String? = nil
     private var accent: Color { GiriEventPresentation.accent(event) }
     private var date: Date? { GiriEventPresentation.date(event) }
     private var venueRecord: GiriVenue? {
@@ -584,13 +650,13 @@ struct GiriEventCard: View {
         GiriListCard(accentColor: accent, contentOpacity: event.status == .canceled ? 0.55 : 1) {
             VStack(alignment: .leading, spacing: 7) {
                 topArea
-                if event.kind == .live { liveDetails }
-                else { onlineDetails }
+                if event.eventFormat.hasLiveTiming { liveDetails }
+                if event.eventFormat.hasOnlineRounds && !event.effectiveRounds.isEmpty { onlineDetails }
                 if showsResult {
                     Divider().overlay(appSeparatorColor)
-                    Text(GiriEventPresentation.resultSummary(event))
+                    Text(resultActionTitle ?? GiriEventPresentation.resultSummary(event))
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(event.hasRecordedResult ? Color.primary : accentActionColor)
+                        .foregroundStyle(resultActionTitle == nil && event.hasRecordedResult ? Color.primary : accentActionColor)
                 }
             }
         }
@@ -605,7 +671,7 @@ struct GiriEventCard: View {
                     dateLabel(compact: true).minimumScaleFactor(0.78)
                 }
                 .frame(minWidth: 92, maxWidth: .infinity, alignment: .leading).layoutPriority(3)
-                if event.kind == .live {
+                if event.eventFormat.hasLiveTiming {
                     HStack(spacing: 3) {
                         Image(systemName: "clock").font(.caption2.weight(.semibold))
                         ZStack(alignment: .leading) {
@@ -617,8 +683,9 @@ struct GiriEventCard: View {
                     .foregroundStyle(.secondary).fixedSize(horizontal: true, vertical: false)
                     .accessibilityElement(children: .combine)
                 }
-                GiriListBadge(text: GiriEventPresentation.kindTitle(event.kind), color: accent, fitsColumn: true)
+                GiriListBadge(text: GiriEventPresentation.formatBadgeTitle(event.eventFormat), color: accent, fitsColumn: true)
                     .frame(width: 70, alignment: .leading).offset(x: 2)
+                    .accessibilityLabel(event.eventFormat.title)
             }
             HStack(alignment: .top, spacing: 6) {
                 Text(event.title.isEmpty ? "会・大会名未設定" : event.title)
@@ -627,8 +694,8 @@ struct GiriEventCard: View {
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if event.status != .attended {
-                    GiriListBadge(text: GiriEventPresentation.statusTitle(event.status), color: accent)
+                if event.participationState() != .completed {
+                    GiriListBadge(text: event.participationState().title, color: accent)
                         .frame(width: 70, alignment: .leading)
                 }
             }
@@ -737,19 +804,30 @@ struct GiriListBadge: View {
 }
 
 enum GiriEventPresentation {
-    static func kindTitle(_ kind: EventKind) -> String { kind == .live ? "生大喜利" : "ネット大喜利" }
+    static func kindTitle(_ kind: EventKind) -> String { kind == .live ? "生大喜利" : "ネット大喜利（長考）" }
+    static func formatBadgeTitle(_ format: EventFormat) -> String {
+        switch format { case .live: "生大喜利"; case .onlineLong: "長考"; case .onlineShort: "短考"; case .hybrid: "ハイブリッド" }
+    }
+    static func symbol(_ format: EventFormat) -> String {
+        switch format { case .live: "person.2.fill"; case .onlineLong: "globe"; case .onlineShort: "bolt.fill"; case .hybrid: "arrow.triangle.merge" }
+    }
+    static func accent(_ format: EventFormat) -> Color {
+        switch format { case .live: AppSectionAccent.live; case .onlineLong: AppSectionAccent.artist; case .onlineShort: AppSectionAccent.scan; case .hybrid: AppSectionAccent.venue }
+    }
     static func statusTitle(_ status: EventStatus) -> String {
         switch status { case .planned: "参加予定"; case .attended: "参加済"; case .canceled: "キャンセル" }
     }
-    static func accent(_ event: GiriEvent) -> Color { event.kind == .live ? AppSectionAccent.live : AppSectionAccent.artist }
+    static func accent(_ event: GiriEvent) -> Color { accent(event.eventFormat) }
     static func date(_ event: GiriEvent, now: Date = Date()) -> Date? {
-        if event.kind == .live { return event.eventDate ?? event.startsAt }
-        let dates = event.effectiveRounds.flatMap { round -> [Date] in
+        if !event.eventFormat.hasOnlineRounds || event.effectiveRounds.isEmpty { return event.eventDate ?? event.startsAt }
+        var dates = event.effectiveRounds.flatMap { round -> [Date] in
             var dates: [Date] = []
             if round.submissionEnabled, let date = round.submissionEnd { dates.append(date) }
             if round.votingRequired, let date = round.votingEnd { dates.append(date) }
             return dates
-        }.sorted()
+        }
+        if event.eventFormat.hasLiveTiming, let date = event.eventDate ?? event.startsAt { dates.append(date) }
+        dates.sort()
         return dates.first { $0 >= now } ?? dates.last
     }
     static func previewRound(_ event: GiriEvent) -> EventRound? {
@@ -770,7 +848,7 @@ enum GiriEventPresentation {
     }
     static func roundTitle(_ round: EventRound, event: GiriEvent) -> String {
         var parts = [event.meetingType == .tournament ? round.name : "投稿・投票"]
-        if event.meetingType == .tournament || round.promptNumber > 1 { parts.append("お題\(round.promptNumber)") }
+        if event.meetingType == .tournament || round.promptNumber > 1 { parts.append("\(round.promptNumber)回目") }
         if !round.block.isEmpty { parts.append(round.block) }
         return parts.joined(separator: "・")
     }

@@ -17,10 +17,9 @@ func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, now: 
     func append(_ event: GiriEvent, _ key: String, _ body: String, _ date: Date) {
         if date > now { reminders.append(GiriNativeReminder(id: event.id + ":" + key, eventID: event.id, title: event.title, body: body, date: date)) }
     }
-    for event in events where event.isParticipating && event.status != .canceled {
+    for event in events where event.isActualParticipant {
         let lead = TimeInterval(preferences.reminderMinutes * 60)
-        if event.kind == .live {
-            guard event.status == .planned else { continue }
+        if event.eventFormat.hasLiveTiming {
             let venue = event.venue.isEmpty ? "" : "・" + event.venue
             if let start = event.startsAt {
                 append(event, "start", (preferences.reminderMinutes == 0 ? "開始時刻です" : "開始\(preferences.reminderMinutes)分前です") + venue, start.addingTimeInterval(-lead))
@@ -28,16 +27,17 @@ func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, now: 
                       let date = Calendar.current.date(bySettingHour: preferences.reminderHour, minute: preferences.reminderMinute, second: 0, of: day) {
                 append(event, "day", "今日は参加予定の日です" + venue, date)
             }
-        } else {
+        }
+        if event.eventFormat.hasOnlineRounds {
             for round in event.effectiveRounds {
                 let escapedID = round.id.addingPercentEncoding(withAllowedCharacters: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.!~*'()"))) ?? round.id
                 let prefix = event.rounds.isEmpty ? "" : "round:\(escapedID):"
                 var labels: [String] = []
                 if event.meetingType == .tournament && !event.rounds.isEmpty && !round.name.isEmpty { labels.append(round.name) }
-                if !event.rounds.isEmpty { labels.append("お題\(round.promptNumber)") }
+                if !event.rounds.isEmpty { labels.append("\(round.promptNumber)回目") }
                 for label in [event.affiliation, event.block, round.block] where !label.isEmpty && !labels.contains(label) { labels.append(label) }
                 let label = labels.isEmpty ? "" : labels.joined(separator: "・") + "・"
-                if event.status == .planned && round.submissionEnabled, let deadline = round.submissionEnd {
+                if round.submissionEnabled, let deadline = round.submissionEnd {
                     append(event, prefix + "submission", label + (preferences.reminderMinutes == 0 ? "投稿の締切です" : "投稿締切の\(preferences.reminderMinutes)分前です"), deadline.addingTimeInterval(-lead))
                 }
                 if round.votingRequired, let deadline = round.votingEnd {
