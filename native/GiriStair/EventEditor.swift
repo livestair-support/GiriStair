@@ -208,35 +208,11 @@ struct GiriEventEditor: View {
     }
 
     private var siteSection: some View {
-        Section {
-            GiriEventCardSectionTitle(title: "投稿・投票", systemImage: "globe", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
-            Picker("開催間隔", selection: $site.recurrence) {
-                Text("不定期").tag(SiteRecurrence.irregular)
-                Text("毎週").tag(SiteRecurrence.weekly)
-            }.pickerStyle(.menu).tint(.primary)
-            if site.recurrence == .weekly {
-                Picker("投稿開始曜日", selection: $site.weekday) {
-                    ForEach(1...7, id: \.self) { Text(["月", "火", "水", "木", "金", "土", "日"][$0 - 1] + "曜日").tag($0) }
-                }.pickerStyle(.menu).tint(.primary)
-            }
-            OptionalDateRow(title: "開始時刻", selection: siteClock, components: .hourAndMinute)
-            Stepper("投稿期間　\(site.submissionDays)日", value: $site.submissionDays, in: 1...365)
-            Stepper("投票期間　\(site.votingDays)日", value: $site.votingDays, in: 1...365)
-            Toggle("所属・部がある", isOn: $site.hasAffiliations).tint(AppSectionAccent.artist)
-            if site.hasAffiliations { TextField("現在の所属・部", text: $site.affiliation) }
-            TextField("ブロック", text: $site.block)
-            TextField("メモ", text: $site.memo, axis: .vertical).lineLimit(2...6)
-        }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
-    }
-
-    private var siteClock: Binding<Date?> {
-        Binding(get: {
-            Calendar.current.date(bySettingHour: site.startHour, minute: site.startMinute, second: 0, of: Date())
-        }, set: { date in
-            guard let date else { return }
-            site.startHour = Calendar.current.component(.hour, from: date)
-            site.startMinute = Calendar.current.component(.minute, from: date)
-        })
+        Group {
+            GiriSiteCycleSettingsForm(site: $site, isNew: true)
+            Section { TextField("メモ", text: $site.memo, axis: .vertical).lineLimit(2...6) }
+                .appEventEditorCardStyle(accentColor: AppSectionAccent.memo)
+        }
     }
 
     private var participantSection: some View {
@@ -488,6 +464,10 @@ struct GiriEventEditor: View {
             if isSite {
                 site.name = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
                 site.format = draft.eventFormat
+                if var settings = site.cycleSettings {
+                    settings.leagues = settings.leagues.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                    site.cycleSettings = settings
+                }
                 try store.saveOnlineSite(site)
             } else {
                 var candidate = draft
@@ -501,6 +481,9 @@ struct GiriEventEditor: View {
                 for i in candidate.teams.indices { candidate.teams[i].members = candidate.teams[i].members.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
                 if let size = candidate.teamSize, candidate.teams.contains(where: { $0.members.count > size }) {
                     store.errorMessage = "チーム人数を超えているチームがあります。人数設定かメンバーを確認してください。"; return
+                }
+                if let original = event, original.onlineSiteId != nil, candidate.effectiveRounds != original.effectiveRounds {
+                    candidate.siteScheduleCustomized = true
                 }
                 try giriEditorValidate(candidate)
                 try store.saveEvent(candidate)

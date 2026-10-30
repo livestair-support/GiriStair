@@ -9,7 +9,7 @@ enum EventFormat: String, Codable, CaseIterable, Identifiable {
         case .live: return "生大喜利"
         case .onlineLong: return "ネット大喜利（長考）"
         case .onlineShort: return "ネット大喜利（短考）"
-        case .hybrid: return "ハイブリッド"
+        case .hybrid: return "スプシ系"
         }
     }
     var label: String { title }
@@ -19,7 +19,7 @@ enum EventFormat: String, Codable, CaseIterable, Identifiable {
         case .live: return "生"
         case .onlineLong: return "長考"
         case .onlineShort: return "短考"
-        case .hybrid: return "ハイブリッド"
+        case .hybrid: return "スプシ系"
         }
     }
     var isOnline: Bool { self == .onlineLong || self == .onlineShort }
@@ -106,7 +106,7 @@ extension GiriEvent {
         isActualParticipant && participationState(now: now) == .completed
     }
     var hasCycleResult: Bool {
-        cyclePlacement != nil || !cycleResult.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        cyclePlacement != nil || !cycleResult.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || leagueMovement != .unchanged || siteQualification != .none || (!nextAffiliation.isEmpty && nextAffiliation != affiliation)
     }
     func hasRecordedResult(for round: EventRound) -> Bool {
         let stages = tournamentResult?.stages ?? []
@@ -181,5 +181,14 @@ extension GiriEvent {
             guard let end = round.votingEnd, end <= now else { return false }
             return !hasRecordedResult(for: round) && !promptedResultKeys.contains(round.resultPromptKey)
         }.sorted { ($0.votingEnd ?? .distantPast) < ($1.votingEnd ?? .distantPast) }
+    }
+}
+
+
+extension AppPreferences {
+    /// A partial/duplicated old preference still exposes all four categories.
+    var effectiveFormatOrder: [EventFormat] {
+        var seen = Set<EventFormat>()
+        return (formatOrder + EventFormat.allCases).filter { seen.insert($0).inserted }
     }
 }

@@ -16,3 +16,5 @@ AGENTS.md、docs/DESIGN.md、docs/NATIVE_MIGRATION.mdを読んでから作業し
 - LiveStairは変更せず、GiriStairも別ブランチ・PRまで。mainへ自動マージしません。
 
 機能の変更時はAGENTS.md「0.5以降の機能ルール」とdocs/FEATURE_REVISION_05.mdを参照してください。4種別を独立して扱い、参加状況は日時から導出し、通過後の次段階はユーザー保存前に作成しません。LiveStairのサジェスト、詳細と思考の遷移、保存互換性を新しいページでも維持します。
+
+通常サイトの周期・リーグ・シーズンとお題/回答の分類はdocs/SITE_CYCLES.mdを参照します。投稿中／投票中が明確なカード、一覧と戦績の同じ形式タブ、準備中サポートの非リンク表示を維持してください。

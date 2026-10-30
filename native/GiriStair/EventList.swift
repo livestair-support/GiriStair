@@ -6,6 +6,7 @@ struct GiriListView: View {
     @EnvironmentObject private var store: GiriStore
     @State private var search = ""
     @State private var selectedFormat: EventFormat = .live
+    @State private var didInitializeFormat = false
     @State private var attended = false
     @State private var year = "all"
     @State private var meeting = "all"
@@ -85,12 +86,23 @@ struct GiriListView: View {
         }
     }
     private var visibleSites: [OnlineSite] {
-        guard selectedFormat == .onlineLong, !attended, meeting != "tournament", status == "all" else { return [] }
+        guard selectedFormat == .onlineLong, !attended, meeting != "tournament", status == "all", year == "all", stage == "all" else { return [] }
         return store.onlineSites.filter { record in
             record.format == selectedFormat && (site == "all" || site == record.id) &&
             (search.isEmpty || [record.name, record.affiliation, record.block, record.memo].joined(separator: " ").localizedStandardContains(search))
         }
     }
+    // A monitored site's current periods already appear in its status card.
+    // Keep those same cycles out of the adjacent list rather than duplicating
+    // the site and its current posting/voting as unrelated cards.
+    private var eventCards: [GiriEvent] {
+        let displayedSiteIDs = Set(visibleSites.map(\.id))
+        return filteredEvents.filter { event in
+            guard let siteID = event.onlineSiteId else { return true }
+            return !displayedSiteIDs.contains(siteID)
+        }
+    }
+    private var visibleEntryCount: Int { visibleSites.count + eventCards.count }
     private var hasParticipantFilter: Bool { selectedFormat.hasLiveTiming }
 
     var body: some View {
@@ -119,6 +131,16 @@ struct GiriListView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
+        .onAppear {
+            guard !didInitializeFormat else { return }
+            selectedFormat = store.preferences.effectiveFormatOrder.first ?? .live
+            didInitializeFormat = true
+        }
+        .onChange(of: store.preferences.effectiveFormatOrder) { previous, next in
+            if selectedFormat == previous.first {
+                selectedFormat = next.first ?? .live
+            }
+        }
         .onChange(of: selectedFormat) { _, _ in
             year = "all"; meeting = "all"; status = "all"; venue = "all"; site = "all"; stage = "all"; selectedPlayers.removeAll()
             closePlayerDropdown()
@@ -138,16 +160,17 @@ struct GiriListView: View {
     }
     private var eventList: some View {
         ZStack {
-            if filteredEvents.isEmpty && visibleSites.isEmpty {
+            if eventCards.isEmpty && visibleSites.isEmpty {
                 CenteredEmptyMessage(systemImage: "calendar.badge.exclamationmark", title: searchableEvents.isEmpty ? "記録がありません" : "該当する記録がありません")
             } else {
                 List {
                     ForEach(visibleSites) { record in
-                        siteCard(record)
+                        GiriSiteStatusCard(site: record)
+                            .buttonStyle(.plain)
                             .listRowInsets(EdgeInsets(top: record.id == visibleSites.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
                             .listRowSeparator(.hidden).listRowBackground(Color.clear)
                     }
-                    ForEach(filteredEvents) { event in
+                    ForEach(eventCards) { event in
                         Button { destinationID = event.id } label: { GiriEventCard(event: event) }
                             .buttonStyle(.plain)
                             .contextMenu {
@@ -157,7 +180,7 @@ struct GiriListView: View {
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button(role: .destructive) { deletingEvent = event } label: { Label("削除", systemImage: "trash") }
                             }
-                            .listRowInsets(EdgeInsets(top: visibleSites.isEmpty && event.id == filteredEvents.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
+                            .listRowInsets(EdgeInsets(top: visibleSites.isEmpty && event.id == eventCards.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
                             .listRowSeparator(.hidden).listRowBackground(Color.clear)
                     }
                 }
@@ -197,10 +220,10 @@ struct GiriListView: View {
                 Image(systemName: "line.3.horizontal.decrease").font(.system(size: appFontSize(16), weight: .semibold)).foregroundStyle(accent).frame(width: 22)
                 Text("表示・絞り込み").font(.system(size: appFontSize(18), weight: .bold, design: .rounded))
                 Spacer()
-                Text("\(filteredEvents.count)件").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text("\(visibleEntryCount)件").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 AppHeaderCollapseButton(isCollapsed: $isCollapsed, tintColor: accent)
             }
-            GiriFormatPicker(selection: $selectedFormat)
+            GiriFormatPicker(selection: $selectedFormat, formats: store.preferences.effectiveFormatOrder)
             if !isCollapsed {
                 AppSearchField(text: $search, placeholder: selectedFormat.hasLiveTiming ? "会・大会名・会場・主催者・参加者・メモ" : "大会・サイト・段階・ブロック・メモ")
                     .padding(.bottom, 2)
@@ -318,42 +341,14 @@ struct GiriListView: View {
         playerSearch = ""
     }
     private var separator: some View { Divider().overlay(appSeparatorColor) }
-    private func siteCard(_ record: OnlineSite) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "globe").foregroundStyle(accent)
-                NavigationLink { GiriSiteDetail(siteID: record.id) } label: {
-                    Text(record.name).font(.system(size: appFontSize(18), weight: .bold, design: .rounded)).foregroundStyle(.primary)
-                }.buttonStyle(.plain)
-                Spacer()
-                NavigationLink { GiriSiteDetail(siteID: record.id) } label: { Image(systemName: "ellipsis").font(.body.weight(.semibold)).frame(width: 28, height: 28) }
-                    .buttonStyle(.plain).accessibilityLabel("サイトを編集")
-            }
-            if !record.affiliation.isEmpty || !record.block.isEmpty {
-                Text([record.affiliation, record.block].filter { !$0.isEmpty }.joined(separator: "・")).font(.subheadline).foregroundStyle(.secondary)
-            }
-            HStack(spacing: 10) { siteCycleButton(record, offset: 0); siteCycleButton(record, offset: 1) }
-        }
-        .padding(14).appTintedCard(accentColor: accent)
-    }
-    private func siteCycleButton(_ record: OnlineSite, offset: Int) -> some View {
-        Button {
-            store.run {
-                let event = try store.createSiteCycle(record.id, weekOffset: offset, join: false)
-                destinationID = event.id
-            }
-        } label: {
-            Text(record.recurrence == .weekly ? (offset == 0 ? "今週" : "来週") : (offset == 0 ? "今回" : "次の回"))
-                .frame(maxWidth: .infinity)
-        }.buttonStyle(.bordered).tint(accentActionColor)
-    }
 }
 
 struct GiriFormatPicker: View {
     @Binding var selection: EventFormat
+    var formats: [EventFormat] = EventFormat.allCases
     var body: some View {
         Picker("形式", selection: $selection) {
-            ForEach(EventFormat.allCases) { format in
+            ForEach(formats) { format in
                 Text(format.shortTitle).tag(format).accessibilityLabel(format.title)
             }
         }.pickerStyle(.segmented)
@@ -806,7 +801,7 @@ struct GiriListBadge: View {
 enum GiriEventPresentation {
     static func kindTitle(_ kind: EventKind) -> String { kind == .live ? "生大喜利" : "ネット大喜利（長考）" }
     static func formatBadgeTitle(_ format: EventFormat) -> String {
-        switch format { case .live: "生大喜利"; case .onlineLong: "長考"; case .onlineShort: "短考"; case .hybrid: "ハイブリッド" }
+        switch format { case .live: "生大喜利"; case .onlineLong: "長考"; case .onlineShort: "短考"; case .hybrid: "スプシ系" }
     }
     static func symbol(_ format: EventFormat) -> String {
         switch format { case .live: "person.2.fill"; case .onlineLong: "globe"; case .onlineShort: "bolt.fill"; case .hybrid: "arrow.triangle.merge" }
