@@ -3,35 +3,25 @@ import PhotosUI
 import UIKit
 import ImageIO
 
-// The native thought workspace keeps the schedule and drafts in the same Form.
-// Stable event/round IDs continue to address the Flutter document's existing notes.
+// Native thought navigation owns every prompt/answer edit. Event detail links
+// here, and stable note/round IDs continue to address the existing document.
 @MainActor
 struct GiriThinkingView: View {
     @EnvironmentObject private var store: GiriStore
-    @State private var mode = 0
-    @State private var noteFilter = "all"
+    @EnvironmentObject private var navigation: GiriNavigation
+    @State private var promptMode = false
+    @State private var path: [GiriThoughtDestination] = []
     @State private var usedFilter = "all"
     @State private var editing: ThoughtNote?
     @State private var creatingKind: NoteKind?
     @State private var deleteCandidate: ThoughtNote?
 
     var body: some View {
+        NavigationStack(path: $path) {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
             thoughtList(now: timeline.date)
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            ZStack(alignment: .trailing) {
-                AppPageHeader(title: "思考", systemImage: "lightbulb", accentColor: AppSectionAccent.memo)
-                Button { creatingKind = .free } label: {
-                    Label("メモ", systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-                .tint(accentActionColor)
-                .padding(.trailing, 18)
-            }
-            .background(appHeaderColor)
-        }
+        .safeAreaInset(edge: .top, spacing: 0) { pageHeader }
         .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $editing) { note in
             NavigationStack { GiriThoughtEditor(note: note) }
@@ -39,352 +29,508 @@ struct GiriThinkingView: View {
         .sheet(item: $creatingKind) { kind in
             NavigationStack { GiriThoughtEditor(kind: kind) }
         }
+        .navigationDestination(for: GiriThoughtDestination.self) { destination in
+            switch destination {
+            case .event(let id): GiriThoughtsForEvent(eventID: id)
+            case .site(let id): GiriThoughtsForSite(siteID: id)
+            case .round(let eventID, let roundID): GiriRoundWorkspace(eventID: eventID, roundID: roundID)
+            case .note(let id): GiriThoughtNotePage(noteID: id)
+            }
+        }
         .confirmationDialog("メモを削除しますか？", isPresented: Binding(
-            get: { deleteCandidate != nil },
-            set: { if !$0 { deleteCandidate = nil } }
+            get: { deleteCandidate != nil }, set: { if !$0 { deleteCandidate = nil } }
         ), titleVisibility: .visible) {
             Button("削除", role: .destructive) {
                 guard let note = deleteCandidate else { return }
-                store.run {
-                    try store.deleteNote(note.id)
-                    playLiveStairDeleteFeedback()
-                }
+                store.run { try store.deleteNote(note.id); playLiveStairDeleteFeedback() }
                 deleteCandidate = nil
             }
-        } message: {
-            Text(deleteCandidate.map(thoughtTitle) ?? "")
+        } message: { Text(deleteCandidate.map(thoughtTitle) ?? "") }
         }
+        .onAppear(perform: consumeDestination)
+        .onChange(of: navigation.thoughtDestination) { _, _ in consumeDestination() }
+    }
+
+    private func consumeDestination() {
+        guard let destination = navigation.thoughtDestination else { return }
+        path = [destination]
+        navigation.thoughtDestination = nil
+    }
+
+    private var pageHeader: some View {
+        AppPageHeader(title: "思考", systemImage: promptMode ? "lightbulb" : "text.bubble", accentColor: AppSectionAccent.memo)
+            .overlay(alignment: .trailing) {
+                HStack(spacing: 10) {
+                    Button { promptMode.toggle() } label: {
+                        headerIcon(promptMode ? "text.bubble" : "lightbulb")
+                    }
+                    .accessibilityLabel(promptMode ? "回答モードに切り替える" : "お題モードに切り替える")
+                    Button { creatingKind = promptMode ? .prompts : .answers } label: { headerIcon("plus") }
+                        .accessibilityLabel(promptMode ? "お題を作る" : "回答メモを作る")
+                        .contextMenu {
+                            Button("自由メモを作る", systemImage: "square.and.pencil") { creatingKind = .free }
+                        }
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 18)
+            }
+    }
+
+    private func headerIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: appFontSize(19), weight: .semibold))
+            .foregroundStyle(.primary)
+            .frame(width: 44, height: 44)
+            .background(appCardColor).clipShape(Circle())
+            .overlay { Circle().stroke(Color.primary.opacity(0.10), lineWidth: 1) }
     }
 
     private func thoughtList(now: Date) -> some View {
-        let active = activeRounds(now: now)
-        let notes = filteredNotes(active: active)
+        let notes = standaloneNotes
+        let groups = eventGroups(now: now)
         return List {
-            Section {
-                Picker("思考", selection: $mode) {
-                    Text("回答作成").tag(0)
-                    Text("お題作成").tag(1)
-                }
-                .pickerStyle(.segmented)
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-                .listRowSeparator(.hidden)
-            }
-            Section {
-                AppCardSectionTitle(
-                    title: mode == 0 ? "回答を考える" : "お題作成",
-                    systemImage: mode == 0 ? "square.and.pencil" : "lightbulb",
-                    accentColor: AppSectionAccent.memo
-                )
-                .listRowSeparator(.hidden)
-                Button {
-                    creatingKind = mode == 0 ? .answers : .prompts
-                } label: {
-                    Label(mode == 0 ? "回答メモを追加" : "お題を作る", systemImage: "plus.circle")
-                }
-                .tint(accentActionColor)
-            }
-            .appSectionCardStyle(accentColor: AppSectionAccent.memo)
-
-            if mode == 0 {
-                if active.isEmpty {
-                    Section {
-                        CenteredEmptyMessage(systemImage: "globe", title: "投稿期間中のネット大喜利はありません")
-                            .padding(.vertical, 16)
-                    }
-                    .appSectionCardStyle(accentColor: AppSectionAccent.artist)
-                }
-                ForEach(active) { item in
-                    GiriRoundWorkspaceSections(eventID: item.event.id, roundID: item.round.id)
-                }
-            }
-
-            Section {
-                AppCardSectionTitle(
-                    title: mode == 0 ? "回答・メモ" : "保存したお題",
-                    systemImage: mode == 0 ? "square.and.pencil" : "lightbulb",
-                    accentColor: AppSectionAccent.memo
-                )
-                .listRowSeparator(.hidden)
-                if mode == 0 {
-                    Picker("種類", selection: $noteFilter) {
-                        Text("すべて").tag("all")
-                        Text("回答").tag(NoteKind.answers.rawValue)
-                        Text("自由").tag(NoteKind.free.rawValue)
-                    }
-                    .pickerStyle(.menu)
-                    .tint(.primary)
-                } else {
+            if promptMode {
+                Section {
+                    AppCardSectionTitle(title: "保存したお題", systemImage: "lightbulb", accentColor: AppSectionAccent.memo)
+                        .listRowSeparator(.hidden)
                     Picker("使用状況", selection: $usedFilter) {
                         Text("すべて").tag("all")
                         Text("未使用").tag("unused")
                         Text("使用済み").tag("used")
-                    }
-                    .pickerStyle(.menu)
-                    .tint(.primary)
+                    }.pickerStyle(.menu).tint(.primary)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+            } else {
+                if !groups.isEmpty {
+                    Section {
+                        AppCardSectionTitle(title: "会・サイトの回答", systemImage: "text.bubble", accentColor: AppSectionAccent.artist)
+                            .listRowSeparator(.hidden)
+                    }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+                }
+                ForEach(groups) { group in
+                    Button {
+                        if let siteID = group.siteID { navigation.openThoughts(siteID: siteID) }
+                        else if let eventID = group.eventID { navigation.openThoughts(eventID: eventID) }
+                    } label: {
+                        GiriListCard(accentColor: AppSectionAccent.artist) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(group.title).font(.headline).foregroundStyle(.primary).lineLimit(2)
+                                    Spacer(minLength: 8)
+                                    Text("\(group.noteCount)題").font(.caption).foregroundStyle(.secondary)
+                                }
+                                Text(group.format.title).font(.caption.weight(.medium)).foregroundStyle(AppSectionAccent.artist)
+                                if let latest = group.latestEvent {
+                                    Text(thoughtPhase(event: latest, round: thoughtNewestRound(latest), now: now))
+                                        .font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
+                                }
+                                if !group.summary.isEmpty {
+                                    Text(group.summary).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                }
+                            }.padding(.trailing, 18)
+                        }
+                    }.buttonStyle(.plain).thoughtCardRow()
                 }
             }
-            .appSectionCardStyle(accentColor: AppSectionAccent.memo)
 
-            if notes.isEmpty {
+            if !notes.isEmpty || promptMode {
                 Section {
-                    CenteredEmptyMessage(systemImage: mode == 0 ? "square.and.pencil" : "lightbulb", title: mode == 0 ? "回答・メモがありません" : "お題がありません")
-                        .padding(.vertical, 16)
-                }
-                .appSectionCardStyle(accentColor: AppSectionAccent.memo)
+                    AppCardSectionTitle(title: promptMode ? "お題" : "独立した回答・メモ", systemImage: promptMode ? "lightbulb" : "square.and.pencil", accentColor: AppSectionAccent.memo)
+                        .listRowSeparator(.hidden)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+            }
+            if notes.isEmpty && (promptMode || groups.isEmpty) {
+                CenteredEmptyMessage(systemImage: promptMode ? "lightbulb" : "text.bubble", title: promptMode ? "お題がありません" : "回答メモがありません")
+                    .listRowSeparator(.hidden).listRowBackground(Color.clear)
             }
             ForEach(notes) { note in
-                Section {
-                    HStack(spacing: 12) {
-                        Button { editing = note } label: {
-                            GiriThoughtSummary(note: note, detail: noteContext(note))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
+                Button { editing = note } label: {
+                    GiriThoughtCard(note: note, event: store.events.first { $0.id == note.eventId })
+                }.buttonStyle(.plain).thoughtCardRow()
+                .contextMenu {
+                    Button("編集", systemImage: "pencil") { editing = note }
+                    if note.kind == .prompts {
+                        Button(note.used ? "未使用に戻す" : "使用済みにする", systemImage: note.used ? "arrow.uturn.backward" : "checkmark.circle") {
+                            var changed = note; changed.used.toggle(); changed.updatedAt = Date()
+                            store.run { try store.saveNote(changed) }
                         }
-                        .buttonStyle(.plain)
-                        Menu {
-                            Button("編集", systemImage: "pencil") { editing = note }
-                            if note.kind == .prompts {
-                                Button(note.used ? "未使用に戻す" : "使用済みにする", systemImage: note.used ? "arrow.uturn.backward" : "checkmark.circle") {
-                                    var updated = note
-                                    updated.used.toggle()
-                                    updated.updatedAt = Date()
-                                    store.run { try store.saveNote(updated) }
-                                }
-                            }
-                            Button("削除", systemImage: "trash", role: .destructive) { deleteCandidate = note }
-                        } label: {
-                            Image(systemName: "ellipsis").frame(minWidth: 30, minHeight: 44)
-                        }
-                        .tint(.secondary)
                     }
-                    .padding(.vertical, 6)
+                    Button("削除", systemImage: "trash", role: .destructive) { deleteCandidate = note }
                 }
-                .appSectionCardStyle(accentColor: AppSectionAccent.memo)
             }
         }
-        .appIndexListStyle()
-        .scrollDismissesKeyboard(.interactively)
+        .appIndexListStyle().scrollDismissesKeyboard(.interactively)
     }
 
-    private func activeRounds(now: Date) -> [ThoughtActiveRound] {
-        store.events.filter { $0.kind == .online && $0.isParticipating && $0.status != .canceled }
-            .flatMap { event in
-                event.effectiveRounds.filter { $0.isSubmissionOpen(now) }
-                    .map { ThoughtActiveRound(event: event, round: $0) }
-            }
-            .sorted { ($0.round.submissionEnd ?? .distantFuture) < ($1.round.submissionEnd ?? .distantFuture) }
-    }
-
-    private func filteredNotes(active: [ThoughtActiveRound]) -> [ThoughtNote] {
+    private var standaloneNotes: [ThoughtNote] {
         store.notes.filter { note in
-            if mode == 1 {
+            if promptMode {
                 return note.kind == .prompts && (usedFilter == "all" || note.used == (usedFilter == "used"))
             }
-            let inWorkspace = note.kind == .answers && active.contains { thoughtMatches(note, eventID: $0.event.id, roundID: $0.round.id) }
-            return note.kind != .prompts && !inWorkspace && (noteFilter == "all" || note.kind.rawValue == noteFilter)
-        }
-        .sorted { $0.updatedAt > $1.updatedAt }
+            return note.kind != .prompts && (note.eventId == nil || !store.events.contains { $0.id == note.eventId })
+        }.sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    private func noteContext(_ note: ThoughtNote) -> String {
-        var parts = [note.kind == .prompts ? (note.used ? "使用済み" : "未使用") : note.kind == .answers ? "回答 \(thoughtAnswers(note).count)案" : "メモ"]
-        if let event = store.events.first(where: { $0.id == note.eventId }) {
-            parts.append(store.onlineSites.first(where: { $0.id == event.onlineSiteId })?.name ?? event.title)
-            if let round = event.effectiveRounds.first(where: { $0.id == (note.roundId ?? "legacy") }) {
-                parts.append(thoughtRoundLabel(event: event, round: round))
-            } else if note.roundId != nil {
-                parts.append("削除された日程")
-            }
-        } else if note.eventId != nil {
-            parts.append("削除された会")
+    private func eventGroups(now: Date) -> [ThoughtEventGroup] {
+        let linked = Set(store.notes.filter { $0.kind != .prompts }.compactMap(\.eventId))
+        let included = store.events.filter { event in
+            linked.contains(event.id) ||
+            (event.isActualParticipant && event.eventFormat.hasOnlineRounds && event.participationState(now: now) == .ongoing)
         }
-        return parts.joined(separator: " · ")
+        var groups: [String: [GiriEvent]] = [:]
+        for event in included { groups[event.onlineSiteId.map { "site:" + $0 } ?? "event:" + event.id, default: []].append(event) }
+        return groups.values.compactMap { events -> ThoughtEventGroup? in
+            guard let first = events.first else { return nil }
+            let eventIDs = Set(events.map(\.id))
+            let notes = store.notes.filter { $0.kind != .prompts && $0.eventId.map(eventIDs.contains) == true }
+            let latestEvent = events.max { thoughtEventDate($0) < thoughtEventDate($1) }
+            let latestNote = notes.max { $0.updatedAt < $1.updatedAt }
+            return ThoughtEventGroup(
+                id: first.onlineSiteId.map { "site:" + $0 } ?? "event:" + first.id,
+                title: store.onlineSites.first { $0.id == first.onlineSiteId }?.name ?? first.title,
+                siteID: first.onlineSiteId, eventID: first.onlineSiteId == nil ? first.id : nil,
+                format: first.eventFormat, noteCount: notes.count,
+                latest: max(latestNote?.updatedAt ?? .distantPast, latestEvent.map(thoughtEventDate) ?? .distantPast),
+                latestEvent: latestEvent, summary: latestNote.map { note in thoughtResultSummary(note, event: store.events.first { $0.id == note.eventId }) } ?? ""
+            )
+        }.sorted { $0.latest > $1.latest }
     }
 }
 
-private struct ThoughtActiveRound: Identifiable {
+private struct ThoughtEventGroup: Identifiable {
+    let id: String
+    let title: String
+    let siteID: String?
+    let eventID: String?
+    let format: EventFormat
+    let noteCount: Int
+    let latest: Date
+    let latestEvent: GiriEvent?
+    let summary: String
+}
+
+private extension View {
+    func thoughtCardRow() -> some View {
+        self.listRowInsets(EdgeInsets(top: 6, leading: 18, bottom: 6, trailing: 18))
+            .listRowBackground(Color.clear).listRowSeparator(.hidden)
+    }
+}
+
+/// Latest cycles first. Affiliation and result are each cycle's snapshot.
+@MainActor
+struct GiriThoughtsForSite: View {
+    @EnvironmentObject private var store: GiriStore
+    let siteID: String
+    private var site: OnlineSite? { store.onlineSites.first { $0.id == siteID } }
+    private var cycles: [GiriEvent] {
+        store.events.filter { event in
+            event.onlineSiteId == siteID &&
+            (event.isActualParticipant || store.notes.contains { $0.eventId == event.id })
+        }.sorted { thoughtEventDate($0) > thoughtEventDate($1) }
+    }
+    var body: some View {
+        List {
+            if cycles.isEmpty {
+                CenteredEmptyMessage(systemImage: "globe", title: "回答の記録がありません")
+                    .listRowBackground(Color.clear).listRowSeparator(.hidden)
+            }
+            ForEach(cycles) { event in
+                NavigationLink(value: GiriThoughtDestination.event(event.id)) {
+                    GiriThoughtEventCard(event: event)
+                }.buttonStyle(.plain).thoughtCardRow()
+            }
+        }.appIndexListStyle()
+            .navigationTitle(site?.name ?? "サイトの回答")
+            .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
+    }
+}
+
+@MainActor
+struct GiriThoughtsForEvent: View {
+    @EnvironmentObject private var store: GiriStore
+    let eventID: String
+    @State private var creating = false
+    private var event: GiriEvent? { store.events.first { $0.id == eventID } }
+    private var rounds: [EventRound] {
+        (event?.effectiveRounds ?? []).sorted {
+            ($0.submissionStart ?? $0.votingEnd ?? .distantPast) > ($1.submissionStart ?? $1.votingEnd ?? .distantPast)
+        }
+    }
+    private var independentNotes: [ThoughtNote] {
+        store.notes.filter { note in
+            guard note.eventId == eventID, note.kind != .prompts else { return false }
+            return note.roundId == nil || !rounds.contains { $0.id == note.roundId }
+        }.sorted { $0.updatedAt > $1.updatedAt }
+    }
+    var body: some View {
+        List {
+            if let event {
+                Section {
+                    AppCardSectionTitle(title: event.title, systemImage: thoughtFormatSymbol(event.eventFormat), accentColor: AppSectionAccent.artist)
+                        .listRowSeparator(.hidden)
+                    Text(event.eventFormat.title).font(.subheadline).foregroundStyle(.secondary)
+                    if !event.affiliation.isEmpty { LabeledContent("所属", value: event.affiliation) }
+                    if !event.cycleResult.isEmpty { LabeledContent("結果", value: event.cycleResult) }
+                    if let rank = event.cyclePlacement { LabeledContent("順位", value: "\(rank)位") }
+                }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+                ForEach(rounds) { round in
+                    NavigationLink(value: GiriThoughtDestination.round(eventID: eventID, roundID: round.id)) {
+                        GiriThoughtRoundCard(event: event, round: round)
+                    }.buttonStyle(.plain).thoughtCardRow()
+                }
+                ForEach(independentNotes) { note in
+                    NavigationLink(value: GiriThoughtDestination.note(note.id)) {
+                        GiriThoughtCard(note: note, event: event)
+                    }.buttonStyle(.plain).thoughtCardRow()
+                }
+                Section {
+                    Button { creating = true } label: { Label("お題と回答を追加", systemImage: "plus.circle") }
+                }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+            } else {
+                CenteredEmptyMessage(systemImage: "text.bubble", title: "この会は削除されています")
+            }
+        }.appIndexListStyle()
+            .navigationTitle("お題と回答").navigationBarTitleDisplayMode(.inline)
+            .toolbar(.visible, for: .navigationBar)
+            .sheet(isPresented: $creating) {
+                NavigationStack { GiriThoughtEditor(kind: .answers, eventID: eventID) }
+            }
+    }
+}
+
+private struct GiriThoughtEventCard: View {
+    @EnvironmentObject private var store: GiriStore
+    let event: GiriEvent
+    var body: some View {
+        GiriListCard(accentColor: AppSectionAccent.artist) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(GiriDateText.day(thoughtEventDate(event))).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                HStack {
+                    Text(event.title).font(.headline).foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    Text(thoughtPhase(event: event, round: thoughtNewestRound(event))).font(.caption.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
+                }
+                if !event.affiliation.isEmpty { Text(event.affiliation).font(.subheadline).foregroundStyle(.secondary) }
+                if !event.cycleResult.isEmpty { Text(event.cycleResult).font(.subheadline).foregroundStyle(.secondary) }
+                if let rank = event.cyclePlacement { Text("\(rank)位").font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.ticket) }
+                let count = store.notes.filter { $0.eventId == event.id && $0.kind != .prompts }.count
+                Text("\(count)題").font(.caption).foregroundStyle(.secondary)
+            }.padding(.trailing, 18)
+        }
+    }
+}
+
+private struct GiriThoughtRoundCard: View {
+    @EnvironmentObject private var store: GiriStore
     let event: GiriEvent
     let round: EventRound
-    var id: String { event.id + ":" + round.id }
+    var body: some View {
+        GiriListCard(accentColor: AppSectionAccent.artist) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(thoughtRoundLabel(event: event, round: round)).font(.headline).foregroundStyle(.primary)
+                Text(thoughtPhase(event: event, round: round)).font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
+                if let end = round.votingEnd ?? round.submissionEnd {
+                    Text("締切 \(GiriDateText.dateTime(end))").font(.caption).foregroundStyle(.secondary)
+                }
+                let notes = store.notes.filter { $0.kind == .answers && thoughtMatches($0, eventID: event.id, roundID: round.id) }
+                Text("\(notes.count)題").font(.caption).foregroundStyle(.secondary)
+                if let result = event.tournamentResult?.stages.last(where: { $0.roundId == round.id || ($0.roundId == nil && $0.stageId == round.effectiveStageId) }) {
+                    Text(thoughtStageSummary(result)).font(.caption.weight(.medium)).foregroundStyle(AppSectionAccent.ticket)
+                }
+            }.padding(.trailing, 18)
+        }
+    }
 }
 
 @MainActor
 struct GiriRoundWorkspace: View {
+    @EnvironmentObject private var store: GiriStore
     let eventID: String
     let roundID: String
-
     var body: some View {
-        Form {
-            GiriRoundWorkspaceSections(eventID: eventID, roundID: roundID)
-        }
-        .appEditorFormStyle()
-        .navigationTitle("投稿・投票")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
-        .tint(accentActionColor)
+        Form { GiriRoundWorkspaceSections(eventID: eventID, roundID: roundID) }
+            .appEditorFormStyle().navigationTitle("お題と回答")
+            .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
     }
 }
 
-/// Embeds the very same periods and editable drafts in an event detail Form.
+/// The period and its prompt cards are kept in the Thinking tab.
 @MainActor
 struct GiriRoundWorkspaceSections: View {
     @EnvironmentObject private var store: GiriStore
     let eventID: String
     let roundID: String
-    @State private var editingNoteID: String?
+    @State private var editing: ThoughtNote?
     @State private var creating = false
-    @State private var draftGeneration = UUID()
     @State private var deleteCandidate: ThoughtNote?
-
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
     private var round: EventRound? { event?.effectiveRounds.first { $0.id == roundID } }
     private var notes: [ThoughtNote] {
         store.notes.filter { $0.kind == .answers && thoughtMatches($0, eventID: eventID, roundID: roundID) }
-            .sorted { $0.createdAt < $1.createdAt }
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
-
     var body: some View {
         Group {
             periodSection
             ForEach(notes) { note in
                 Section {
-                    if editingNoteID == note.id {
-                        GiriInlineThoughtEditor(note: note, eventID: eventID, roundID: roundID, onSaved: {
-                            editingNoteID = nil
-                        }, onCancel: {
-                            editingNoteID = nil
-                        })
-                    } else {
-                        draftRows(note)
-                    }
-                }
-                .appSectionCardStyle(accentColor: AppSectionAccent.memo)
+                    GiriThoughtNoteRows(note: note, event: event, onEdit: { editing = note })
+                    HStack {
+                        Button("編集", systemImage: "pencil") { editing = note }
+                        Spacer()
+                        Button("削除", systemImage: "trash", role: .destructive) { deleteCandidate = note }
+                    }.buttonStyle(.borderless)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
             }
             if round != nil {
-                if creating || notes.isEmpty {
-                    Section {
-                        AppCardSectionTitle(title: "お題と回答案を追加", systemImage: "square.and.pencil", accentColor: AppSectionAccent.memo)
-                            .listRowSeparator(.hidden)
-                        GiriInlineThoughtEditor(note: nil, eventID: eventID, roundID: roundID, onSaved: {
-                            creating = false
-                            draftGeneration = UUID()
-                        }, onCancel: notes.isEmpty ? nil : {
-                            creating = false
-                        })
-                        .id(draftGeneration)
-                    }
-                    .appSectionCardStyle(accentColor: AppSectionAccent.memo)
-                } else {
-                    Section {
-                        Button {
-                            creating = true
-                            editingNoteID = nil
-                        } label: {
-                            Label("お題を追加", systemImage: "plus.circle")
-                        }
-                        .tint(accentActionColor)
-                    }
-                    .appSectionCardStyle(accentColor: AppSectionAccent.memo)
-                }
+                Section {
+                    Button { creating = true } label: { Label("お題と回答を追加", systemImage: "plus.circle") }
+                }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
             }
         }
-        .confirmationDialog("お題と回答を削除しますか？", isPresented: Binding(
-            get: { deleteCandidate != nil },
-            set: { if !$0 { deleteCandidate = nil } }
-        ), titleVisibility: .visible) {
+        .sheet(item: $editing) { note in NavigationStack { GiriThoughtEditor(note: note) } }
+        .sheet(isPresented: $creating) {
+            NavigationStack { GiriThoughtEditor(kind: .answers, eventID: eventID, roundID: roundID) }
+        }
+        .confirmationDialog("お題と回答を削除しますか？", isPresented: Binding(get: { deleteCandidate != nil }, set: { if !$0 { deleteCandidate = nil } }), titleVisibility: .visible) {
             Button("削除", role: .destructive) {
                 guard let note = deleteCandidate else { return }
-                store.run {
-                    try store.deleteNote(note.id)
-                    playLiveStairDeleteFeedback()
-                }
+                store.run { try store.deleteNote(note.id); playLiveStairDeleteFeedback() }
                 deleteCandidate = nil
             }
-        } message: {
-            Text(deleteCandidate.map(thoughtTitle) ?? "")
         }
     }
-
     private var periodSection: some View {
         Section {
-            AppCardSectionTitle(
-                title: store.onlineSites.first(where: { $0.id == event?.onlineSiteId })?.name ?? event?.title ?? "削除された会",
-                systemImage: "globe",
-                accentColor: AppSectionAccent.artist
-            )
-            .listRowSeparator(.hidden)
+            AppCardSectionTitle(title: event?.title ?? "削除された会", systemImage: "globe", accentColor: AppSectionAccent.artist)
+                .listRowSeparator(.hidden)
             if let event, let round {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(thoughtRoundLabel(event: event, round: round))
-                        .font(.subheadline.weight(.medium))
+                    Text(thoughtRoundLabel(event: event, round: round)).font(.subheadline.weight(.semibold))
                     Spacer(minLength: 8)
-                    NavigationLink {
-                        GiriRoundEditor(eventID: eventID, round: round)
-                    } label: {
-                        Image(systemName: "pencil")
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                    .accessibilityLabel("日程を編集")
+                    NavigationLink { GiriRoundEditor(eventID: eventID, round: round) } label: { Image(systemName: "pencil") }
+                        .accessibilityLabel("日程を編集")
                 }
-                let urlText = store.onlineSites.first(where: { $0.id == event.onlineSiteId })?.url ?? event.siteUrl
-                if let url = URL(string: urlText), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
-                    Link(url.host ?? urlText, destination: url).font(.footnote)
-                }
+                Text(thoughtPhase(event: event, round: round))
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
                 GiriThoughtPeriodRow(title: "投稿", start: round.submissionStart, end: round.submissionEnd, enabled: round.submissionEnabled, accent: AppSectionAccent.artist)
                 GiriThoughtPeriodRow(title: "投票", start: round.votingStart, end: round.votingEnd, enabled: round.votingRequired, accent: AppSectionAccent.memo)
                 if event.meetingType == .tournament {
-                    NavigationLink {
-                        GiriResultEntry(eventID: eventID, initialRoundID: roundID)
-                    } label: {
-                        Label("このお題・ステージの結果", systemImage: "trophy")
-                    }
+                    NavigationLink { GiriResultEntry(eventID: eventID, initialRoundID: roundID) } label: { Label("この回の結果", systemImage: "trophy") }
                 }
             } else {
-                Text("日程は削除されています。保存したお題と回答は残っています。")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                Text("日程は削除されています。保存したお題と回答は残っています。").font(.subheadline).foregroundStyle(.secondary)
             }
-        }
-        .appSectionCardStyle(accentColor: AppSectionAccent.artist)
+        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
     }
+}
 
-    @ViewBuilder
-    private func draftRows(_ note: ThoughtNote) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(thoughtTitle(note)).font(.headline)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Menu {
-                Button("編集", systemImage: "pencil") {
-                    editingNoteID = note.id
-                    creating = false
+@MainActor
+private struct GiriThoughtNotePage: View {
+    @EnvironmentObject private var store: GiriStore
+    let noteID: String
+    @State private var editing = false
+    private var note: ThoughtNote? { store.notes.first { $0.id == noteID } }
+    private var event: GiriEvent? { store.events.first { $0.id == note?.eventId } }
+    var body: some View {
+        Form {
+            if let note {
+                if let event, let round = event.effectiveRounds.first(where: { $0.id == note.roundId }) {
+                    Section {
+                        AppCardSectionTitle(title: event.title, systemImage: thoughtFormatSymbol(event.eventFormat), accentColor: AppSectionAccent.artist)
+                            .listRowSeparator(.hidden)
+                        Text(thoughtRoundLabel(event: event, round: round)).font(.subheadline.weight(.semibold))
+                        Text(thoughtPhase(event: event, round: round)).font(.subheadline.weight(.semibold))
+                        GiriThoughtPeriodRow(title: "投稿", start: round.submissionStart, end: round.submissionEnd, enabled: round.submissionEnabled, accent: AppSectionAccent.artist)
+                        GiriThoughtPeriodRow(title: "投票", start: round.votingStart, end: round.votingEnd, enabled: round.votingRequired, accent: AppSectionAccent.memo)
+                    }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
                 }
-                Button("削除", systemImage: "trash", role: .destructive) { deleteCandidate = note }
-            } label: {
-                Image(systemName: "ellipsis").frame(minWidth: 30, minHeight: 32)
-            }
-            .tint(.secondary)
-        }
-        if !note.imageDataBase64.isEmpty {
-            GiriThoughtImage(base64: note.imageDataBase64)
-        }
-        if thoughtAnswers(note).isEmpty {
-            Button("回答案を追加") { editingNoteID = note.id }
-                .tint(accentActionColor)
-        } else {
-            ForEach(Array(thoughtAnswers(note).enumerated()), id: \.offset) { index, answer in
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text("\(index + 1)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(minWidth: 16, alignment: .trailing)
-                    Text(answer).frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.vertical, 2)
-                .onTapGesture { editingNoteID = note.id }
+                Section { GiriThoughtNoteRows(note: note, event: event, onEdit: { editing = true }) }
+                    .appSectionCardStyle(accentColor: AppSectionAccent.memo)
+            } else {
+                CenteredEmptyMessage(systemImage: "text.bubble", title: "このメモは削除されています")
             }
         }
+        .appEditorFormStyle().navigationTitle("お題と回答").navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { if note != nil { Button("編集") { editing = true } } } }
+        .sheet(isPresented: $editing) {
+            if let note { NavigationStack { GiriThoughtEditor(note: note) } }
+        }
+    }
+}
+
+private struct GiriThoughtCard: View {
+    let note: ThoughtNote
+    let event: GiriEvent?
+    var body: some View {
+        GiriListCard(accentColor: AppSectionAccent.memo) {
+            HStack(alignment: .top, spacing: 12) {
+                if let data = Data(base64Encoded: note.imageDataBase64), let image = UIImage(data: data) {
+                    Image(uiImage: image).resizable().scaledToFill().frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(thoughtTitle(note)).font(.headline).foregroundStyle(.primary).lineLimit(3)
+                    if let event {
+                        Text(thoughtPhase(event: event, round: thoughtRound(note, event: event))).font(.subheadline.weight(.medium)).foregroundStyle(AppSectionAccent.artist)
+                    } else if note.kind == .prompts {
+                        Text(note.used ? "使用済み" : "未使用").font(.caption).foregroundStyle(.secondary)
+                    }
+                    if note.isOthersAnswer {
+                        Text("他の人の回答" + (note.answerer.isEmpty ? "" : "・" + note.answerer)).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text(thoughtResultSummary(note, event: event)).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                }
+            }.padding(.trailing, 18)
+        }
+    }
+}
+
+@MainActor
+private struct GiriThoughtNoteRows: View {
+    @EnvironmentObject private var store: GiriStore
+    let note: ThoughtNote
+    let event: GiriEvent?
+    let onEdit: () -> Void
+    var body: some View {
+        Text(thoughtTitle(note)).font(.headline).textSelection(.enabled)
+        if !note.imageDataBase64.isEmpty { GiriThoughtImage(base64: note.imageDataBase64) }
+        if note.isOthersAnswer {
+            Text("回答者　" + (note.answerer.isEmpty ? "未設定" : note.answerer)).font(.subheadline).foregroundStyle(.secondary)
+        }
+        if note.kind == .answers {
+            let records = note.effectiveAnswerRecords
+            if records.isEmpty {
+                Button("回答案を追加", action: onEdit)
+            }
+            ForEach(records) { record in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Button { toggleSubmitted(record.id) } label: {
+                            Image(systemName: record.isSubmitted ? "checkmark.square.fill" : "square")
+                                .foregroundStyle(record.isSubmitted ? accentActionColor : Color.secondary)
+                        }.buttonStyle(.borderless)
+                            .accessibilityLabel(record.isSubmitted ? "提出した回答の選択を外す" : "提出した回答にする")
+                        Text(record.text).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                        if record.isSubmitted { Text("提出").font(.caption.weight(.semibold)).foregroundStyle(accentActionColor) }
+                    }
+                    let result = thoughtAnswerResult(record)
+                    if !result.isEmpty { Text(result).font(.caption.weight(.medium)).foregroundStyle(AppSectionAccent.ticket) }
+                }.padding(.vertical, 2)
+            }
+        } else if !note.body.isEmpty {
+            Text(note.body).textSelection(.enabled)
+        }
+    }
+    private func toggleSubmitted(_ id: String) {
+        var updated = note
+        var answers = updated.effectiveAnswerRecords
+        guard let index = answers.firstIndex(where: { $0.id == id }) else { return }
+        answers[index].isSubmitted.toggle()
+        updated.answerRecords = answers
+        updated.usesAnswerRecords = true
+        updated.answers = answers.map(\.text)
+        updated.updatedAt = Date()
+        store.run { try store.saveNote(updated) }
     }
 }
 
@@ -394,136 +540,25 @@ private struct GiriThoughtPeriodRow: View {
     let end: Date?
     let enabled: Bool
     let accent: Color
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             scheduleLine(title + "開始", date: start, missing: "開始未定")
             scheduleLine(title + "締切", date: end, missing: "締切未定")
-            if !enabled {
-                Text(title == "投稿" ? "投稿対象外" : "投票なし")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                    .padding(.leading, 28)
-            } else if let start, let end, start <= Date(), Date() < end {
-                Text("期間中")
-                    .font(.caption.weight(.medium)).foregroundStyle(accent)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
+        }.fixedSize(horizontal: false, vertical: true).padding(.vertical, 4)
     }
-
-    // TicketScheduleDisplayRows uses a 20pt icon, baseline spacing8 and a
-    // trailing, monospaced date. Keep posting and voting in the same alignment.
-    private func scheduleLine(_ label: String, date: Date?, missing: String) -> some View {
+    private func scheduleLine(_ title: String, date: Date?, missing: String) -> some View {
         let isPast = date.map { $0 < Date() } ?? false
         return HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "clock")
-                .font(.subheadline)
-                .foregroundStyle(isPast || !enabled ? Color.secondary : accent)
-                .frame(width: 20)
-            Text(label)
-                .foregroundStyle(isPast || !enabled ? Color.secondary : .primary)
-                .lineLimit(2)
+            Image(systemName: "clock").font(.subheadline).foregroundStyle(isPast || !enabled ? Color.secondary : accent).frame(width: 20)
+            Text(title).foregroundStyle(isPast || !enabled ? Color.secondary : Color.primary).lineLimit(2)
             Spacer(minLength: 8)
-            Text(date.map(thoughtDateTime) ?? missing)
-                .font(.subheadline).foregroundStyle(.secondary)
-                .monospacedDigit().lineLimit(1)
-        }
-        .opacity(isPast ? 0.6 : 1)
+            Text(date.map(thoughtDateTime) ?? missing).font(.subheadline).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+        }.opacity(isPast ? 0.6 : 1)
     }
 }
 
-@MainActor
-private struct GiriInlineThoughtEditor: View {
-    @EnvironmentObject private var store: GiriStore
-    @State private var original: ThoughtNote
-    private let onSaved: () -> Void
-    private let onCancel: (() -> Void)?
-    @State private var prompt: String
-    @State private var answersText: String
-    @State private var image: String
-    @State private var error: String?
-    @State private var readingImage = false
-    @State private var confirmsCancel = false
-
-    init(note: ThoughtNote?, eventID: String, roundID: String, onSaved: @escaping () -> Void, onCancel: (() -> Void)?) {
-        var value = note ?? ThoughtNote()
-        if note == nil {
-            value.kind = .answers
-            value.eventId = eventID
-            value.roundId = roundID
-        }
-        _original = State(initialValue: value)
-        let prompt = value.prompt.isEmpty ? value.title : value.prompt
-        let answers = value.answers.isEmpty ? value.body : value.answers.joined(separator: "\n")
-        _prompt = State(initialValue: prompt)
-        _answersText = State(initialValue: answers)
-        _image = State(initialValue: value.imageDataBase64)
-        self.onSaved = onSaved
-        self.onCancel = onCancel
-    }
-
-    var body: some View {
-        Group {
-            TextField("お題を入力", text: $prompt, axis: .vertical)
-                .lineLimit(1...8)
-            GiriThoughtImagePicker(base64: $image, reading: $readingImage, error: $error)
-            TextField("回答案を1行ずつ入力", text: $answersText, axis: .vertical)
-                .lineLimit(4...20)
-            if let error {
-                Text(error).font(.footnote).foregroundStyle(.red)
-            }
-            HStack {
-                if let onCancel {
-                    Button("キャンセル") {
-                        if isDirty { confirmsCancel = true } else { onCancel() }
-                    }
-                }
-                Spacer()
-                Button("保存", action: save)
-                    .font(.headline)
-                    .disabled(readingImage)
-            }
-            .tint(accentActionColor)
-        }
-        .confirmationDialog("変更を保存せずに閉じますか？", isPresented: $confirmsCancel, titleVisibility: .visible) {
-            Button("保存せずに閉じる", role: .destructive) { onCancel?() }
-        }
-    }
-
-    private var isDirty: Bool {
-        prompt != (original.prompt.isEmpty ? original.title : original.prompt) ||
-        answersText != (original.answers.isEmpty ? original.body : original.answers.joined(separator: "\n")) ||
-        image != original.imageDataBase64
-    }
-
-    private func save() {
-        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || !image.isEmpty else {
-            error = "お題か画像を入力してください。"
-            return
-        }
-        var note = original
-        note.prompt = trimmed
-        note.title = trimmed.isEmpty ? "画像のお題" : String(trimmed.prefix(120))
-        note.body = answersText.trimmingCharacters(in: .whitespacesAndNewlines)
-        note.answers = thoughtLines(answersText)
-        note.imageDataBase64 = image
-        note.updatedAt = Date()
-        do {
-            try store.saveNote(note)
-            playLiveStairSaveFeedback()
-            onSaved()
-        } catch {
-            self.error = "保存できませんでした。内容を残したまま再試行できます。\n\(error.localizedDescription)"
-        }
-    }
-}
-
-/// Independent notes use a native navigation sheet. Cancel and interactive
-/// dismissal never discard an edited draft without an explicit decision.
+/// Separate answer/prompt pages share image handling and safe draft persistence;
+/// the creation mode is fixed by the page instead of a generic "kind" menu.
 @MainActor
 struct GiriThoughtEditor: View {
     @EnvironmentObject private var store: GiriStore
@@ -532,11 +567,17 @@ struct GiriThoughtEditor: View {
     @State private var draft: ThoughtNote
     @State private var primaryText: String
     @State private var bodyText: String
+    @State private var answers: [AnswerRecord]
+    @State private var initialAnswers: [AnswerRecord]
+    @State private var selectedFormat: EventFormat
+    @State private var relationInitialized = false
+    @State private var showingAllEvents = false
+    @State private var eventSearch = ""
     @State private var readingImage = false
     @State private var error: String?
     @State private var discard = false
 
-    init(note: ThoughtNote? = nil, kind: NoteKind = .free, eventID: String? = nil, roundID: String? = nil) {
+    init(note: ThoughtNote? = nil, kind: NoteKind = .answers, eventID: String? = nil, roundID: String? = nil) {
         var value = note ?? ThoughtNote()
         if note == nil {
             value.kind = kind
@@ -546,36 +587,25 @@ struct GiriThoughtEditor: View {
         _initial = State(initialValue: value)
         _draft = State(initialValue: value)
         _primaryText = State(initialValue: value.prompt.isEmpty ? value.title : value.prompt)
-        _bodyText = State(initialValue: value.kind == .answers && !value.answers.isEmpty ? value.answers.joined(separator: "\n") : value.body)
+        _bodyText = State(initialValue: value.body)
+        _answers = State(initialValue: value.effectiveAnswerRecords)
+        _initialAnswers = State(initialValue: value.effectiveAnswerRecords)
+        _selectedFormat = State(initialValue: value.kind == .prompts ? .live : .onlineLong)
     }
 
     var body: some View {
         Form {
-            if let event, let round = event.effectiveRounds.first(where: { $0.id == (draft.roundId ?? "legacy") }) {
-                Section {
-                    AppCardSectionTitle(title: store.onlineSites.first(where: { $0.id == event.onlineSiteId })?.name ?? event.title, systemImage: "globe", accentColor: AppSectionAccent.artist)
-                        .listRowSeparator(.hidden)
-                    Text(thoughtRoundLabel(event: event, round: round)).font(.subheadline.weight(.medium))
-                    GiriThoughtPeriodRow(title: "投稿", start: round.submissionStart, end: round.submissionEnd, enabled: round.submissionEnabled, accent: AppSectionAccent.artist)
-                    GiriThoughtPeriodRow(title: "投票", start: round.votingStart, end: round.votingEnd, enabled: round.votingRequired, accent: AppSectionAccent.memo)
-                }
-                .appSectionCardStyle(accentColor: AppSectionAccent.artist)
-            }
+            periodSection
             Section {
-                AppCardSectionTitle(title: "基本情報", systemImage: "link", accentColor: AppSectionAccent.memo)
+                AppCardSectionTitle(title: "関連する会", systemImage: "link", accentColor: AppSectionAccent.memo)
                     .listRowSeparator(.hidden)
-                Picker("種類", selection: $draft.kind) {
-                    ForEach(NoteKind.allCases) { kind in Text(kind.title).tag(kind) }
-                }
-                .pickerStyle(.menu)
-                .tint(.primary)
+                Picker("形式", selection: $selectedFormat) {
+                    ForEach(EventFormat.allCases) { format in Text(format.title).tag(format) }
+                }.pickerStyle(.menu).tint(.primary)
                 eventPicker
-                if event?.kind == .online { roundPicker }
-                if draft.kind == .prompts {
-                    Toggle("使用済み", isOn: $draft.used).tint(AppSectionAccent.memo)
-                }
-            }
-            .appSectionCardStyle(accentColor: AppSectionAccent.memo)
+                if event?.eventFormat.hasOnlineRounds == true { roundPicker }
+                if draft.kind == .prompts { Toggle("使用済み", isOn: $draft.used).tint(AppSectionAccent.memo) }
+            }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
 
             Section {
                 AppCardSectionTitle(title: draft.kind == .free ? "タイトル" : "お題", systemImage: draft.kind == .free ? "square.and.pencil" : "lightbulb", accentColor: AppSectionAccent.memo)
@@ -583,27 +613,25 @@ struct GiriThoughtEditor: View {
                 TextField(draft.kind == .free ? "タイトル（任意）" : "お題を入力", text: $primaryText, axis: .vertical)
                     .lineLimit(1...10)
                 GiriThoughtImagePicker(base64: $draft.imageDataBase64, reading: $readingImage, error: $error)
+            }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+
+            if draft.kind == .answers {
+                answerSections
+            } else {
+                Section {
+                    AppCardSectionTitle(title: "メモ", systemImage: "square.and.pencil", accentColor: AppSectionAccent.memo)
+                        .listRowSeparator(.hidden)
+                    TextField("メモを入力", text: $bodyText, axis: .vertical).lineLimit(6...30)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
             }
-            .appSectionCardStyle(accentColor: AppSectionAccent.memo)
-            Section {
-                AppCardSectionTitle(title: draft.kind == .answers ? "回答案" : "メモ", systemImage: "square.and.pencil", accentColor: AppSectionAccent.memo)
-                    .listRowSeparator(.hidden)
-                TextField(draft.kind == .answers ? "回答案を1行ずつ入力" : "メモを入力", text: $bodyText, axis: .vertical)
-                    .lineLimit(6...30)
-            }
-            .appSectionCardStyle(accentColor: AppSectionAccent.memo)
             if let error { Text(error).font(.footnote).foregroundStyle(.red) }
         }
-        .appEditorFormStyle()
-        .scrollDismissesKeyboard(.interactively)
-        .navigationTitle(draft.kind == .prompts ? "お題" : draft.kind == .answers ? "回答メモ" : "メモ")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .appEditorFormStyle().scrollDismissesKeyboard(.interactively)
+        .navigationTitle(draft.kind == .prompts ? "お題を作る" : draft.kind == .answers ? "回答を考える" : "メモ")
+        .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("キャンセル") {
-                    if isDirty { discard = true } else { dismiss() }
-                }
+                Button("キャンセル") { if isDirty { discard = true } else { dismiss() } }.disabled(readingImage)
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("保存", action: save).fontWeight(.bold).disabled(readingImage)
@@ -614,43 +642,159 @@ struct GiriThoughtEditor: View {
         .confirmationDialog("変更を保存せずに戻りますか？", isPresented: $discard, titleVisibility: .visible) {
             Button("保存せずに戻る", role: .destructive) { dismiss() }
         }
+        .onAppear {
+            if !relationInitialized {
+                if let event { selectedFormat = event.eventFormat }
+                relationInitialized = true
+            }
+        }
+        .onChange(of: selectedFormat) { _, value in
+            if relationInitialized, let event, event.eventFormat != value {
+                draft.eventId = nil; draft.roundId = nil
+            }
+        }
+        .sheet(isPresented: $showingAllEvents) { allEventsPicker }
+    }
+
+    @ViewBuilder private var periodSection: some View {
+        if let event, let round = thoughtRound(draft, event: event) {
+            Section {
+                AppCardSectionTitle(title: event.title, systemImage: thoughtFormatSymbol(event.eventFormat), accentColor: AppSectionAccent.artist)
+                    .listRowSeparator(.hidden)
+                Text(thoughtRoundLabel(event: event, round: round)).font(.subheadline.weight(.semibold))
+                Text(thoughtPhase(event: event, round: round)).font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppSectionAccent.artist)
+                GiriThoughtPeriodRow(title: "投稿", start: round.submissionStart, end: round.submissionEnd, enabled: round.submissionEnabled, accent: AppSectionAccent.artist)
+                GiriThoughtPeriodRow(title: "投票", start: round.votingStart, end: round.votingEnd, enabled: round.votingRequired, accent: AppSectionAccent.memo)
+            }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+        }
+    }
+
+    @ViewBuilder private var answerSections: some View {
+        Section {
+            AppCardSectionTitle(title: "回答者", systemImage: "person", accentColor: AppSectionAccent.memo)
+                .listRowSeparator(.hidden)
+            Toggle("他人の回答", isOn: $draft.isOthersAnswer).tint(AppSectionAccent.memo)
+            if draft.isOthersAnswer {
+                GiriPlayerSuggestionField(title: "回答者", text: $draft.answerer, showsLabel: true, textAlignment: .trailing)
+            }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+        Section {
+            AppCardSectionTitle(title: "回答案", systemImage: "text.bubble", accentColor: AppSectionAccent.memo)
+                .listRowSeparator(.hidden)
+            ForEach(answers) { record in
+                if let index = answers.firstIndex(where: { $0.id == record.id }) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .top, spacing: 8) {
+                            TextField("回答案", text: answerBinding(record.id).text, axis: .vertical)
+                                .lineLimit(1...8)
+                            Button(role: .destructive) { answers.removeAll { $0.id == record.id } } label: {
+                                Image(systemName: "minus.circle").frame(minWidth: 28, minHeight: 32)
+                            }.buttonStyle(.borderless)
+                        }
+                        Toggle("提出した回答", isOn: answerBinding(answers[index].id).isSubmitted)
+                            .tint(accentActionColor)
+                    }.padding(.vertical, 4)
+                }
+            }
+            Button("回答案を追加", systemImage: "plus.circle") { answers.append(AnswerRecord()) }
+            Button("貼り付けた文章から追加", systemImage: "doc.on.clipboard") {
+                guard let text = UIPasteboard.general.string else { return }
+                answers.append(contentsOf: thoughtLines(text).map { AnswerRecord(text: $0) })
+            }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+
+        if answers.contains(where: \.isSubmitted) {
+            Section {
+                AppCardSectionTitle(title: "提出した回答の結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket)
+                    .listRowSeparator(.hidden)
+                GiriAnswerResultFields(records: $answers)
+            }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+        }
+        if !bodyText.isEmpty && !initial.usesAnswerRecords {
+            Section {
+                AppCardSectionTitle(title: "元の本文", systemImage: "doc.text", accentColor: AppSectionAccent.memo)
+                    .listRowSeparator(.hidden)
+                Text(bodyText).font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled)
+            }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+        }
     }
 
     private var event: GiriEvent? { store.events.first { $0.id == draft.eventId } }
 
+    private var primaryEvents: [GiriEvent] {
+        let now = Date()
+        return store.events.filter { event in
+            guard event.eventFormat == selectedFormat, event.isActualParticipant else { return false }
+            return selectedFormat == .live || event.participationState(now: now) == .ongoing
+        }.sorted { thoughtEventComesFirst($0, $1, now: now) }
+    }
+
+    private var allEvents: [GiriEvent] {
+        store.events.filter { $0.eventFormat == selectedFormat && (eventSearch.isEmpty || [$0.title, $0.organizer, $0.venue].joined(separator: " ").localizedStandardContains(eventSearch)) }
+            .sorted { thoughtEventComesFirst($0, $1, now: Date()) }
+    }
+
     private var eventPicker: some View {
-        Picker("関連する会", selection: Binding(
-            get: { draft.eventId },
-            set: { draft.eventId = $0; draft.roundId = nil }
-        )) {
-            Text("関連づけなし").tag(nil as String?)
-            ForEach(store.events) { event in Text(event.title).tag(Optional(event.id)) }
-            if let id = draft.eventId, !store.events.contains(where: { $0.id == id }) {
-                Text("削除された会").tag(Optional(id))
-            }
+        Group {
+            Picker("関連する会", selection: Binding(
+                get: { draft.eventId }, set: { draft.eventId = $0; draft.roundId = nil }
+            )) {
+                Text("関連づけなし").tag(nil as String?)
+                ForEach(primaryEvents) { event in Text(thoughtEventPickerTitle(event)).tag(Optional(event.id)) }
+                if let selected = event, !primaryEvents.contains(where: { $0.id == selected.id }) {
+                    Text(thoughtEventPickerTitle(selected)).tag(Optional(selected.id))
+                }
+                if let id = draft.eventId, event == nil { Text("削除された会").tag(Optional(id)) }
+            }.pickerStyle(.menu).tint(.primary)
+            Button("その他の会から選ぶ", systemImage: "ellipsis.circle") { showingAllEvents = true }
         }
-        .pickerStyle(.menu)
-        .tint(.primary)
+    }
+
+    private var allEventsPicker: some View {
+        NavigationStack {
+            List {
+                ForEach(allEvents) { event in
+                    Button {
+                        draft.eventId = event.id
+                        draft.roundId = nil
+                        showingAllEvents = false
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(event.title).foregroundStyle(.primary)
+                            Text(thoughtEventPickerTitle(event)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .appIndexListStyle().searchable(text: $eventSearch, prompt: "会・主催者・会場")
+            .navigationTitle("その他の会").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { showingAllEvents = false } } }
+        }
     }
 
     private var roundPicker: some View {
         Picker("日程", selection: $draft.roundId) {
             Text("関連づけなし").tag(nil as String?)
             if let event {
-                ForEach(event.effectiveRounds) { round in
+                ForEach(event.effectiveRounds.sorted { ($0.submissionStart ?? .distantPast) > ($1.submissionStart ?? .distantPast) }) { round in
                     Text(thoughtRoundLabel(event: event, round: round)).tag(Optional(round.id))
                 }
             }
             if let id = draft.roundId, !(event?.effectiveRounds.contains(where: { $0.id == id }) ?? false) {
                 Text("削除された日程").tag(Optional(id))
             }
-        }
-        .pickerStyle(.menu)
-        .tint(.primary)
+        }.pickerStyle(.menu).tint(.primary)
+    }
+
+    private func answerBinding(_ id: String) -> Binding<AnswerRecord> {
+        Binding(get: { answers.first { $0.id == id } ?? AnswerRecord(id: id) }, set: { value in
+            if let index = answers.firstIndex(where: { $0.id == id }) { answers[index] = value }
+        })
     }
 
     private var isDirty: Bool {
-        draft != initial || primaryText != (initial.prompt.isEmpty ? initial.title : initial.prompt) || bodyText != (initial.kind == .answers && !initial.answers.isEmpty ? initial.answers.joined(separator: "\n") : initial.body)
+        draft != initial || primaryText != (initial.prompt.isEmpty ? initial.title : initial.prompt) || bodyText != initial.body || answers != initialAnswers
     }
 
     private func save() {
@@ -660,43 +804,61 @@ struct GiriThoughtEditor: View {
             error = draft.kind == .free ? "タイトルか本文を入力してください。" : "お題か画像を入力してください。"
             return
         }
+        if draft.kind == .answers && draft.isOthersAnswer && draft.answerer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            error = "他人の回答を記録する場合は回答者を入力してください。"
+            return
+        }
         var saved = draft
         saved.title = String((!primary.isEmpty ? primary : !draft.imageDataBase64.isEmpty ? "画像のお題" : body.components(separatedBy: .newlines).first ?? "メモ").prefix(120))
         saved.prompt = draft.kind == .free ? "" : primary
-        saved.body = body
-        saved.answers = draft.kind == .answers ? thoughtLines(body) : []
+        saved.body = bodyText
+        if draft.kind == .answers {
+            if answers.contains(where: { $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && ($0.placement != nil || $0.points != nil || $0.voterCount != nil) }) {
+                error = "結果を記録した回答の本文を入力してください。"
+                return
+            }
+            saved.answerRecords = answers.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map { record in
+                var copy = record; copy.text = record.text.trimmingCharacters(in: .whitespacesAndNewlines); return copy
+            }
+            saved.usesAnswerRecords = true
+            saved.answers = saved.answerRecords.map(\.text)
+        }
         saved.used = draft.kind == .prompts && draft.used
         saved.updatedAt = Date()
-        do {
-            try store.saveNote(saved)
-            playLiveStairSaveFeedback()
-            dismiss()
-        } catch {
-            self.error = "保存できませんでした。内容を残したまま再試行できます。\n\(error.localizedDescription)"
-        }
+        do { try store.saveNote(saved); playLiveStairSaveFeedback(); dismiss() }
+        catch { self.error = "保存できませんでした。内容を残したまま再試行できます。\n\(error.localizedDescription)" }
     }
 }
 
-private struct GiriThoughtSummary: View {
-    let note: ThoughtNote
-    let detail: String
-
+/// Result entry and Thinking use the same submitted-answer fields. Unsubmitted
+/// drafts stay in the binding and are never discarded by this view.
+struct GiriAnswerResultFields: View {
+    @Binding var records: [AnswerRecord]
     var body: some View {
-        HStack(spacing: 12) {
-            if let data = Data(base64Encoded: note.imageDataBase64), let image = UIImage(data: data) {
-                Image(uiImage: image).resizable().scaledToFill()
-                    .frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                Image(systemName: note.kind == .prompts ? (note.used ? "checkmark.circle" : "lightbulb") : "square.and.pencil")
-                    .foregroundStyle(AppSectionAccent.memo)
-                    .frame(width: 28, height: 28)
-                    .background(AppSectionAccent.memo.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
-            }
-            VStack(alignment: .leading, spacing: 5) {
-                Text(thoughtTitle(note)).foregroundStyle(.primary).lineLimit(3)
-                Text(detail).font(.footnote).foregroundStyle(.secondary).lineLimit(3)
-            }
+        if !records.contains(where: \.isSubmitted) {
+            Text("提出した回答を思考で選択してください。").font(.subheadline).foregroundStyle(.secondary)
         }
+        ForEach(records.filter(\.isSubmitted)) { record in
+            VStack(alignment: .leading, spacing: 6) {
+                Text(record.text).font(.subheadline.weight(.semibold)).lineLimit(4)
+                GiriIntegerField(title: "この回答の順位（任意）", value: recordBinding(record.id).placement, suffix: "位")
+                GiriIntegerField(title: "投票人数（任意）", value: recordBinding(record.id).voterCount, suffix: "人")
+                HStack {
+                    TextField("得点（任意）", value: recordBinding(record.id).points, format: .number).keyboardType(.decimalPad)
+                    Text("点").foregroundStyle(.secondary)
+                }
+                Stepper("1人あたりの満点 \(record.maxPointsPerVoter)点", value: recordBinding(record.id).maxPointsPerVoter, in: 1...1000)
+                if let rate = record.voteRate {
+                    LabeledContent("得票率", value: rate.formatted(.number.precision(.fractionLength(2))) + "%")
+                }
+                TextField("回答のメモ", text: recordBinding(record.id).memo, axis: .vertical).lineLimit(1...5)
+            }.padding(.vertical, 4)
+        }
+    }
+    private func recordBinding(_ id: String) -> Binding<AnswerRecord> {
+        Binding(get: { records.first { $0.id == id } ?? AnswerRecord(id: id) }, set: { value in
+            if let index = records.firstIndex(where: { $0.id == id }) { records[index] = value }
+        })
     }
 }
 
@@ -850,10 +1012,6 @@ private func thoughtTitle(_ note: ThoughtNote) -> String {
     return note.imageDataBase64.isEmpty ? "メモ" : "画像のお題"
 }
 
-private func thoughtAnswers(_ note: ThoughtNote) -> [String] {
-    note.answers.isEmpty ? thoughtLines(note.body) : note.answers
-}
-
 private func thoughtLines(_ value: String) -> [String] {
     value.components(separatedBy: .newlines)
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -862,13 +1020,103 @@ private func thoughtLines(_ value: String) -> [String] {
 
 private func thoughtRoundLabel(event: GiriEvent, round: EventRound) -> String {
     var parts = [event.meetingType == .tournament ? round.name : "投稿・投票"]
-    if event.meetingType == .tournament || round.promptNumber > 1 { parts.append("お題\(round.promptNumber)") }
+    parts.append("\(round.promptNumber)回目")
     if !event.affiliation.isEmpty { parts.append(event.affiliation) }
     let block = round.block.isEmpty ? event.block : round.block
     if !block.isEmpty { parts.append(block) }
     return parts.joined(separator: " · ")
 }
 
-private func thoughtDateTime(_ date: Date) -> String {
-    GiriDateText.dateTime(date)
+private func thoughtDateTime(_ date: Date) -> String { GiriDateText.dateTime(date) }
+
+private func thoughtFormatSymbol(_ format: EventFormat) -> String {
+    switch format {
+    case .live: return "person.3"
+    case .onlineLong: return "globe"
+    case .onlineShort: return "bolt"
+    case .hybrid: return "arrow.triangle.merge"
+    }
+}
+
+private func thoughtRound(_ note: ThoughtNote, event: GiriEvent) -> EventRound? {
+    let id = note.roundId ?? "legacy"
+    return event.effectiveRounds.first { $0.id == id }
+}
+
+private func thoughtNewestRound(_ event: GiriEvent, now: Date = Date()) -> EventRound? {
+    let rounds = event.effectiveRounds
+    let active = rounds.filter { $0.isSubmissionOpen(now) || $0.isVotingOpen(now) }
+        .sorted { ($0.votingEnd ?? $0.submissionEnd ?? .distantFuture) < ($1.votingEnd ?? $1.submissionEnd ?? .distantFuture) }
+    return active.first ?? rounds.max { ($0.submissionStart ?? $0.votingEnd ?? .distantPast) < ($1.submissionStart ?? $1.votingEnd ?? .distantPast) }
+}
+
+private func thoughtEventDate(_ event: GiriEvent) -> Date {
+    event.effectiveRounds.compactMap { $0.submissionStart ?? $0.votingStart ?? $0.votingEnd }.max() ??
+    event.eventDate ?? event.startsAt ?? event.createdAt
+}
+
+private func thoughtPhase(event: GiriEvent, round: EventRound?, now: Date = Date()) -> String {
+    if event.isInterested { return "興味あり" }
+    if let round {
+        if round.isSubmissionOpen(now) { return "投稿期間中" }
+        if round.isVotingOpen(now) { return "投票期間中" }
+        if let end = round.votingEnd ?? round.submissionEnd, end <= now { return "終了" }
+        if let start = round.submissionStart ?? round.votingStart, now < start { return "開始前" }
+    }
+    return event.participationState(now: now).title
+}
+
+private func thoughtStageSummary(_ result: ResultStage) -> String {
+    var parts: [String] = []
+    if result.outcome != .unrecorded { parts.append(result.outcome.title) }
+    if let rank = result.placement { parts.append("\(rank)位") }
+    if let rank = result.individualPlacement { parts.append("個人\(rank)位") }
+    if let rank = result.teamPlacement { parts.append("チーム\(rank)位") }
+    if let rate = result.voteRate { parts.append("得票率" + rate.formatted(.number.precision(.fractionLength(2))) + "%") }
+    return parts.joined(separator: " · ")
+}
+
+private func thoughtAnswerResult(_ record: AnswerRecord) -> String {
+    var parts: [String] = []
+    if let placement = record.placement { parts.append("\(placement)位") }
+    if let rate = record.voteRate { parts.append("得票率" + rate.formatted(.number.precision(.fractionLength(2))) + "%") }
+    if let points = record.points { parts.append(points.formatted(.number.precision(.fractionLength(0...2))) + "点") }
+    return parts.joined(separator: " · ")
+}
+
+private func thoughtResultSummary(_ note: ThoughtNote, event: GiriEvent?) -> String {
+    if note.kind == .prompts { return note.used ? "使用済み" : "未使用" }
+    guard note.kind == .answers else { return String(note.body.prefix(100)) }
+    let records = note.effectiveAnswerRecords
+    let submitted = records.filter(\.isSubmitted)
+    var parts = ["回答\(records.count)案", "提出\(submitted.count)件"]
+    for record in submitted.prefix(2) {
+        let result = thoughtAnswerResult(record)
+        if !result.isEmpty { parts.append(result) }
+    }
+    if let event, let result = event.tournamentResult?.stages.last(where: {
+        $0.roundId == note.roundId && $0.roundId != nil
+    }) {
+        let summary = thoughtStageSummary(result)
+        if !summary.isEmpty { parts.append(summary) }
+    }
+    return parts.joined(separator: " · ")
+}
+
+private func thoughtEventPickerTitle(_ event: GiriEvent) -> String {
+    let date = GiriEventPresentation.date(event) ?? event.eventDate ?? event.startsAt
+    let dateText = date.map { GiriDateText.day($0, compact: true) + " " } ?? ""
+    return dateText + event.title
+}
+
+private func thoughtEventComesFirst(_ first: GiriEvent, _ second: GiriEvent, now: Date) -> Bool {
+    let firstDate = GiriEventPresentation.date(first) ?? first.eventDate ?? first.startsAt ?? first.createdAt
+    let secondDate = GiriEventPresentation.date(second) ?? second.eventDate ?? second.startsAt ?? second.createdAt
+    let firstToday = Calendar.current.isDate(firstDate, inSameDayAs: now)
+    let secondToday = Calendar.current.isDate(secondDate, inSameDayAs: now)
+    if firstToday != secondToday { return firstToday }
+    let firstDistance = abs(firstDate.timeIntervalSince(now))
+    let secondDistance = abs(secondDate.timeIntervalSince(now))
+    if firstDistance != secondDistance { return firstDistance < secondDistance }
+    return first.title.localizedStandardCompare(second.title) == .orderedAscending
 }

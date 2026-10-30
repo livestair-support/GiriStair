@@ -1,10 +1,10 @@
 # GiriStairのアイコン・ロゴ・起動画面
 
-横長ロゴ・起動画面は2026年10月29日の提供原本を採用しています。アプリアイコンは2026年10月30日に追加された、余白を広く取った1024×1024の画像へ差し替えました。描き直し・生成・色の変更・文字の置換はしていません。
+横長ロゴ・起動画面は2026年10月29日の提供原本を採用しています。アプリアイコンは2026年10月30日に追加された、縮小時にも読みやすい1254×1254の画像へ差し替えました。描き直し・生成・色の変更・文字の置換はしていません。
 
 | 原本 | 保存先 | 使用箇所 |
 | --- | --- | --- |
-| 四角いアイコン（1024×1024） | `assets/brand/source/app_icon.jpg` | iPhone・iPad・App Store・Androidのアプリアイコン |
+| 四角いアイコン（1254×1254） | `assets/brand/source/app_icon.jpg` | iPhone・iPad・App Store・Androidのアプリアイコン |
 | 横長ロゴ（1280×282、白背景） | `assets/brand/source/wordmark.jpg` | `BrandWordmark`、共有画像のヘッダー |
 | 起動画面（590×1280） | `assets/brand/source/launch_screen.jpg` | iOS LaunchScreen・Flutter読込中・Android起動ロゴ |
 

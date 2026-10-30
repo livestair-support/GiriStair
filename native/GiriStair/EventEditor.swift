@@ -30,7 +30,28 @@ struct GiriEventEditor: View {
     }
 
     private var isSite: Bool {
-        event == nil && draft.kind == .online && draft.meetingType == .casual
+        event == nil && draft.eventFormat == .onlineLong && draft.meetingType == .casual
+    }
+    private var showsParticipantSection: Bool {
+        !(draft.meetingType == .tournament && (draft.eventFormat == .onlineLong || draft.eventFormat == .onlineShort))
+    }
+    private var orderedTeamIndices: [Int] {
+        draft.teams.indices.sorted { first, second in
+            let firstIsMine = draft.teams[first].id == draft.myTeamId
+            let secondIsMine = draft.teams[second].id == draft.myTeamId
+            if firstIsMine != secondIsMine { return firstIsMine }
+            return first < second
+        }
+    }
+    private var fixedTeamSize: Int? { draft.tournamentFormat == .pair ? 2 : draft.teamSize }
+    private var participationChoice: Binding<String> {
+        Binding(get: {
+            draft.status == .canceled ? "canceled" : draft.isInterested ? "interested" : "participating"
+        }, set: { choice in
+            draft.isInterested = choice == "interested"
+            draft.isParticipating = choice == "participating"
+            draft.status = choice == "canceled" ? .canceled : .planned
+        })
     }
     private var isValid: Bool {
         !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -44,11 +65,11 @@ struct GiriEventEditor: View {
             basicSection
             if isSite { siteSection }
             if !isSite {
-                participantSection
+                if showsParticipantSection { participantSection }
                 if draft.meetingType == .tournament { teamSections }
-                if draft.kind == .online { scheduleSections }
+                if draft.eventFormat.hasOnlineRounds { scheduleSections }
                 Section {
-                    GiriEventCardSectionTitle(title: "振り返り", systemImage: "text.alignleft", accentColor: AppSectionAccent.memo)
+                    GiriEventCardSectionTitle(title: "メモ", systemImage: "text.alignleft", accentColor: AppSectionAccent.memo)
                         .listRowSeparator(.hidden)
                     TextField("メモ", text: $draft.memo, axis: .vertical).lineLimit(3...10)
                 }.appEventEditorCardStyle(accentColor: AppSectionAccent.memo)
@@ -85,11 +106,18 @@ struct GiriEventEditor: View {
         .onChange(of: draft.eventDate) { _, next in
             if next != lastEventDay { let previous = lastEventDay; lastEventDay = next; moveDay(from: previous, to: next) }
         }
-        .onChange(of: draft.kind) { _, kind in
-            if kind == .online && draft.rounds.isEmpty && !isSite { addRound(sameStage: false) }
+        .onChange(of: draft.eventFormat) { _, format in
+            if format == .onlineLong && draft.rounds.isEmpty && !isSite { addRound(sameStage: false) }
         }
         .onChange(of: draft.meetingType) { _, type in
-            if type == .tournament && draft.kind == .online && draft.rounds.isEmpty { addRound(sameStage: false) }
+            if type == .tournament && draft.eventFormat == .onlineLong && draft.rounds.isEmpty { addRound(sameStage: false) }
+            if type == .tournament && draft.tournamentFormat != .individual { ensureOwnTeam() }
+        }
+        .onChange(of: draft.tournamentFormat) { old, format in
+            if format != .individual {
+                if old == .individual && draft.teamSize == nil && draft.teams.isEmpty { draft.teamSize = 2 }
+                ensureOwnTeam()
+            }
         }
         .onChange(of: photo) { _, item in
             guard let item else { return }
@@ -141,41 +169,37 @@ struct GiriEventEditor: View {
         Section {
             GiriEventCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live)
                 .listRowSeparator(.hidden)
-            Picker(selection: $draft.kind) {
-                ForEach([EventKind.live, .online], id: \.self) { Text($0.title).tag($0) }
+            Picker(selection: $draft.eventFormat) {
+                ForEach(EventFormat.allCases) { Text($0.title).tag($0) }
             } label: { GiriEditorLabel("形式") }.pickerStyle(.menu).tint(.primary)
             Picker(selection: $draft.meetingType) {
                 Text("通常").tag(MeetingType.casual)
                 Text("大会").tag(MeetingType.tournament)
             } label: { GiriEditorLabel("会の種類") }.pickerStyle(.menu).tint(.primary)
             if !isSite {
-                Picker(selection: $draft.status) {
-                    ForEach([EventStatus.planned, .attended, .canceled], id: \.self) { Text($0.title).tag($0) }
+                Picker(selection: participationChoice) {
+                    Text("参加").tag("participating")
+                    Text("興味あり").tag("interested")
+                    Text("キャンセル").tag("canceled")
                 } label: { GiriEditorLabel("参加状況") }.pickerStyle(.menu).tint(.primary)
             }
             TextField(isSite ? "サイト名 *" : "会・大会名 *", text: $draft.title, axis: .vertical)
                 .lineLimit(1...5)
             if !isSite {
                 GiriEditorPlayerField(title: "主催者", text: $draft.organizer, preferHosts: true)
-                if draft.kind == .live {
+                if draft.eventFormat.hasLiveTiming {
                     OptionalDateRow(title: "日付", selection: $draft.eventDate, components: .date)
                     GiriEventTimeRow(startsAt: clockBinding(start: true), endsAt: clockBinding(start: false))
-                    TextField("会場名", text: $draft.venue)
-                    if !draft.venue.isEmpty {
-                        let matches = store.venues.filter { $0.name.localizedCaseInsensitiveContains(draft.venue) }
-                        ForEach(Array(matches.prefix(5))) { venue in
-                            Button {
-                                draft.venue = venue.name
-                                draft.venueId = venue.id
-                            } label: {
-                                HStack { Text(venue.name); Spacer(); Text(venue.prefecture).foregroundStyle(.secondary).font(.subheadline) }
-                            }.buttonStyle(.borderless)
-                        }
+                    if draft.eventFormat != .onlineShort {
+                        GiriVenueSuggestionField(text: $draft.venue)
                     }
-                } else {
+                }
+                if draft.eventFormat.hasOnlineRounds {
                     TextField("サイトURL", text: $draft.siteUrl).keyboardType(.URL).textInputAutocapitalization(.never)
-                    TextField("所属・部", text: $draft.affiliation)
-                    TextField("ブロック・担当お題", text: $draft.block)
+                    if draft.onlineSiteId.flatMap({ store.onlineSiteById($0) })?.hasAffiliations == true || !draft.affiliation.isEmpty {
+                        TextField("所属・部", text: $draft.affiliation)
+                    }
+                    TextField("ブロック", text: $draft.block)
                 }
             } else {
                 TextField("サイトURL", text: $site.url).keyboardType(.URL).textInputAutocapitalization(.never)
@@ -198,8 +222,9 @@ struct GiriEventEditor: View {
             OptionalDateRow(title: "開始時刻", selection: siteClock, components: .hourAndMinute)
             Stepper("投稿期間　\(site.submissionDays)日", value: $site.submissionDays, in: 1...365)
             Stepper("投票期間　\(site.votingDays)日", value: $site.votingDays, in: 1...365)
-            TextField("所属・部", text: $site.affiliation)
-            TextField("ブロック・担当お題", text: $site.block)
+            Toggle("所属・部がある", isOn: $site.hasAffiliations).tint(AppSectionAccent.artist)
+            if site.hasAffiliations { TextField("現在の所属・部", text: $site.affiliation) }
+            TextField("ブロック", text: $site.block)
             TextField("メモ", text: $site.memo, axis: .vertical).lineLimit(2...6)
         }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
     }
@@ -216,19 +241,20 @@ struct GiriEventEditor: View {
 
     private var participantSection: some View {
         Section {
-            GiriEventCardSectionTitle(title: "参加者", systemImage: "person.2", accentColor: AppSectionAccent.artist)
-                .overlay(alignment: .trailing) {
-                    Text("\(participants.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count)人")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }.listRowSeparator(.hidden)
-            HStack(spacing: 12) {
-                Button { importText = ""; showImport = true } label: { Label("文字貼り付け", systemImage: "doc.on.clipboard") }
-                Spacer(minLength: 0)
+            HStack(spacing: 6) {
+                GiriEventCardSectionTitle(title: "参加者", systemImage: "person.2", accentColor: AppSectionAccent.artist)
+                Text("\(participants.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count)人")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize()
+                Button { importText = ""; showImport = true } label: {
+                    importIcon("doc.on.clipboard")
+                }
+                .buttonStyle(.borderless).accessibilityLabel("文字貼り付け")
                 PhotosPicker(selection: $photo, matching: .images) {
-                    Label("OCR読み取り", systemImage: "text.viewfinder")
-                }.disabled(recognizing)
-            }.font(.subheadline.weight(.medium)).buttonStyle(.bordered).tint(accentActionColor)
-            if recognizing { ProgressView("読み取り中") }
+                    if recognizing { ProgressView().frame(width: 32, height: 32) }
+                    else { importIcon("text.viewfinder") }
+                }
+                .buttonStyle(.borderless).disabled(recognizing).accessibilityLabel("OCR読み取り")
+            }.listRowSeparator(.hidden)
             ForEach(participants.indices, id: \.self) { index in
                 HStack(spacing: 8) {
                     GiriEditorPlayerField(title: "参加者名", text: participantBinding(index), compact: true)
@@ -244,6 +270,17 @@ struct GiriEventEditor: View {
         }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
     }
 
+    private func importIcon(_ symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(accentActionColor)
+            .frame(width: 28, height: 28)
+            .background(accentActionColor.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .frame(width: 32, height: 32)
+            .contentShape(Rectangle())
+    }
+
     @ViewBuilder private var teamSections: some View {
         Section {
             GiriEventCardSectionTitle(title: "大会の形式", systemImage: "person.2", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
@@ -253,50 +290,92 @@ struct GiriEventEditor: View {
                 if draft.tournamentFormat == .pair { Text("タッグ戦").tag(TournamentFormat.pair) }
             }.pickerStyle(.menu).tint(.primary)
             if draft.tournamentFormat != .individual {
-                Picker("チーム人数", selection: Binding(get: { draft.teamSize ?? 0 }, set: { draft.teamSize = $0 == 0 ? nil : $0 })) {
+                Picker("チーム人数", selection: Binding(get: { fixedTeamSize ?? 0 }, set: changeTeamSize)) {
                     Text("制限なし").tag(0)
                     ForEach(2...6, id: \.self) { Text("\($0)人").tag($0) }
                     if let size = draft.teamSize, size > 6 { Text("\(size)人").tag(size) }
                 }.pickerStyle(.menu).tint(.primary)
-                Picker("自分のチーム", selection: Binding(get: { draft.myTeamId ?? "" }, set: { value in
-                    draft.myTeamId = value.isEmpty ? nil : value
-                    for i in draft.teams.indices { draft.teams[i].isMine = draft.teams[i].id == value }
-                })) {
-                    Text("未設定").tag("")
-                    ForEach(draft.teams) { Text($0.name.isEmpty ? "名前未入力" : $0.name).tag($0.id) }
-                }.pickerStyle(.menu).tint(.primary)
             }
         }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
         if draft.tournamentFormat != .individual {
-            ForEach(draft.teams.indices, id: \.self) { index in
+            ForEach(orderedTeamIndices, id: \.self) { index in
                 Section {
                     HStack {
                         GiriEventCardSectionTitle(title: draft.teams[index].id == draft.myTeamId ? "自分のチーム" : "チーム\(index + 1)", systemImage: "person.3", accentColor: AppSectionAccent.artist)
-                        Button(role: .destructive) {
-                            if draft.myTeamId == draft.teams[index].id { draft.myTeamId = nil }
-                            draft.teams.remove(at: index)
-                        } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                        if draft.teams[index].id != draft.myTeamId {
+                            Button(role: .destructive) { draft.teams.remove(at: index) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                        }
                     }.listRowSeparator(.hidden)
-                    TextField("チーム名", text: $draft.teams[index].name)
+                    TextField(draft.teams[index].id == draft.myTeamId ? "自分のチーム名" : "チーム名", text: $draft.teams[index].name)
                     ForEach(draft.teams[index].members.indices, id: \.self) { memberIndex in
                         HStack {
-                            GiriEditorPlayerField(title: "メンバー名", text: $draft.teams[index].members[memberIndex], compact: true)
-                            Button(role: .destructive) { draft.teams[index].members.remove(at: memberIndex) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                            GiriEditorPlayerField(title: "メンバー\(memberIndex + 1)", text: teamMemberBinding(team: index, member: memberIndex), compact: true)
+                            if fixedTeamSize == nil {
+                                Button(role: .destructive) {
+                                    draft.teams[index].members.remove(at: memberIndex)
+                                    if draft.teams[index].members.isEmpty { draft.teams[index].members = [""] }
+                                } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                            }
                         }
                     }
-                    Button { draft.teams[index].members.append("") } label: { Label("メンバーを追加", systemImage: "plus.circle") }.tint(accentActionColor)
+                    if fixedTeamSize == nil {
+                        Button { draft.teams[index].members.append("") } label: { Label("メンバーを追加", systemImage: "plus.circle") }.tint(accentActionColor)
+                    }
                 }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
             }
             Section {
-                Button {
-                    var team = GiriTeam()
-                    team.isMine = draft.teams.isEmpty
-                    if team.isMine { draft.myTeamId = team.id }
-                    team.members = store.preferences.selfName.isEmpty || !team.isMine ? [""] : [store.preferences.selfName]
-                    draft.teams.append(team)
-                } label: { Label("チームを追加", systemImage: "plus.circle") }
+                Button { appendOtherTeam() } label: { Label("他のチームを追加", systemImage: "plus.circle") }
             }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
         }
+    }
+
+    private func changeTeamSize(_ value: Int) {
+        let limit: Int? = value == 0 ? nil : value
+        if let limit, draft.teams.contains(where: { $0.members.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count > limit }) {
+            store.errorMessage = "入力済みのメンバーが新しい人数を超えています。先にメンバーを確認してください。"
+            return
+        }
+        if draft.tournamentFormat == .pair && value != 2 { draft.tournamentFormat = .team }
+        draft.teamSize = limit
+        normalizeTeamSlots()
+    }
+    private func ensureOwnTeam() {
+        guard draft.tournamentFormat != .individual else { return }
+        if let mine = draft.teams.first(where: { $0.id == draft.myTeamId || $0.isMine }) {
+            draft.myTeamId = mine.id
+        } else {
+            var mine = GiriTeam()
+            mine.isMine = true
+            let me = store.preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
+            mine.members = me.isEmpty ? [""] : [me]
+            draft.myTeamId = mine.id
+            draft.teams.insert(mine, at: 0)
+        }
+        for index in draft.teams.indices { draft.teams[index].isMine = draft.teams[index].id == draft.myTeamId }
+        normalizeTeamSlots()
+    }
+    private func normalizeTeamSlots() {
+        for index in draft.teams.indices {
+            let names = draft.teams[index].members.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if let count = fixedTeamSize {
+                // Never remove a saved person to fit a reduced team size.
+                draft.teams[index].members = names + Array(repeating: "", count: max(0, count - names.count))
+            } else if draft.teams[index].members.isEmpty { draft.teams[index].members = [""] }
+        }
+    }
+    private func appendOtherTeam() {
+        var team = GiriTeam()
+        team.members = Array(repeating: "", count: fixedTeamSize ?? 1)
+        draft.teams.append(team)
+    }
+    private func teamMemberBinding(team: Int, member: Int) -> Binding<String> {
+        Binding(get: {
+            guard draft.teams.indices.contains(team), draft.teams[team].members.indices.contains(member) else { return "" }
+            return draft.teams[team].members[member]
+        }, set: { value in
+            guard draft.teams.indices.contains(team), draft.teams[team].members.indices.contains(member) else { return }
+            draft.teams[team].members[member] = value
+        })
     }
 
     @ViewBuilder private var scheduleSections: some View {
@@ -304,6 +383,7 @@ struct GiriEventEditor: View {
             Section {
                 HStack {
                     GiriEventCardSectionTitle(title: draft.rounds[index].name, systemImage: "calendar", accentColor: AppSectionAccent.artist)
+                    Text("\(draft.rounds[index].promptNumber)回目").font(.subheadline).foregroundStyle(.secondary).fixedSize()
                     Menu {
                         if index > 0 { Button("上へ移動", systemImage: "arrow.up") { draft.rounds.swapAt(index, index - 1) } }
                         if index + 1 < draft.rounds.count { Button("下へ移動", systemImage: "arrow.down") { draft.rounds.swapAt(index, index + 1) } }
@@ -316,7 +396,7 @@ struct GiriEventEditor: View {
         Section {
             Button { addRound(sameStage: false) } label: { Label(draft.meetingType == .tournament ? "次の段階を追加" : "日程を追加", systemImage: "plus.circle") }
             if draft.meetingType == .tournament && !draft.rounds.isEmpty {
-                Button { addRound(sameStage: true) } label: { Label("同じ段階のお題を追加", systemImage: "plus.square.on.square") }
+                Button { addRound(sameStage: true) } label: { Label("同じ段階の次回を追加", systemImage: "plus.square.on.square") }
             }
         }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
     }
@@ -331,7 +411,9 @@ struct GiriEventEditor: View {
             var team = GiriTeam(); team.name = old.teamName; team.members = old.members; team.isMine = true
             draft.teams = [team]; draft.myTeamId = team.id; draft.tournamentFormat = old.format
         }
+        if draft.tournamentFormat != .individual { ensureOwnTeam() }
         initial = draft
+        selfWasAdded = false
         lastOrganizer = draft.organizer
         lastEventDay = draft.eventDate
         site = OnlineSite()
@@ -344,6 +426,7 @@ struct GiriEventEditor: View {
     }
 
     private func syncSelf() {
+        guard showsParticipantSection else { return }
         let me = store.preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
         let host = draft.organizer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !me.isEmpty, !host.isEmpty else { return }
@@ -390,21 +473,9 @@ struct GiriEventEditor: View {
     }
 
     private func addRound(sameStage: Bool) {
-        let preferences = store.preferences
-        var round = EventRound()
-        let previous = draft.rounds.last
-        round.name = draft.meetingType == .tournament ? (sameStage ? previous?.name ?? "予選1回戦" : giriEditorNextStage(previous?.name ?? "")) : "投稿・投票"
-        round.stageId = sameStage ? previous?.effectiveStageId ?? round.id : round.id
-        round.promptNumber = sameStage ? (previous?.promptNumber ?? 0) + 1 : 1
-        round.block = previous?.block ?? draft.block
-        let reference = draft.eventDate ?? Date()
-        let defaultDay = Calendar.current.date(byAdding: .day, value: preferences.submissionStartDayOffset, to: reference) ?? reference
-        round.submissionStart = previous?.votingEnd ?? previous?.submissionEnd ?? Calendar.current.date(bySettingHour: preferences.submissionStartHour, minute: preferences.submissionStartMinute, second: 0, of: defaultDay)
-        if let start = round.submissionStart {
-            round.submissionEnd = Calendar.current.date(byAdding: .day, value: preferences.submissionDays, to: start)
-            round.votingStart = round.submissionEnd
-            if let voting = round.votingStart { round.votingEnd = Calendar.current.date(byAdding: .day, value: preferences.votingDays, to: voting) }
-        }
+        let round = nextEventRound(rounds: draft.rounds, preferences: store.preferences,
+            sameStage: sameStage, tournament: draft.meetingType == .tournament,
+            referenceDate: draft.eventDate ?? Date())
         automaticFields[round.id] = ["submissionEnd", "votingStart", "votingEnd"]
         draft.rounds.append(round)
     }
@@ -416,19 +487,23 @@ struct GiriEventEditor: View {
         do {
             if isSite {
                 site.name = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                site.format = draft.eventFormat
                 try store.saveOnlineSite(site)
             } else {
-                draft.title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                let venueMatch = store.venueDirectory.first { playerSearchKey($0.name) == playerSearchKey(draft.venue) }
-                draft.venueId = venueMatch.flatMap { $0.id.hasPrefix("history:") ? nil : $0.id }
+                var candidate = draft
+                candidate.title = candidate.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                let venueMatch = store.venueDirectory.first { playerSearchKey($0.name) == playerSearchKey(candidate.venue) }
+                candidate.venueId = venueMatch.flatMap { $0.id.hasPrefix("history:") ? nil : $0.id }
                 var seen = Set<String>()
-                draft.participants = participants.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty && seen.insert(giriEditorNameKey($0)).inserted }
-                for i in draft.teams.indices { draft.teams[i].members = draft.teams[i].members.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } }
-                if let size = draft.teamSize, draft.teams.contains(where: { $0.members.count > size }) {
+                if showsParticipantSection {
+                    candidate.participants = participants.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty && seen.insert(giriEditorNameKey($0)).inserted }
+                }
+                for i in candidate.teams.indices { candidate.teams[i].members = candidate.teams[i].members.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
+                if let size = candidate.teamSize, candidate.teams.contains(where: { $0.members.count > size }) {
                     store.errorMessage = "チーム人数を超えているチームがあります。人数設定かメンバーを確認してください。"; return
                 }
-                try giriEditorValidate(draft)
-                try store.saveEvent(draft)
+                try giriEditorValidate(candidate)
+                try store.saveEvent(candidate)
             }
             playLiveStairSaveFeedback()
             if event != nil { dismiss() } else { loaded = false; load(); onSaved?() }
@@ -442,33 +517,16 @@ struct GiriEditorLabel: View {
     var body: some View { Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.secondary) }
 }
 
+/// Compatibility wrapper used by roster/result editors; all name inputs use
+/// the same LiveStair-derived suggestion card rather than horizontal chips.
 struct GiriEditorPlayerField: View {
-    @EnvironmentObject private var store: GiriStore
     let title: String
     @Binding var text: String
     var preferHosts = false
     var compact = false
-    @FocusState private var focused: Bool
-
-    private var suggestions: [String] {
-        guard focused else { return [] }
-        return Array(store.suggestPlayers(text, organizer: preferHosts).prefix(8)).map(\.name)
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 3 : 6) {
-            TextField(title, text: $text).focused($focused).autocorrectionDisabled().textInputAutocapitalization(.never)
-            if !suggestions.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(suggestions, id: \.self) { name in
-                            Button { text = name; focused = false } label: { Text(name).font(.subheadline).lineLimit(1) }
-                                .buttonStyle(.bordered).tint(AppSectionAccent.artist)
-                        }
-                    }
-                }
-            }
-        }
+        GiriPlayerSuggestionField(title: title, text: $text, organizer: preferHosts,
+            showsLabel: preferHosts, textAlignment: preferHosts ? .trailing : .leading)
     }
 }
 

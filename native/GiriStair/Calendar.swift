@@ -10,10 +10,10 @@ struct GiriCalendarPeriod: Identifiable {
     let phase: Phase
     var id: String { "\(event.id)/\(round?.id ?? "live")/\(phase.rawValue)" }
     var title: String {
-        switch phase { case .live: "生大喜利"; case .submission: "投稿"; case .voting: "投票" }
+        switch phase { case .live: "開催"; case .submission: "投稿"; case .voting: "投票" }
     }
     var color: Color {
-        switch phase { case .live: AppSectionAccent.live; case .submission: AppSectionAccent.artist; case .voting: AppSectionAccent.memo }
+        GiriEventPresentation.accent(event).opacity(phase == .voting ? 0.85 : 1)
     }
     func overlaps(_ day: Date) -> Bool {
         let from = Calendar.current.startOfDay(for: day)
@@ -26,14 +26,15 @@ struct GiriCalendarPeriod: Identifiable {
             guard let start, let end, start < end else { return }
             periods.append(GiriCalendarPeriod(event: event, round: round, start: start, end: end, phase: phase))
         }
-        for event in events where event.status != .canceled {
-            if event.kind == .live {
+        for event in events where event.isActualParticipant {
+            if event.eventFormat.hasLiveTiming {
                 let start = event.startsAt ?? event.eventDate
                 let end = event.endsAt ?? start.flatMap {
                     Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: $0))
                 }
                 add(event, nil, start, end, .live)
-            } else {
+            }
+            if event.eventFormat.hasOnlineRounds {
                 for round in event.effectiveRounds {
                     if round.submissionEnabled { add(event, round, round.submissionStart, round.submissionEnd, .submission) }
                     if round.votingRequired { add(event, round, round.votingStart, round.votingEnd, .voting) }
@@ -128,6 +129,7 @@ struct GiriCalendarView: View {
         VStack(spacing: 0) {
             VStack(spacing: 8) {
                 monthHeader
+                formatLegend
                 VStack(spacing: 8) {
                     weekdays
                     pagedMonthGrid
@@ -292,6 +294,19 @@ struct GiriCalendarView: View {
         .padding(.horizontal, 10).frame(maxWidth: 460)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+    private var formatLegend: some View {
+        HStack(spacing: 10) {
+            ForEach(EventFormat.allCases) { format in
+                Label(format.shortTitle, systemImage: GiriEventPresentation.symbol(format))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(GiriEventPresentation.accent(format))
+                    .lineLimit(1)
+                    .accessibilityLabel(format.title)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18).padding(.vertical, 4)
+    }
     private var selectedDayHeader: some View {
         HStack(spacing: 10) {
             Text(selectedDayTitle)
@@ -316,7 +331,10 @@ struct GiriCalendarView: View {
                     Text(siteNames[period.event.onlineSiteId ?? ""] ?? period.event.title)
                         .font(.system(size: appFontSize(16), weight: .bold, design: .rounded)).lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    GiriListBadge(text: period.title, color: period.color)
+                    VStack(alignment: .trailing, spacing: 4) {
+                        GiriListBadge(text: GiriEventPresentation.formatBadgeTitle(period.event.eventFormat), color: period.color)
+                        GiriListBadge(text: period.title, color: period.color)
+                    }
                 }
                 if let round = period.round {
                     Text(GiriEventPresentation.roundTitle(round, event: period.event))
@@ -329,7 +347,7 @@ struct GiriCalendarView: View {
                     Text("\(GiriEventPresentation.dateTime(period.start)) 〜 \(GiriEventPresentation.dateTime(period.end))")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                if !period.event.isParticipating {
+                if !period.event.isActualParticipant {
                     Text("未参加").font(.caption.weight(.medium)).foregroundStyle(.secondary)
                 }
             }
@@ -383,7 +401,7 @@ private struct GiriCalendarWeek: View {
                             if let first = indices.first, let last = indices.last {
                                 let cell = proxy.size.width / 7
                                 GiriCalendarPeriodLink(period: period) {
-                                    Text("\(siteNames[period.event.onlineSiteId ?? ""] ?? period.event.title)・\(period.title)")
+                                    Text("\(period.event.eventFormat.shortTitle)｜\(siteNames[period.event.onlineSiteId ?? ""] ?? period.event.title)・\(period.title)")
                                         .font(.system(size: appFontSize(8), weight: .semibold)).foregroundStyle(period.color)
                                         .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(.horizontal, 3).frame(height: 17)
@@ -407,16 +425,17 @@ private struct GiriCalendarWeek: View {
 }
 
 private struct GiriCalendarPeriodLink<Content: View>: View {
+    @EnvironmentObject private var navigation: GiriNavigation
     let period: GiriCalendarPeriod
     @ViewBuilder var content: () -> Content
     var body: some View {
-        NavigationLink {
-            if let round = period.round, period.event.isParticipating {
-                GiriRoundWorkspace(eventID: period.event.id, roundID: round.id)
-            } else {
-                GiriEventDetail(eventID: period.event.id)
-            }
-        } label: { content() }
+        if let round = period.round, period.event.isActualParticipant {
+            Button {
+                navigation.openThoughts(eventID: period.event.id, roundID: round.id)
+            } label: { content() }
+            .accessibilityLabel("\(period.event.eventFormat.title)、\(period.event.title)、\(period.title)")
+        } else {
+            NavigationLink { GiriEventDetail(eventID: period.event.id) } label: { content() }
+        }
     }
 }
-
