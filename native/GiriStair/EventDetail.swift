@@ -21,7 +21,7 @@ struct GiriEventDetail: View {
             if let event {
                 Form {
                     basic(event)
-                    if !event.participants.isEmpty && !(event.eventFormat != .live && event.meetingType == .tournament) { participants(event) }
+                    if !event.participants.isEmpty && !(event.eventFormat.isOnline && event.meetingType == .tournament) { participants(event) }
                     teams(event)
                     thoughtsLink(event)
                     if event.eventFormat.hasOnlineRounds {
@@ -400,6 +400,7 @@ struct GiriEventDetail: View {
 
     private func offerResultIfNeeded() {
         guard let event, event.isActualParticipant else { return }
+        guard event.meetingType == .tournament || event.onlineSiteId != nil else { return }
         let now = Date()
         if event.eventFormat.hasOnlineRounds && !event.effectiveRounds.isEmpty {
             let finished = event.effectiveRounds.filter { round in
