@@ -331,7 +331,7 @@ struct GiriEventDetail: View {
             GiriEventCardSectionTitle(title: "お題・回答", systemImage: "lightbulb", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
             Button { navigation.openThoughts(eventID: event.id) } label: {
                 HStack {
-                    Label("思考でお題・回答を開く", systemImage: "arrow.up.forward.square")
+                    Label("お題/回答を開く", systemImage: "arrow.up.forward.square")
                     Spacer()
                     Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                 }
@@ -349,7 +349,7 @@ struct GiriEventDetail: View {
             scheduleValue("投票締切", round.votingEnd)
             NavigationLink("日程を編集") { GiriRoundEditor(eventID: eventID, round: round) }
             Button { navigation.openThoughts(eventID: eventID, roundID: round.id) } label: {
-                Label("この回のお題・回答を思考で開く", systemImage: "lightbulb")
+                Label("この回のお題/回答を開く", systemImage: "lightbulb")
             }.tint(accentActionColor)
             if event.meetingType == .tournament {
                 NavigationLink { GiriResultEntry(eventID: eventID, initialRoundID: round.id) } label: {
@@ -374,11 +374,16 @@ struct GiriEventDetail: View {
     private func cycleResults(_ event: GiriEvent) -> some View {
         Section {
             GiriEventCardSectionTitle(title: "この回の結果", systemImage: "chart.bar", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
-            if !event.affiliation.isEmpty { detailValue("今回の所属", event.affiliation) }
+            if !event.siteSeason.isEmpty { detailValue("シーズン", event.siteSeason) }
+            if let number = event.siteCycleNumber { detailValue("対象回", "第\(number)回") }
+            if !event.affiliation.isEmpty { detailValue("今回のリーグ", event.affiliation) }
+            if event.leagueMovement != .unchanged { detailValue("リーグの変更", event.leagueMovement.title) }
+            if event.siteQualification != .none { detailValue("特別戦への出場", event.siteQualification.title) }
             if let placement = event.cyclePlacement { detailValue("順位", "\(placement)位") }
             if !event.cycleResult.isEmpty { Text(event.cycleResult).textSelection(.enabled) }
-            if !event.nextAffiliation.isEmpty { detailValue("次回の所属", event.nextAffiliation) }
-            NavigationLink(event.cycleResult.isEmpty && event.cyclePlacement == nil ? "結果を入力" : "結果を編集") { GiriCycleResultEditor(eventID: eventID) }
+            if !event.nextAffiliation.isEmpty { detailValue("変更後のリーグ", event.nextAffiliation) }
+            if let effective = event.nextLeagueEffectiveDate, event.leagueMovement != .unchanged { detailValue("リーグ変更の適用日", GiriDateText.dateTime(effective)) }
+            NavigationLink(event.hasCycleResult ? "結果を編集" : "結果を入力") { GiriCycleResultEditor(eventID: eventID) }
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
     }
 
@@ -407,7 +412,7 @@ struct GiriEventDetail: View {
                 guard let end = round.votingEnd, end <= now else { return false }
                 let key = "round:" + round.id
                 guard !event.promptedResultKeys.contains(key) else { return false }
-                if event.meetingType == .casual { return event.cycleResult.isEmpty && event.cyclePlacement == nil }
+                if event.meetingType == .casual { return !event.hasCycleResult }
                 return !event.hasRecordedResult(for: round)
             }.sorted { ($0.votingEnd ?? .distantPast) > ($1.votingEnd ?? .distantPast) }
             guard let round = finished.first else { return }

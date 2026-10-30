@@ -135,6 +135,16 @@ final class GiriStore: ObservableObject {
     func deleteEvent(_ id: String) throws {
         try mutate { next in
             next.events.removeAll { $0.id == id }
+            for index in next.onlineSites.indices where next.onlineSites[index].leagueChanges.contains(where: { $0.sourceEventID == id }) {
+                if next.onlineSites[index].leagueBaseline == nil { next.onlineSites[index].leagueBaseline = next.onlineSites[index].leagueChanges.sorted { $0.effectiveFrom < $1.effectiveFrom }.first?.fromLeague ?? next.onlineSites[index].affiliation }
+                next.onlineSites[index].leagueChanges.removeAll { $0.sourceEventID == id }
+                next.onlineSites[index].affiliation = siteLeague(next.onlineSites[index])
+                let site = next.onlineSites[index]
+                for eventIndex in next.events.indices where next.events[eventIndex].onlineSiteId == site.id && !next.events[eventIndex].isActualParticipant {
+                    let date = next.events[eventIndex].participationStartDate ?? next.events[eventIndex].createdAt
+                    next.events[eventIndex].affiliation = siteLeague(site, at: date)
+                }
+            }
             for index in next.notes.indices where next.notes[index].eventId == id { next.notes[index].eventId = nil; next.notes[index].roundId = nil }
         }
     }
@@ -174,23 +184,42 @@ final class GiriStore: ObservableObject {
         guard !events[index].promptedResultKeys.contains(key) else { return }
         try mutate { $0.events[index].promptedResultKeys.append(key) }
     }
-    /// Save this cycle's historical snapshot and only the next-cycle default.
+    /// A qualification is a historical result, not an inferred promotion.
+    /// Future-season league changes are stored with their effective date.
     func saveCycleResult(event candidate: GiriEvent, nextAffiliation: String? = nil) throws {
         var event = Self.normalizedEvent(candidate)
         if let nextAffiliation { event.nextAffiliation = nextAffiliation.trimmingCharacters(in: .whitespacesAndNewlines) }
         try event.validate()
         try mutate { next in
             Self.upsert(event, into: &next.events)
-            guard event.isActualParticipant, let nextAffiliation, let siteID = event.onlineSiteId,
+            guard event.isActualParticipant, let siteID = event.onlineSiteId,
                   let siteIndex = next.onlineSites.firstIndex(where: { $0.id == siteID }),
                   next.onlineSites[siteIndex].hasAffiliations else { return }
             let reference = event.participationStartDate ?? event.createdAt
-            let laterJoined = next.events.contains { $0.id != event.id && $0.onlineSiteId == siteID && $0.isActualParticipant && ($0.participationStartDate ?? $0.createdAt) > reference }
-            guard !laterJoined else { return }
-            let affiliation = nextAffiliation.trimmingCharacters(in: .whitespacesAndNewlines)
-            next.onlineSites[siteIndex].affiliation = affiliation
+            var site = next.onlineSites[siteIndex]
+            if site.cycleSettings != nil {
+                let date = siteLeagueEffectiveDate(site, after: event)
+                let hasExistingChange = site.leagueChanges.contains { $0.sourceEventID == event.id }
+                let explicitClear = event.nextAffiliation.isEmpty && event.leagueMovement == .unchanged
+                guard nextAffiliation != nil || (hasExistingChange && explicitClear) else { return }
+                if site.leagueBaseline == nil { site.leagueBaseline = site.leagueChanges.sorted { $0.effectiveFrom < $1.effectiveFrom }.first?.fromLeague ?? site.affiliation }
+                site.leagueChanges.removeAll { $0.sourceEventID == event.id }
+                if let affiliation = nextAffiliation?.trimmingCharacters(in: .whitespacesAndNewlines), !affiliation.isEmpty && affiliation != event.affiliation {
+                    let change = SiteLeagueChange(id: "league:" + event.id, sourceEventID: event.id, fromLeague: event.affiliation, toLeague: affiliation, effectiveFrom: date, seasonName: event.siteSeason)
+                    site.leagueChanges.append(change)
+                }
+                site.affiliation = siteLeague(site)
+            } else {
+                // Preserve the 0.5 legacy per-cycle affiliation behaviour.
+                guard let nextAffiliation else { return }
+                let laterJoined = next.events.contains { $0.id != event.id && $0.onlineSiteId == siteID && $0.isActualParticipant && ($0.participationStartDate ?? $0.createdAt) > reference }
+                guard !laterJoined else { return }
+                site.affiliation = nextAffiliation.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            next.onlineSites[siteIndex] = site
             for index in next.events.indices where next.events[index].onlineSiteId == siteID && !next.events[index].isParticipating && !next.events[index].isInterested && (next.events[index].participationStartDate ?? next.events[index].createdAt) > reference {
-                next.events[index].affiliation = affiliation
+                let date = next.events[index].participationStartDate ?? next.events[index].createdAt
+                next.events[index].affiliation = site.cycleSettings == nil ? site.affiliation : siteLeague(site, at: date)
             }
         }
     }
@@ -215,6 +244,7 @@ final class GiriStore: ObservableObject {
     func savePreferences(_ candidate: AppPreferences) throws {
         var preferences = candidate
         preferences.selfName = preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
+        preferences.formatOrder = preferences.effectiveFormatOrder
         try preferences.validate()
         let oldName = self.preferences.selfName
         try mutate { next in
@@ -263,7 +293,28 @@ final class GiriStore: ObservableObject {
             for index in next.events.indices where next.events[index].venueId == id { next.events[index].venueId = nil }
         }
     }
-    func saveOnlineSite(_ site: OnlineSite) throws { try site.validate(); try mutate { Self.upsert(site, into: &$0.onlineSites) } }
+    func saveOnlineSite(_ candidate: OnlineSite) throws {
+        var site = candidate
+        try site.validate()
+        if let previous = onlineSites.first(where: { $0.id == site.id }) {
+            let newSeason = site.cycleSettings?.seasonName != previous.cycleSettings?.seasonName || site.cycleSettings?.seasonStart != previous.cycleSettings?.seasonStart
+            let namedNewSeason = newSeason && site.hasAffiliations && !(site.cycleSettings?.seasonName.isEmpty ?? true)
+            if (site.affiliation != siteLeague(previous) || namedNewSeason), previous.cycleSettings != nil || !previous.leagueChanges.isEmpty {
+                if site.leagueBaseline == nil { site.leagueBaseline = previous.leagueBaseline ?? previous.leagueChanges.sorted { $0.effectiveFrom < $1.effectiveFrom }.first?.fromLeague ?? previous.affiliation }
+                let noJoinedHistory = !events.contains { $0.onlineSiteId == site.id && $0.isActualParticipant }
+                let effective = (newSeason || noJoinedHistory) ? (site.cycleSettings?.inferredSeasonStart ?? Date()) : Date()
+                let change = SiteLeagueChange(sourceEventID: "site-setting:" + UUID().uuidString, fromLeague: siteLeague(previous, at: effective), toLeague: site.affiliation, effectiveFrom: effective, seasonName: site.cycleSettings?.seasonName ?? "")
+                site.leagueChanges.append(change)
+                site.affiliation = siteLeague(site)
+            }
+        } else if site.hasAffiliations, let settings = site.cycleSettings, !settings.seasonName.isEmpty, !site.affiliation.isEmpty {
+            // Registering a season preserves its initial league even if no
+            // submission is ultimately joined before the next season begins.
+            site.leagueBaseline = site.affiliation
+            site.leagueChanges.append(SiteLeagueChange(id: "season-start:" + site.id, sourceEventID: "season-start:" + site.id, fromLeague: site.affiliation, toLeague: site.affiliation, effectiveFrom: settings.inferredSeasonStart, seasonName: settings.seasonName))
+        }
+        try mutate { Self.upsert(site, into: &$0.onlineSites) }
+    }
     func deleteOnlineSite(_ id: String) throws {
         try mutate { next in
             next.onlineSites.removeAll { $0.id == id }
@@ -301,8 +352,60 @@ final class GiriStore: ObservableObject {
         try saveEvent(event)
         return event
     }
+    @discardableResult
+    func createSiteCycle(_ siteID: String, descriptor: SiteCycleDescriptor, join: Bool = true) throws -> GiriEvent {
+        guard loaded else { throw GiriDataError.notLoaded }
+        guard let site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
+        if var event = events.first(where: { $0.onlineSiteId == siteID && $0.cycleKey == descriptor.cycleKey }) {
+            // A saved participation and its edited dates/results are snapshots.
+            guard !event.isActualParticipant else { return event }
+            if !event.isInterested && event.status != .canceled && !event.siteScheduleCustomized {
+                let previousRoundID = event.effectiveRounds.first?.id
+                var round = descriptor.round
+                if let previousRoundID { round.id = previousRoundID; round.stageId = previousRoundID }
+                event.rounds = [round]
+                event.siteSeason = descriptor.seasonName
+                event.siteSeasonStart = site.cycleSettings?.inferredSeasonStart
+                event.siteSeasonEnd = site.cycleSettings?.seasonEnd
+                event.siteCycleNumber = descriptor.cycleNumber
+                event.sitePeriodKind = descriptor.kind
+            }
+            if join {
+                event.isParticipating = true; event.isInterested = false; event.status = .planned
+                event.eventFormat = site.format
+                event.affiliation = site.hasAffiliations ? siteLeague(site, at: descriptor.start ?? Date()) : ""
+                let name = preferences.selfName
+                if !name.isEmpty && !event.participants.contains(where: { playerSearchKey($0) == playerSearchKey(name) }) { event.participants.append(name) }
+            }
+            // Avoid rewriting unchanged preview bytes at every foreground.
+            if let original = events.first(where: { $0.id == event.id }), event != original { try saveEvent(event) }
+            return event
+        }
+        var event = GiriEvent()
+        event.title = site.name; event.eventFormat = site.format; event.meetingType = .casual
+        event.onlineSiteId = siteID; event.cycleKey = descriptor.cycleKey
+        event.affiliation = site.hasAffiliations ? siteLeague(site, at: descriptor.start ?? Date()) : ""
+        event.siteSeason = descriptor.seasonName
+        event.siteSeasonStart = site.cycleSettings?.inferredSeasonStart
+        event.siteSeasonEnd = site.cycleSettings?.seasonEnd
+        event.siteCycleNumber = descriptor.cycleNumber
+        event.sitePeriodKind = descriptor.kind
+        event.block = site.block; event.siteUrl = site.url; event.memo = site.memo
+        event.rounds = [descriptor.round]; event.isParticipating = join
+        if join && !preferences.selfName.isEmpty { event.participants = [preferences.selfName] }
+        try saveEvent(event)
+        return event
+    }
     func ensureCurrentSiteCycles(now: Date = Date()) throws {
-        for site in onlineSites where site.recurrence == .weekly { for offset in -1...1 { try createSiteCycle(site.id, weekOf: now, weekOffset: offset, join: false) } }
+        for site in onlineSites {
+            if site.cycleSettings != nil {
+                for descriptor in siteCycleDescriptors(site, around: now) {
+                    try createSiteCycle(site.id, descriptor: descriptor, join: false)
+                }
+            } else if site.recurrence == .weekly {
+                for offset in -1...1 { try createSiteCycle(site.id, weekOf: now, weekOffset: offset, join: false) }
+            }
+        }
     }
     func exportBackup() throws -> Data { guard loaded else { throw GiriDataError.notLoaded }; return try GiriJSON.encode(document) }
     func recordBackupExported() throws { try mutate { $0.lastBackupAt = Date() } }

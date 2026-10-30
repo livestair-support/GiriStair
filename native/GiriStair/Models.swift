@@ -340,11 +340,20 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var cycleResult: String = ""
     var cyclePlacement: Int? = nil
     var nextAffiliation: String = ""
+    var siteScheduleCustomized: Bool = false
+    var siteSeason: String = ""
+    var siteSeasonStart: Date? = nil
+    var siteSeasonEnd: Date? = nil
+    var siteCycleNumber: Int? = nil
+    var sitePeriodKind: SitePeriodKind = .regular
+    var leagueMovement: LeagueMovement = .unchanged
+    var siteQualification: SiteQualification = .none
+    var nextLeagueEffectiveDate: Date? = nil
 }
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonStart, siteSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -423,6 +432,15 @@ extension GiriEvent {
         cycleResult = try c.decodeIfPresent(String.self, forKey: .cycleResult) ?? ""
         cyclePlacement = try c.decodeIfPresent(Int.self, forKey: .cyclePlacement)
         nextAffiliation = try c.decodeIfPresent(String.self, forKey: .nextAffiliation) ?? ""
+        siteScheduleCustomized = try c.decodeIfPresent(Bool.self, forKey: .siteScheduleCustomized) ?? false
+        siteSeason = try c.decodeIfPresent(String.self, forKey: .siteSeason) ?? ""
+        siteSeasonStart = try c.giriDate(forKey: .siteSeasonStart, required: false, calendarOnly: false)
+        siteSeasonEnd = try c.giriDate(forKey: .siteSeasonEnd, required: false, calendarOnly: false)
+        siteCycleNumber = try c.decodeIfPresent(Int.self, forKey: .siteCycleNumber)
+        sitePeriodKind = try c.decodeIfPresent(SitePeriodKind.self, forKey: .sitePeriodKind) ?? .regular
+        leagueMovement = try c.decodeIfPresent(LeagueMovement.self, forKey: .leagueMovement) ?? .unchanged
+        siteQualification = try c.decodeIfPresent(SiteQualification.self, forKey: .siteQualification) ?? .none
+        nextLeagueEffectiveDate = try c.giriDate(forKey: .nextLeagueEffectiveDate, required: false, calendarOnly: false)
 
         try validate()
     }
@@ -501,6 +519,15 @@ extension GiriEvent {
         try c.encode(cycleResult, forKey: .cycleResult)
         try c.encode(cyclePlacement, forKey: .cyclePlacement)
         try c.encode(nextAffiliation, forKey: .nextAffiliation)
+        try c.encode(siteScheduleCustomized, forKey: .siteScheduleCustomized)
+        try c.encode(siteSeason, forKey: .siteSeason)
+        try c.encode(siteSeasonStart.map(GiriDates.timestamp), forKey: .siteSeasonStart)
+        try c.encode(siteSeasonEnd.map(GiriDates.timestamp), forKey: .siteSeasonEnd)
+        try c.encode(siteCycleNumber, forKey: .siteCycleNumber)
+        try c.encode(sitePeriodKind, forKey: .sitePeriodKind)
+        try c.encode(leagueMovement, forKey: .leagueMovement)
+        try c.encode(siteQualification, forKey: .siteQualification)
+        try c.encode(nextLeagueEffectiveDate.map(GiriDates.timestamp), forKey: .nextLeagueEffectiveDate)
 
     }
 }
@@ -521,12 +548,13 @@ struct ThoughtNote: Codable, Equatable, Identifiable {
     var answerRecords: [AnswerRecord] = []
     var isOthersAnswer: Bool = false
     var answerer: String = ""
+    var answerCategory: String? = nil
     var usesAnswerRecords: Bool = false
 }
 
 extension ThoughtNote {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, createdAt, updatedAt, body, eventId, roundId, prompt, answers, used, imageDataBase64, answerRecords, isOthersAnswer, answerer, usesAnswerRecords
+        case id, title, kind, createdAt, updatedAt, body, eventId, roundId, prompt, answers, used, imageDataBase64, answerRecords, isOthersAnswer, answerer, usesAnswerRecords, answerCategory
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -559,6 +587,7 @@ extension ThoughtNote {
         isOthersAnswer = try c.decodeIfPresent(Bool.self, forKey: .isOthersAnswer) ?? false
         answerer = try c.decodeIfPresent(String.self, forKey: .answerer) ?? ""
         usesAnswerRecords = try c.decodeIfPresent(Bool.self, forKey: .usesAnswerRecords) ?? false
+        answerCategory = try c.decodeIfPresent(String.self, forKey: .answerCategory)
 
         try validate()
     }
@@ -593,6 +622,7 @@ extension ThoughtNote {
         try c.encode(isOthersAnswer, forKey: .isOthersAnswer)
         try c.encode(answerer, forKey: .answerer)
         try c.encode(usesAnswerRecords, forKey: .usesAnswerRecords)
+        try c.encode(answerCategory, forKey: .answerCategory)
 
     }
 }
@@ -666,11 +696,12 @@ struct AppPreferences: Codable, Equatable {
     var submissionStartMinute: Int = 0
     var playerIconMode: String = "auto"
     var hasShownInitialResultPrompt: Bool = false
+    var formatOrder: [EventFormat] = EventFormat.allCases
 }
 
 extension AppPreferences {
     private enum CodingKeys: String, CodingKey {
-        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt
+        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -704,6 +735,7 @@ extension AppPreferences {
         playerIconMode = try c.decodeIfPresent(String.self, forKey: .playerIconMode) ?? "auto"
 
         hasShownInitialResultPrompt = try c.decodeIfPresent(Bool.self, forKey: .hasShownInitialResultPrompt) ?? false
+        formatOrder = try c.decodeIfPresent([EventFormat].self, forKey: .formatOrder) ?? EventFormat.allCases
 
         try validate()
     }
@@ -739,6 +771,7 @@ extension AppPreferences {
         try c.encode(playerIconMode, forKey: .playerIconMode)
 
         try c.encode(hasShownInitialResultPrompt, forKey: .hasShownInitialResultPrompt)
+        try c.encode(formatOrder, forKey: .formatOrder)
 
     }
 }
@@ -758,11 +791,14 @@ struct OnlineSite: Codable, Equatable, Identifiable {
     var memo: String = ""
     var hasAffiliations: Bool = false
     var format: EventFormat = .onlineLong
+    var cycleSettings: SiteCycleSettings? = nil
+    var leagueChanges: [SiteLeagueChange] = []
+    var leagueBaseline: String? = nil
 }
 
 extension OnlineSite {
     private enum CodingKeys: String, CodingKey {
-        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format
+        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -793,6 +829,9 @@ extension OnlineSite {
 
         hasAffiliations = try c.decodeIfPresent(Bool.self, forKey: .hasAffiliations) ?? !affiliation.isEmpty
         format = try c.decodeIfPresent(EventFormat.self, forKey: .format) ?? .onlineLong
+        cycleSettings = try c.decodeIfPresent(SiteCycleSettings.self, forKey: .cycleSettings)
+        leagueChanges = try c.decodeIfPresent([SiteLeagueChange].self, forKey: .leagueChanges) ?? []
+        leagueBaseline = try c.decodeIfPresent(String.self, forKey: .leagueBaseline)
 
         try validate()
     }
@@ -825,6 +864,9 @@ extension OnlineSite {
 
         try c.encode(hasAffiliations, forKey: .hasAffiliations)
         try c.encode(format, forKey: .format)
+        try c.encode(cycleSettings, forKey: .cycleSettings)
+        try c.encode(leagueChanges, forKey: .leagueChanges)
+        try c.encode(leagueBaseline, forKey: .leagueBaseline)
 
     }
 }
@@ -1195,6 +1237,7 @@ extension GiriEvent {
         try rounds.forEach { try $0.validate() }; try teams.forEach { try $0.validate() }; try standings.forEach { try $0.validate() }
         try tournamentResult?.validate()
         try positive(cyclePlacement, "順位")
+        try positive(siteCycleNumber, "周期の回数")
         try require(Set(promptedResultKeys).count == promptedResultKeys.count, "結果案内のキーが重複しています。")
     }
     func isHostedBy(_ name: String) -> Bool { !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && playerSearchKey(organizer) == playerSearchKey(name) }
@@ -1229,6 +1272,7 @@ extension GiriEvent {
 
 extension ThoughtNote {
     func validate() throws {
+        try require(answerCategory == nil || ["long", "other"].contains(answerCategory ?? ""), "回答の分類が不正です。")
         try validID(id)
         try uniqueIDs(answerRecords)
         try answerRecords.forEach { try $0.validate() }
@@ -1239,6 +1283,8 @@ extension GiriTeam { func validate() throws { try validID(id) } }
 extension TournamentStanding { func validate() throws { try validID(id); try positive(placement, "順位") } }
 extension OnlineSite {
     func validate() throws {
+        try cycleSettings?.validate()
+        try uniqueIDs(leagueChanges)
         try validID(id)
         try require(!name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (1...7).contains(weekday) && (0...23).contains(startHour) && (0...59).contains(startMinute) && submissionDays >= 1 && votingDays >= 1, "サイト設定が不正です。")
     }

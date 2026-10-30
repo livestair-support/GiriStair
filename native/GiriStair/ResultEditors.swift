@@ -145,6 +145,7 @@ struct GiriRoundEditor: View {
                 for index in rounds.indices where rounds[index].effectiveStageId == round.effectiveStageId { rounds[index].name = round.name }
             }
             event.rounds = rounds
+            if event.onlineSiteId != nil { event.siteScheduleCustomized = true }
             try giriEditorValidate(event)
             try store.saveEvent(event)
             playLiveStairSaveFeedback()
@@ -588,6 +589,7 @@ struct GiriNextRoundEditor: View {
             }
             rounds.append(round)
             event.rounds = rounds
+            if event.onlineSiteId != nil { event.siteScheduleCustomized = true }
             try giriEditorValidate(event)
             try store.saveEvent(event)
             playLiveStairSaveFeedback()
@@ -596,8 +598,8 @@ struct GiriNextRoundEditor: View {
     }
 }
 
-/// A site's weekly affiliation is a snapshot; the next affiliation updates only
-/// future, unjoined cycles through the store's single durable mutation.
+/// Cycle results retain the league played in and schedule an explicitly
+/// confirmed change. Qualifying for a special period does not change leagues.
 struct GiriCycleResultEditor: View {
     @EnvironmentObject private var store: GiriStore
     @Environment(\.dismiss) private var dismiss
@@ -606,43 +608,41 @@ struct GiriCycleResultEditor: View {
     @State private var placement: Int?
     @State private var affiliation = ""
     @State private var nextAffiliation = ""
+    @State private var movement: LeagueMovement = .unchanged
+    @State private var qualification: SiteQualification = .none
+    @State private var effectiveDate: Date?
+    @State private var manualNextLeague = false
     @State private var loaded = false
     @State private var originalResult = ""
     @State private var originalPlacement: Int?
     @State private var originalAffiliation = ""
     @State private var originalNextAffiliation = ""
+    @State private var originalMovement: LeagueMovement = .unchanged
+    @State private var originalQualification: SiteQualification = .none
+    @State private var originalEffectiveDate: Date?
     @State private var discardQuestion = false
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
     private var site: OnlineSite? { store.onlineSites.first { $0.id == event?.onlineSiteId } }
+    private var leagues: [String] { site?.cycleSettings?.leagues ?? [] }
+    private var hasLeagues: Bool {
+        site?.hasAffiliations == true || !(event?.affiliation.isEmpty ?? true)
+    }
+    private var hasLeagueChange: Bool {
+        movement != .unchanged || (!nextAffiliation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            playerSearchKey(nextAffiliation) != playerSearchKey(affiliation))
+    }
     private var changed: Bool {
-        result != originalResult || placement != originalPlacement || affiliation != originalAffiliation || nextAffiliation != originalNextAffiliation
+        result != originalResult || placement != originalPlacement || affiliation != originalAffiliation ||
+            nextAffiliation != originalNextAffiliation || movement != originalMovement ||
+            qualification != originalQualification || effectiveDate != originalEffectiveDate
     }
 
     var body: some View {
         Form {
-            Section {
-                AppCardSectionTitle(title: "この回の結果", systemImage: "chart.bar", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
-                if let event {
-                    Text(event.title).font(.headline)
-                    if let date = event.participationStartDate { Text(GiriDateText.day(date)).font(.subheadline).foregroundStyle(.secondary) }
-                }
-                GiriIntegerField(title: "順位（任意）", value: $placement, suffix: "位")
-                TextField("結果・メモ", text: $result, axis: .vertical).lineLimit(3...10)
-            }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
-            if site?.hasAffiliations == true {
-                Section {
-                    AppCardSectionTitle(title: "所属", systemImage: "person.crop.rectangle", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
-                    HStack {
-                        GiriEditorLabel("今回の所属")
-                        TextField("所属", text: $affiliation).multilineTextAlignment(.trailing)
-                    }
-                    HStack {
-                        GiriEditorLabel("次回の所属")
-                        TextField("次回の所属", text: $nextAffiliation).multilineTextAlignment(.trailing)
-                    }
-                }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
-            }
+            resultSection
+            if hasLeagues { leagueSection }
+            qualificationSection
         }
         .appEditorFormStyle()
         .navigationTitle("結果を記録")
@@ -655,18 +655,7 @@ struct GiriCycleResultEditor: View {
             }
             ToolbarItem(placement: .confirmationAction) { Button("保存", action: save).disabled(event == nil || !loaded) }
         }
-        .onAppear {
-            guard !loaded, let event else { return }
-            result = event.cycleResult
-            placement = event.cyclePlacement
-            affiliation = event.affiliation
-            nextAffiliation = event.nextAffiliation.isEmpty ? site?.affiliation ?? "" : event.nextAffiliation
-            originalResult = result
-            originalPlacement = placement
-            originalAffiliation = affiliation
-            originalNextAffiliation = nextAffiliation
-            loaded = true
-        }
+        .onAppear(perform: load)
         .interactiveDismissDisabled(changed)
         .alert("変更を保存せず戻りますか？", isPresented: $discardQuestion) {
             Button("編集を続ける", role: .cancel) {}
@@ -674,17 +663,173 @@ struct GiriCycleResultEditor: View {
         }
     }
 
+    private var resultSection: some View {
+        Section {
+            AppCardSectionTitle(title: "この回の結果", systemImage: "chart.bar", accentColor: AppSectionAccent.ticket)
+                .listRowSeparator(.hidden)
+            if let event {
+                Text(event.title).font(.headline)
+                if !event.siteSeason.isEmpty { resultValue("シーズン", event.siteSeason) }
+                if event.sitePeriodKind != .regular {
+                    resultValue("日程", event.sitePeriodKind.title)
+                } else if let number = event.siteCycleNumber {
+                    resultValue("対象の回", "第\(number)回")
+                }
+                if let date = event.participationStartDate {
+                    Text(GiriDateText.day(date)).font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            GiriIntegerField(title: "順位（任意）", value: $placement, suffix: "位")
+            TextField("結果・メモ", text: $result, axis: .vertical).lineLimit(3...10)
+        }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
+    private var leagueSection: some View {
+        Section {
+            AppCardSectionTitle(title: "リーグの結果", systemImage: "person.crop.rectangle", accentColor: AppSectionAccent.artist)
+                .listRowSeparator(.hidden)
+            HStack {
+                GiriEditorLabel("今回のリーグ")
+                TextField("リーグ", text: Binding(get: { affiliation }, set: { value in
+                    let previous = affiliation
+                    affiliation = value
+                    if movement != .unchanged { applyMovement(movement) }
+                    else if playerSearchKey(nextAffiliation) == playerSearchKey(previous) {
+                        nextAffiliation = value
+                        effectiveDate = nil
+                    }
+                })).multilineTextAlignment(.trailing)
+            }
+            Picker("昇降格", selection: Binding(get: { movement }, set: applyMovement)) {
+                ForEach(LeagueMovement.allCases) { value in Text(value.title).tag(value) }
+            }.pickerStyle(.menu).tint(.primary)
+            if !leagues.isEmpty && !manualNextLeague {
+                Picker("変更後のリーグ", selection: nextLeagueBinding) {
+                    ForEach(leagueChoices, id: \.self) { name in Text(name).tag(name) }
+                }.pickerStyle(.menu).tint(.primary)
+            } else {
+                HStack {
+                    GiriEditorLabel("変更後のリーグ")
+                    TextField("リーグ", text: nextLeagueBinding).multilineTextAlignment(.trailing)
+                }
+            }
+            if !leagues.isEmpty {
+                Toggle("変更後のリーグを手入力", isOn: $manualNextLeague).tint(AppSectionAccent.artist)
+            }
+            if hasLeagueChange {
+                OptionalDateRow(title: "反映する日時", selection: $effectiveDate)
+                if site?.cycleSettings?.leagueChangesPerSeason == true {
+                    Text("次のシーズンから変更する日時を確認できます。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+    }
+
+    private var qualificationSection: some View {
+        Section {
+            AppCardSectionTitle(title: "特別戦への出場", systemImage: "flag.checkered", accentColor: AppSectionAccent.ticket)
+                .listRowSeparator(.hidden)
+            Picker("出場", selection: $qualification) {
+                ForEach(SiteQualification.allCases) { value in Text(value.title).tag(value) }
+            }.pickerStyle(.menu).tint(.primary)
+            if qualification != .none {
+                Text("出場後の昇降格は、試合結果が出てから記録します。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
+    private var leagueChoices: [String] {
+        var values = leagues
+        for value in [affiliation, nextAffiliation] where !value.isEmpty && !values.contains(value) {
+            values.append(value)
+        }
+        return values.isEmpty ? [""] : values
+    }
+
+    private var nextLeagueBinding: Binding<String> {
+        Binding(get: { nextAffiliation }, set: { value in
+            nextAffiliation = value
+            if hasLeagueChange { fillEffectiveDate() }
+            else { effectiveDate = nil }
+        })
+    }
+
+    private func resultValue(_ title: String, _ value: String) -> some View {
+        HStack {
+            GiriEditorLabel(title)
+            Spacer(minLength: 8)
+            Text(value).font(.body.weight(.semibold)).multilineTextAlignment(.trailing)
+        }
+    }
+
+    private func applyMovement(_ value: LeagueMovement) {
+        movement = value
+        if value == .unchanged {
+            nextAffiliation = affiliation
+            effectiveDate = nil
+            manualNextLeague = !leagues.contains(affiliation)
+        } else {
+            let suggestion = site.flatMap { siteLeagueAfterMovement($0, from: affiliation, movement: value) }
+            nextAffiliation = suggestion ?? ""
+            manualNextLeague = suggestion == nil
+            fillEffectiveDate()
+        }
+    }
+
+    private func fillEffectiveDate() {
+        guard effectiveDate == nil, let event else { return }
+        if let site { effectiveDate = siteLeagueEffectiveDate(site, after: event) }
+        else { effectiveDate = event.participationEndDate ?? Date() }
+    }
+
+    private func load() {
+        guard !loaded, let event else { return }
+        result = event.cycleResult
+        placement = event.cyclePlacement
+        affiliation = event.affiliation
+        nextAffiliation = event.nextAffiliation.isEmpty ? event.affiliation : event.nextAffiliation
+        movement = event.leagueMovement
+        qualification = event.siteQualification
+        effectiveDate = event.nextLeagueEffectiveDate
+        if hasLeagueChange { fillEffectiveDate() }
+        manualNextLeague = !leagues.contains(nextAffiliation)
+        originalResult = result
+        originalPlacement = placement
+        originalAffiliation = affiliation
+        originalNextAffiliation = nextAffiliation
+        originalMovement = movement
+        originalQualification = qualification
+        originalEffectiveDate = effectiveDate
+        loaded = true
+    }
+
     private func save() {
         guard var event else { return }
         do {
-            if let placement, placement < 1 { throw GiriEditorValidationError.schedule("順位は1以上で入力してください。") }
+            if let placement, placement < 1 {
+                throw GiriEditorValidationError.schedule("順位は1以上で入力してください。")
+            }
+            let nextLeague = nextAffiliation.trimmingCharacters(in: .whitespacesAndNewlines)
+            if hasLeagues && hasLeagueChange {
+                guard !nextLeague.isEmpty, playerSearchKey(nextLeague) != playerSearchKey(affiliation) else {
+                    throw GiriEditorValidationError.schedule("昇降格後のリーグを入力してください。")
+                }
+                guard effectiveDate != nil else {
+                    throw GiriEditorValidationError.schedule("リーグの変更を反映する日時を入力してください。")
+                }
+            }
             event.cycleResult = result.trimmingCharacters(in: .whitespacesAndNewlines)
             event.cyclePlacement = placement
+            event.siteQualification = qualification
             let next: String?
-            if site?.hasAffiliations == true {
+            if hasLeagues {
                 event.affiliation = affiliation.trimmingCharacters(in: .whitespacesAndNewlines)
-                event.nextAffiliation = nextAffiliation.trimmingCharacters(in: .whitespacesAndNewlines)
-                next = event.nextAffiliation
+                event.leagueMovement = movement
+                event.nextAffiliation = hasLeagueChange ? nextLeague : ""
+                event.nextLeagueEffectiveDate = hasLeagueChange ? effectiveDate : nil
+                next = hasLeagueChange ? nextLeague : nil
             } else { next = nil }
             try store.saveCycleResult(event: event, nextAffiliation: next)
             playLiveStairSaveFeedback()

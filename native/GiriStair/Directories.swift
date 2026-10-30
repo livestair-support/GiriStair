@@ -323,7 +323,7 @@ struct GiriSitesView: View {
     }
 }
 
-/// Weekly snapshots belong to each joined cycle, not to today's site settings.
+/// Site settings and each joined cycle keep independent historical snapshots.
 struct GiriSiteDetail: View {
     @EnvironmentObject private var store: GiriStore
     @EnvironmentObject private var navigation: GiriNavigation
@@ -337,56 +337,66 @@ struct GiriSiteDetail: View {
         store.events.filter { $0.onlineSiteId == siteID && $0.isActualParticipant }
             .sorted { ($0.participationStartDate ?? $0.createdAt) > ($1.participationStartDate ?? $1.createdAt) }
     }
+    private var seasons: [String] {
+        var seen = Set<String>()
+        return history.map(\.siteSeason).filter { seen.insert($0).inserted }
+    }
 
     var body: some View {
         Group {
             if let site {
                 Form {
-                    siteSection(site)
                     Section {
-                        AppCardSectionTitle(title: "週ごとの所属・結果", systemImage: "clock", accentColor: AppSectionAccent.artist)
-                            .listRowSeparator(.hidden)
-                        if history.isEmpty {
-                            Text("参加した回の履歴がありません").foregroundStyle(.secondary)
-                        }
-                        ForEach(history) { event in
-                            Button { navigation.openThoughts(eventID: event.id) } label: { historyRow(event) }
-                                .buttonStyle(.plain)
-                                .contextMenu {
-                                    if event.hasEnded() {
-                                        Button("結果を記録", systemImage: "square.and.pencil") { resultEvent = event }
-                                    }
-                                }
-                        }
+                        AppCardSectionTitle(title: "現在の状況", systemImage: "globe", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
+                        GiriSitePeriodActions(site: site)
                     }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
-                    Section {
-                        Button { navigation.openThoughts(siteID: siteID) } label: {
-                            Label("このサイトのお題・回答を開く", systemImage: "text.bubble")
-                        }
-                    }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+                    siteSection(site)
+                    if site.hasAffiliations && !site.leagueChanges.isEmpty {
+                        Section {
+                            AppCardSectionTitle(title: "シーズン・リーグの履歴", systemImage: "list.number", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
+                            ForEach(site.leagueChanges.sorted { $0.effectiveFrom > $1.effectiveFrom }) { change in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(change.seasonName.isEmpty ? "リーグ変更" : change.seasonName).font(.subheadline.weight(.semibold))
+                                        Spacer(minLength: 8)
+                                        Text(change.toLeague).font(.body.weight(.semibold))
+                                    }
+                                    Text((change.effectiveFrom > Date() ? "反映予定　" : "適用　") + GiriDateText.dateTime(change.effectiveFrom))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+                    }
+                    if history.isEmpty {
+                        Section { Text("参加した回の履歴がありません").foregroundStyle(.secondary) }
+                            .appSectionCardStyle(accentColor: AppSectionAccent.artist)
+                    }
+                    ForEach(seasons, id: \.self) { season in
+                        Section {
+                            AppCardSectionTitle(title: season.isEmpty ? "参加履歴" : season, systemImage: "clock", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
+                            ForEach(history.filter { $0.siteSeason == season }) { event in
+                                Button { navigation.openThoughts(eventID: event.id) } label: { historyRow(event) }
+                                    .buttonStyle(.plain)
+                                    .contextMenu {
+                                        if event.hasEnded() { Button("結果を記録", systemImage: "square.and.pencil") { resultEvent = event } }
+                                    }
+                            }
+                        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+                    }
                 }.appEditorFormStyle()
-            } else {
-                CenteredEmptyMessage(systemImage: "globe", title: "サイトが見つかりません")
-            }
+            } else { CenteredEmptyMessage(systemImage: "globe", title: "サイトが見つかりません") }
         }
         .toolbar(.visible, for: .navigationBar)
-        .navigationTitle(site?.name ?? "サイト")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle(site?.name ?? "サイト").navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { if let site { NavigationLink("編集") { GiriSiteEditor(site: site) } } }
             ToolbarItem(placement: .topBarTrailing) {
-                if let site { NavigationLink("編集") { GiriSiteEditor(site: site) } }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("サイトの登録を削除", systemImage: "trash", role: .destructive) { deleting = true }
-                } label: { Image(systemName: "ellipsis") }
-                .accessibilityLabel("サイトの操作")
+                Menu { Button("サイトの登録を削除", systemImage: "trash", role: .destructive) { deleting = true } }
+                    label: { Image(systemName: "ellipsis") }.accessibilityLabel("サイトの操作")
             }
         }
         .confirmationDialog("サイトを削除しますか？過去の参加記録とメモは残ります。", isPresented: $deleting, titleVisibility: .visible) {
-            Button("削除", role: .destructive) {
-                store.run { try store.deleteOnlineSite(siteID); playLiveStairDeleteFeedback(); dismiss() }
-            }
+            Button("削除", role: .destructive) { store.run { try store.deleteOnlineSite(siteID); playLiveStairDeleteFeedback(); dismiss() } }
             Button("キャンセル", role: .cancel) {}
         }
         .sheet(item: $resultEvent) { event in NavigationStack { GiriCycleResultEditor(eventID: event.id) } }
@@ -394,16 +404,14 @@ struct GiriSiteDetail: View {
 
     private func siteSection(_ site: OnlineSite) -> some View {
         Section {
-            AppCardSectionTitle(title: "サイト", systemImage: "globe", accentColor: AppSectionAccent.artist)
-                .listRowSeparator(.hidden)
+            AppCardSectionTitle(title: "サイト", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
             GiriProfileInfoRow(title: "形式", value: site.format.title)
             if let url = giriWebURL(site.url) { Link("サイトを開く", destination: url) }
-            Toggle("所属がある", isOn: Binding(get: { self.site?.hasAffiliations ?? site.hasAffiliations }, set: { enabled in
-                guard var current = self.site else { return }
-                current.hasAffiliations = enabled
-                store.run { try store.saveOnlineSite(current) }
-            })).tint(AppSectionAccent.artist)
-            if site.hasAffiliations { GiriProfileInfoRow(title: "次の回の所属", value: site.affiliation) }
+            if site.hasAffiliations { GiriProfileInfoRow(title: "現在のリーグ", value: siteLeague(site)) }
+            if let settings = site.cycleSettings {
+                GiriProfileInfoRow(title: "繰り返し", value: settings.pattern.title)
+                if !settings.seasonName.isEmpty { GiriProfileInfoRow(title: "シーズン", value: settings.seasonName) }
+            }
             if !site.block.isEmpty { GiriProfileInfoRow(title: "ブロック", value: site.block) }
             if !site.memo.isEmpty { Text(site.memo).textSelection(.enabled) }
         }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
@@ -412,17 +420,19 @@ struct GiriSiteDetail: View {
     private func historyRow(_ event: GiriEvent) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline) {
-                Text(GiriDateText.day(event.participationStartDate ?? event.eventDate))
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                Text(event.siteCycleNumber.map { "第\($0)回" } ?? GiriDateText.day(event.participationStartDate ?? event.eventDate))
+                    .font(.headline).foregroundStyle(.primary)
                 Spacer(minLength: 8)
                 Text(event.participationState().title).font(.caption).foregroundStyle(.secondary)
             }
-            if !event.affiliation.isEmpty {
-                Text("所属　" + event.affiliation).font(.subheadline).foregroundStyle(.secondary)
-            }
-            if let rank = event.cyclePlacement {
-                Text("\(rank)位").font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.ticket)
-            }
+            if event.siteCycleNumber != nil { Text(GiriDateText.day(event.participationStartDate)).font(.caption).foregroundStyle(.secondary) }
+            if !event.affiliation.isEmpty { Text(event.affiliation).font(.subheadline).foregroundStyle(.secondary) }
+            if event.sitePeriodKind != .regular { Text(event.sitePeriodKind.title).font(.subheadline).foregroundStyle(.secondary) }
+            HStack(spacing: 8) {
+                if let rank = event.cyclePlacement { Text("\(rank)位") }
+                if event.leagueMovement != .unchanged { Text(event.leagueMovement.title) }
+                if event.siteQualification != .none { Text(event.siteQualification.title) }
+            }.font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.ticket)
             if !event.cycleResult.isEmpty { Text(event.cycleResult).font(.subheadline).foregroundStyle(.primary) }
             HStack(spacing: 4) {
                 Image(systemName: "text.bubble")
@@ -430,9 +440,7 @@ struct GiriSiteDetail: View {
                 Spacer()
                 Image(systemName: "chevron.right")
             }.font(.caption).foregroundStyle(AppSectionAccent.memo)
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
+        }.padding(.vertical, 4).contentShape(Rectangle())
     }
 }
 
@@ -440,11 +448,17 @@ struct GiriSiteEditor: View {
     @EnvironmentObject private var store: GiriStore
     @Environment(\.dismiss) private var dismiss
     @State private var draft: OnlineSite
-    @State private var deleting = false
+    @State private var original: OnlineSite
     @State private var initialized = false
+    @State private var discard = false
     private var isNew: Bool
     private var onSaved: ((OnlineSite) -> Void)?
-    init(site: OnlineSite? = nil, onSaved: ((OnlineSite) -> Void)? = nil) { _draft = State(initialValue: site ?? OnlineSite()); isNew = site == nil; self.onSaved = onSaved }
+    init(site: OnlineSite? = nil, onSaved: ((OnlineSite) -> Void)? = nil) {
+        let value = site ?? OnlineSite()
+        _draft = State(initialValue: value); _original = State(initialValue: value)
+        isNew = site == nil; self.onSaved = onSaved
+    }
+    private var changed: Bool { draft != original }
     var body: some View {
         Form {
             Section {
@@ -454,44 +468,43 @@ struct GiriSiteEditor: View {
                 Picker("形式", selection: $draft.format) {
                     ForEach(EventFormat.allCases.filter { $0.hasOnlineRounds }) { format in Text(format.title).tag(format) }
                 }.pickerStyle(.menu).tint(.primary)
-                Picker("開催", selection: $draft.recurrence) { Text("不定期").tag(SiteRecurrence.irregular); Text("毎週").tag(SiteRecurrence.weekly) }.pickerStyle(.menu).tint(.primary)
-                if draft.recurrence == .weekly {
-                    Picker("投稿開始の曜日", selection: $draft.weekday) { ForEach(1...7, id: \.self) { day in Text(["月", "火", "水", "木", "金", "土", "日"][day - 1] + "曜日").tag(day) } }.pickerStyle(.menu).tint(.primary)
-                }
-                OptionalDateRow(title: "投稿開始の時刻", selection: startTime, components: .hourAndMinute)
-                Stepper("投稿期間　\(draft.submissionDays)日", value: $draft.submissionDays, in: 1...365)
-                Stepper("投票期間　\(draft.votingDays)日", value: $draft.votingDays, in: 1...365)
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
-            Section {
-                AppCardSectionTitle(title: "自分の所属・ブロック", systemImage: "person", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
-                Toggle("所属がある", isOn: $draft.hasAffiliations).tint(AppSectionAccent.memo)
-                if draft.hasAffiliations { TextField("次の参加回の所属（一部など）", text: $draft.affiliation) }
-                TextField("ブロック", text: $draft.block)
-                TextField("メモ", text: $draft.memo, axis: .vertical).lineLimit(3...8)
-            }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
-            if !isNew { Button("サイトの登録を削除", role: .destructive) { deleting = true } }
-        }.appEditorFormStyle().toolbar(.visible, for: .navigationBar).navigationTitle(isNew ? "サイトを登録" : "サイトを編集").navigationBarTitleDisplayMode(.inline)
-            .onAppear {
-                guard !initialized else { return }
-                initialized = true
-                if isNew {
-                    draft.startHour = store.preferences.submissionStartHour
-                    draft.startMinute = store.preferences.submissionStartMinute
-                    draft.submissionDays = store.preferences.submissionDays
-                    draft.votingDays = store.preferences.votingDays
-                }
+            if initialized { GiriSiteCycleSettingsForm(site: $draft, isNew: isNew) }
+            Section { TextField("メモ", text: $draft.memo, axis: .vertical).lineLimit(3...8) }
+                .appSectionCardStyle(accentColor: AppSectionAccent.memo)
+        }
+        .appEditorFormStyle().toolbar(.visible, for: .navigationBar)
+        .navigationTitle(isNew ? "サイトを登録" : "サイトを編集").navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(changed)
+        .interactiveDismissDisabled(changed)
+        .onAppear {
+            guard !initialized else { return }
+            if isNew {
+                draft.startHour = store.preferences.submissionStartHour
+                draft.startMinute = store.preferences.submissionStartMinute
+                draft.submissionDays = store.preferences.submissionDays
+                draft.votingDays = store.preferences.votingDays
             }
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("保存") { store.run { try store.saveOnlineSite(draft); onSaved?(draft); playLiveStairSaveFeedback(); dismiss() } }.disabled(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) } }
-            .confirmationDialog("サイトを削除しますか？過去の参加記録とメモは残ります。", isPresented: $deleting, titleVisibility: .visible) {
-                Button("削除", role: .destructive) { store.run { try store.deleteOnlineSite(draft.id); playLiveStairDeleteFeedback(); dismiss() } }
-            }
+            if draft.hasAffiliations { draft.affiliation = siteLeague(draft) }
+            original = draft
+            initialized = true
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) { if changed { Button { discard = true } label: { Image(systemName: "chevron.left") }.accessibilityLabel("戻る") } }
+            ToolbarItem(placement: .confirmationAction) { Button("保存", action: save).disabled(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+        }
+        .confirmationDialog("変更を保存せず戻りますか？", isPresented: $discard, titleVisibility: .visible) {
+            Button("変更を破棄", role: .destructive) { dismiss() }
+        }
     }
-    private var startTime: Binding<Date?> {
-        Binding(get: { Calendar.current.date(from: DateComponents(year: 2000, month: 1, day: 1, hour: draft.startHour, minute: draft.startMinute)) }, set: { date in
-            guard let date else { return }
-            draft.startHour = Calendar.current.component(.hour, from: date)
-            draft.startMinute = Calendar.current.component(.minute, from: date)
-        })
+    private func save() {
+        var value = draft
+        value.name = value.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if var settings = value.cycleSettings {
+            settings.leagues = settings.leagues.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            value.cycleSettings = settings
+        }
+        store.run { try store.saveOnlineSite(value); onSaved?(value); playLiveStairSaveFeedback(); dismiss() }
     }
 }
 

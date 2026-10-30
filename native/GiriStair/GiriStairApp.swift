@@ -95,7 +95,7 @@ private struct GiriRootView: View {
             NavigationStack { GiriResultsView() }
                 .tabItem { Label("戦績", systemImage: "trophy.fill") }.tag(2)
             GiriThinkingView()
-                .tabItem { Label("思考", systemImage: "checklist") }.tag(3)
+                .tabItem { Label("お題/回答", systemImage: "checklist") }.tag(3)
             NavigationStack { GiriSettingsView() }
                 .tabItem { Label("設定", systemImage: "gearshape.fill") }.tag(4)
         }

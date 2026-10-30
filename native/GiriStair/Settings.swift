@@ -30,6 +30,7 @@ struct GiriSettingsView: View {
                 NavigationLink("ネット大喜利サイト一覧") { GiriSitesView() }
             }
             settingSection("defaults", "デフォルト設定", "slider.horizontal.3", AppSectionAccent.live) {
+                NavigationLink("形式タブの並び順") { GiriFormatOrderEditor() }
                 Picker("テーマ", selection: preference(\.theme)) {
                     Text("端末に合わせる").tag("system")
                     Text("ライト").tag("light")
@@ -70,10 +71,9 @@ struct GiriSettingsView: View {
                 }
             }
             settingSection("support", "サポート", "questionmark.circle", AppSectionAccent.venue) {
-                NavigationLink("はじめにガイド") { GiriGuideView() }
-                Link("使い方ガイド", destination: URL(string: "https://github.com/livestair-support/GiriStair/blob/main/docs/SPEC.md")!)
-                NavigationLink("プライバシーについて") { GiriPrivacyView() }
-                Link("サポート・お問い合わせ", destination: URL(string: "https://github.com/livestair-support/GiriStair/issues")!)
+                settingsValueRow(title: "使い方ガイド", value: "準備中")
+                settingsValueRow(title: "利用規約・プライバシーポリシー", value: "準備中")
+                settingsValueRow(title: "サポート・お問い合わせ", value: "準備中")
                 settingsValueRow(title: "バージョン", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
             }
         }
@@ -232,24 +232,6 @@ struct GiriSelfProfileEditor: View {
     }
 }
 
-private struct GiriGuideView: View {
-    var body: some View {
-        Form {
-            guide("予定と参加記録", "plus.circle", "登録から形式を選び、参加する会を保存します。参加予定・参加中・参加済は日程から自動表示し、終了後に参加回数へ反映します。「興味あり」は参加・戦績の集計に含めません。")
-            guide("継続するネット大喜利", "globe", "長考のサイトを一度登録すると、一覧から今週・来週の回を開けます。所属や結果は週ごとの履歴に残り、お題と回答は思考タブで記録します。")
-            guide("大会の結果", "trophy", "詳細画面で段階ごとの通過・敗退や得点、自分の最終結果と大会全体の優勝者を分けて保存します。敗退後も必要な投票は残せます。")
-            guide("思考", "lightbulb", "回答モードとお題モードを切り替えます。提出した回答は複数選択でき、他の人の回答と回答者も記録できます。画像お題や使用済みの管理にも対応します。")
-            guide("バックアップ", "externaldrive", "設定のデータ管理からJSONを書き出し、「ファイルに保存」を選びます。復元時は現在の記録を置き換えるため、必要な記録を先に保存してください。")
-        }.appEditorFormStyle().toolbar(.visible, for: .navigationBar).navigationTitle("はじめにガイド").navigationBarTitleDisplayMode(.inline)
-    }
-    private func guide(_ title: String, _ icon: String, _ text: String) -> some View {
-        Section {
-            AppCardSectionTitle(title: title, systemImage: icon, accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
-            Text(text).font(.body)
-        }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
-    }
-}
-
 struct GiriShareSheet: UIViewControllerRepresentable {
     var items: [Any]
     var completion: ((Bool) -> Void)?
@@ -262,21 +244,31 @@ struct GiriShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
-private struct GiriPrivacyView: View {
+/// Standard iOS reordering; the first format is the default on list/results.
+private struct GiriFormatOrderEditor: View {
+    @EnvironmentObject private var store: GiriStore
+
     var body: some View {
-        Form {
+        List {
             Section {
-                AppCardSectionTitle(title: "記録の保存", systemImage: "externaldrive", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
-                Text("参加記録、思考メモ、プレイヤーと設定は、この端末のアプリ専用領域に保存します。アカウントの作成や自動クラウド同期はありません。")
-            }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
-            Section {
-                AppCardSectionTitle(title: "共有とバックアップ", systemImage: "square.and.arrow.up", accentColor: AppSectionAccent.live).listRowSeparator(.hidden)
-                Text("共有・バックアップを選んだときは、選択したアプリや保存先へデータを渡します。参加者名やメモなど、画像・ファイルに含まれる内容を確認してから共有してください。")
-            }.appSectionCardStyle(accentColor: AppSectionAccent.live)
-            Section {
-                AppCardSectionTitle(title: "画像の読み取りとマップ", systemImage: "viewfinder", accentColor: AppSectionAccent.venue).listRowSeparator(.hidden)
-                Text("参加者の画像は端末上で文字を認識し、確認して追加するまで記録に保存しません。マップの検索・表示にはAppleの地図サービスへ検索語などを送信します。")
-            }.appSectionCardStyle(accentColor: AppSectionAccent.venue)
-        }.appEditorFormStyle().toolbar(.visible, for: .navigationBar).navigationTitle("プライバシーについて").navigationBarTitleDisplayMode(.inline)
+                ForEach(store.preferences.effectiveFormatOrder) { format in
+                    Text(format.title).font(.body)
+                }
+                .onMove(perform: move)
+            }
+        }
+        .appIndexListStyle()
+        .environment(\.editMode, .constant(.active))
+        .toolbar(.visible, for: .navigationBar)
+        .navigationTitle("形式タブの並び順")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func move(from source: IndexSet, to destination: Int) {
+        var preferences = store.preferences
+        var order = preferences.effectiveFormatOrder
+        order.move(fromOffsets: source, toOffset: destination)
+        preferences.formatOrder = order
+        store.run { try store.savePreferences(preferences) }
     }
 }

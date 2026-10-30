@@ -3,6 +3,7 @@ import SwiftUI
 struct GiriResultsView: View {
     @EnvironmentObject private var store: GiriStore
     @State private var selectedFormat: EventFormat = .live
+    @State private var didInitializeFormat = false
     @State private var showsUnentered = false
     @State private var year = "all"
     @State private var collapsed = false
@@ -63,6 +64,14 @@ struct GiriResultsView: View {
         .background(appBackgroundColor)
         .safeAreaInset(edge: .top, spacing: 0) { AppPageHeader(title: "戦績", systemImage: "trophy", accentColor: accent) }
         .toolbar(.hidden, for: .navigationBar)
+        .onAppear {
+            guard !didInitializeFormat else { return }
+            selectedFormat = store.preferences.effectiveFormatOrder.first ?? .live
+            didInitializeFormat = true
+        }
+        .onChange(of: store.preferences.effectiveFormatOrder) { previous, next in
+            if selectedFormat == previous.first { selectedFormat = next.first ?? .live }
+        }
         .onChange(of: selectedFormat) { _, _ in year = "all" }
     }
     @ViewBuilder private func resultRow(_ event: GiriEvent) -> some View {
@@ -83,23 +92,15 @@ struct GiriResultsView: View {
                 Text("\(filtered.count)件").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 AppHeaderCollapseButton(isCollapsed: $collapsed, tintColor: accent)
             }
-            // Full-width menu values retain body17 instead of compressing a
-            // long format name into the former half-width year/format pair.
-            Picker(selection: $selectedFormat) {
-                ForEach(EventFormat.allCases) { Text($0.title).font(.body.weight(.semibold)).tag($0) }
-            } label: { Text("形式").font(.subheadline).foregroundStyle(.secondary) }
-            .font(.system(size: appFontSize(17), weight: .semibold)).pickerStyle(.menu).tint(.primary)
+            GiriFormatPicker(selection: $selectedFormat, formats: store.preferences.effectiveFormatOrder)
             Picker("大会の記録", selection: $showsUnentered) {
                 Text("結果記入済").tag(false)
                 Text("結果未入力").tag(true)
             }.pickerStyle(.segmented).tint(accent)
             if !collapsed {
                 Divider().overlay(appSeparatorColor)
-                Picker(selection: $year) {
-                    Text("全期間").tag("all")
-                    ForEach(years, id: \.self) { Text($0 + "年").tag($0) }
-                } label: { Text("年").font(.subheadline).foregroundStyle(.secondary) }
-                .font(.system(size: appFontSize(17), weight: .semibold)).pickerStyle(.menu).tint(.primary)
+                GiriListFilterMenu(title: "年", selection: $year,
+                    options: [("all", "全期間")] + years.map { ($0, $0 + "年") })
             }
         }
         .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 10)

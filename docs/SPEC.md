@@ -2,6 +2,10 @@
 
 iPhone版0.4.0からSwift／SwiftUIへ移行します。既存の下記機能と保存JSONを維持します。Android版はFlutterを継続。移行の範囲と保存互換性は[NATIVE_MIGRATION.md](NATIVE_MIGRATION.md)を参照してください。
 
+## 0.6の周期とお題/回答
+
+最新仕様は[SITE_CYCLES.md](SITE_CYCLES.md)を参照。通常サイトは投稿・投票の日数とお題間隔を独立させ、シーズン・リーグ・特殊日程を記録します。形式表示はスプシ系、タブ表示はお題/回答です。
+
 ## 0.5の機能変更
 
 4形式・参加状況・回ごとの結果・思考の新しい仕様は[FEATURE_REVISION_05.md](FEATURE_REVISION_05.md)を優先します。旧保存キーとschema1は継続します。
