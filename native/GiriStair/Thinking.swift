@@ -67,6 +67,9 @@ struct GiriThinkingView: View {
                     .accessibilityLabel(promptMode ? "回答モードに切り替える" : "お題モードに切り替える")
                     Button { creatingKind = promptMode ? .prompts : .answers } label: { headerIcon("plus") }
                         .accessibilityLabel(promptMode ? "お題を作る" : "回答メモを作る")
+                        .contextMenu {
+                            Button("自由メモを作る", systemImage: "square.and.pencil") { creatingKind = .free }
+                        }
                 }
                 .buttonStyle(.plain)
                 .padding(.trailing, 18)
