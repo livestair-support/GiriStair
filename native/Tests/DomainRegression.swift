@@ -15,6 +15,27 @@ struct DomainRegression {
             catch { passed += 1; return }
             throw GiriDataError.invalid("Regression accepted invalid input: \(message)")
         }
+        // UI dates keep LiveStair's Gregorian Japanese roles and local day.
+        do {
+        let originalTimeZone = NSTimeZone.default
+        guard let tokyo = TimeZone(identifier: "Asia/Tokyo") else { throw GiriDataError.invalid("Missing Japan test timezone") }
+        NSTimeZone.default = tokyo
+        defer { NSTimeZone.default = originalTimeZone }
+        let cultureDay = Date(timeIntervalSince1970: 1_793_664_300) // 2026-11-03 09:05 JST
+        try check(GiriDateText.day(cultureDay) == "2026年11月3日(火祝)", "full date and holiday badge match LiveStair")
+        try check(GiriDateText.day(cultureDay, compact: true) == "2026/11/3(火祝)", "narrow list dates retain the year")
+        try check(GiriDateText.time(cultureDay) == "9:05", "display hours do not add a leading zero")
+        try check(GiriDateText.dateTime(cultureDay) == "11/3(火) 9:05", "deadline text follows ticket schedule format")
+        try check(GiriDateText.month(cultureDay) == "2026年11月", "month header uses Japanese year and month")
+        try check(GiriDateText.calendarDay(cultureDay) == "11月3日(火祝)", "selected calendar day omits the year")
+        try check(GiriDateText.timeRange(nil, cultureDay) == "9:05" && GiriDateText.timeRange(nil, nil) == "--:--", "missing times never become fictitious midnight or duplicated placeholders")
+        try check(GiriDateText.day(nil) == "日付未定" && GiriDateText.dateTime(nil) == "未定", "undated records keep their placeholder")
+        let yearBoundary = Date(timeIntervalSince1970: 1_798_729_500) // 2027-01-01 00:05 JST
+        try check(GiriDateText.day(yearBoundary) == "2027年1月1日(金祝)", "UTC timestamps display in the local Gregorian day at year rollover")
+        let ordinaryDay = cultureDay.addingTimeInterval(86400)
+        try check(GiriDateText.day(ordinaryDay) == "2026年11月4日(水)", "ordinary weekdays have no holiday marker")
+        }
+
         let legacy = Data(#"""
         {"schemaVersion":1,"events":[{"id":"legacy","title":"旧データ","kind":"online","meetingType":"tournament","createdAt":"2026-10-29T13:00:00.123456Z","participants":["本人","仲間"],"eventDate":"2026-10-30","submissionStart":"2026-10-29T22:00:00.000","submissionEnd":"2026-11-05T22:00:00.000","votingStart":"2026-11-05T22:00:00.000","votingEnd":"2026-11-12T22:00:00.000","resultText":"予選敗退","placement":null}],"notes":[{"id":"legacy-note","title":"考えた回答","kind":"answers","createdAt":"2026-10-29T13:00:00Z","updatedAt":"2026-10-29T13:00:00Z","body":"旧本文を保持","eventId":"legacy"}]}
         """#.utf8)

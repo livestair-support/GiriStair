@@ -686,6 +686,63 @@ extension View {
     }
 }
 
+// EventBasicEditor.swift EventEditorCardSectionModifier and
+// LiveDetailView.swift LiveDetailCardSectionModifier. Editor and detail rows
+// intentionally have different vertical insets, rather than sharing a guessed
+// generic card geometry.
+private struct GiriEventSectionCardModifier: ViewModifier {
+    let accentColor: Color
+    let verticalInset: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .listRowBackground(AppTintedListRowBackground(
+                accentColor: accentColor, lightTintOpacity: 0.065))
+            .listRowSeparatorTint(appSeparatorColor)
+            .listRowInsets(EdgeInsets(top: verticalInset, leading: 16,
+                                     bottom: verticalInset, trailing: 16))
+    }
+}
+
+extension View {
+    func appEventEditorCardStyle(accentColor: Color) -> some View {
+        modifier(GiriEventSectionCardModifier(accentColor: accentColor, verticalInset: 8))
+    }
+
+    func appEventDetailCardStyle(accentColor: Color) -> some View {
+        modifier(GiriEventSectionCardModifier(accentColor: accentColor, verticalInset: 6))
+    }
+}
+
+// EventBasicEditor.swift EventEditorCardTitle. The source editor badge uses
+// 0.12 opacity and a nested 4pt heading/info gap; general section titles use 0.14.
+struct GiriEventCardSectionTitle: View {
+    let title: String
+    let systemImage: String
+    let accentColor: Color
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: systemImage)
+                .font(.system(size: appFontSize(14), weight: .semibold))
+                .foregroundColor(accentColor)
+                .frame(width: 28, height: 28)
+                .background(accentColor.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.system(size: appFontSize(18), weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 1)
+        .textCase(nil)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
 struct AppTintedSurfaceBackground: View {
     let accentColor: Color
     var lightTintOpacity: Double = 0.045
@@ -1380,12 +1437,7 @@ struct OptionalDateRow: View {
     @State private var showingCalendar = false
 
     private var dateTitle: String {
-        guard let selection else { return "未定" }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ja_JP")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.dateFormat = "yyyy年M月d日(E)"
-        return formatter.string(from: selection)
+        selection.map { GiriDateText.day($0) } ?? "未定"
     }
 
     private var calendarSelection: Binding<Date> {
@@ -1402,7 +1454,7 @@ struct OptionalDateRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Text(title)
                 .font(.subheadline.weight(.medium))
                 .foregroundColor(.secondary)
@@ -1414,13 +1466,13 @@ struct OptionalDateRow: View {
                 } label: {
                     HStack(spacing: 10) {
                         Text(dateTitle)
-                            .font(.headline.weight(.bold))
-                            .foregroundColor(.primary)
+                            .font(.body.weight(.semibold))
+                            .foregroundColor(selection.map(liveDateWeekdayColor) ?? .primary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.78)
                         if !components.contains(.hourAndMinute) {
                             Image(systemName: "chevron.right")
-                                .font(.subheadline)
+                                .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -1441,12 +1493,63 @@ struct OptionalDateRow: View {
                     .accessibilityLabel(title)
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if components == .date { showingCalendar = true }
+        }
         .contextMenu {
             if selection != nil {
                 Button("未定に戻す", systemImage: "arrow.counterclockwise") {
                     selection = nil
                 }
             }
+        }
+    }
+}
+
+// EventBasicEditor.swift EventEditorTimeRow / EventEditorTimePair, with the
+// GiriStair start/end labels and the existing five-minute optional picker.
+struct GiriEventTimeRow: View {
+    @Binding var startsAt: Date?
+    @Binding var endsAt: Date?
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 0) {
+            timePair("開始", selection: $startsAt)
+                .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 4)
+            timePair("終了", selection: $endsAt)
+                .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 4)
+            Divider()
+                .overlay(appSeparatorColor)
+                .frame(height: 34)
+                .padding(.horizontal, 6)
+            Button {
+                startsAt = nil
+                endsAt = nil
+            } label: {
+                VStack(spacing: 3) {
+                    Image(systemName: "arrow.counterclockwise").font(.footnote)
+                    Text("未定").font(.caption)
+                }
+                .foregroundColor(accentActionColor)
+                .frame(width: 36)
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func timePair(_ title: String, selection: Binding<Date?>) -> some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .foregroundColor(.secondary)
+                .fixedSize()
+            OptionalCompactTimePicker(selection: selection)
+                .frame(width: 70, height: 32)
+                .accessibilityLabel(title)
         }
     }
 }
@@ -1492,7 +1595,9 @@ private struct OptionalCompactTimePicker: UIViewRepresentable {
             let label = UILabel()
             label.text = "--:--"
             label.textAlignment = .center
-            label.font = .preferredFont(forTextStyle: .body)
+            label.font = .monospacedDigitSystemFont(
+                ofSize: UIFont.preferredFont(forTextStyle: .body).pointSize,
+                weight: .regular)
             label.textColor = .label
             // The optional placeholder must fully cover the compact picker's
             // provisional date, which has not been committed to the document.
@@ -1787,11 +1892,7 @@ struct EventDateCalendarPickerView: View {
     }
     
     private func monthTitle(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.locale = Locale(identifier: "ja_JP")
-        formatter.dateFormat = "yyyy年M月"
-        return formatter.string(from: date)
+        GiriDateText.month(date)
     }
     
     private func moveMonth(_ value: Int) {

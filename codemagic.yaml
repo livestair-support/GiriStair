@@ -19,7 +19,7 @@ workflows:
       - name: 保存互換性と日程のSwiftテスト
         script: |
           set -euo pipefail
-          swiftc -parse-as-library native/GiriStair/Models.swift native/GiriStair/Scheduling.swift native/GiriStair/Store.swift native/Tests/DomainRegression.swift -o build/native/domain-tests
+          swiftc -parse-as-library native/GiriStair/DatePresentation.swift native/GiriStair/JapaneseHolidays.swift native/GiriStair/Models.swift native/GiriStair/Scheduling.swift native/GiriStair/Store.swift native/Tests/DomainRegression.swift -o build/native/domain-tests
           build/native/domain-tests
           python3 -m unittest discover -s .ci -p 'test_native*.py'
       - name: SwiftUI iPhoneアプリをビルド（署名なし）
@@ -75,7 +75,7 @@ workflows:
       - name: 保存互換性と日程のSwiftテスト
         script: |
           set -euo pipefail
-          swiftc -parse-as-library native/GiriStair/Models.swift native/GiriStair/Scheduling.swift native/GiriStair/Store.swift native/Tests/DomainRegression.swift -o build/native/domain-tests
+          swiftc -parse-as-library native/GiriStair/DatePresentation.swift native/GiriStair/JapaneseHolidays.swift native/GiriStair/Models.swift native/GiriStair/Scheduling.swift native/GiriStair/Store.swift native/Tests/DomainRegression.swift -o build/native/domain-tests
           build/native/domain-tests
       - name: GiriStairの署名プロファイルを適用
         script: xcode-project use-profiles --project native/GiriStair.xcodeproj

@@ -26,18 +26,18 @@ struct GiriEventDetail: View {
                             if event.meetingType == .tournament && !event.effectiveRounds.isEmpty {
                                 Button { addRound(event, sameStage: true) } label: { Label("同じ段階のお題を追加", systemImage: "plus.square.on.square") }
                             }
-                        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+                        }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
                     }
                     if event.meetingType == .tournament { resultSections(event) }
                     if !event.memo.isEmpty {
                         Section {
-                            AppCardSectionTitle(title: "振り返り", systemImage: "text.alignleft", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
+                            GiriEventCardSectionTitle(title: "振り返り", systemImage: "text.alignleft", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
                             Text(event.memo).textSelection(.enabled)
-                        }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+                        }.appEventDetailCardStyle(accentColor: AppSectionAccent.memo)
                     }
                     Section {
                         Button("この記録を削除", role: .destructive) { deleteQuestion = true }
-                    }.appSectionCardStyle(accentColor: AppSectionAccent.live)
+                    }.appEventDetailCardStyle(accentColor: AppSectionAccent.live)
                 }
                 .appEditorFormStyle()
             } else {
@@ -72,8 +72,7 @@ struct GiriEventDetail: View {
 
     private func basic(_ event: GiriEvent) -> some View {
         Section {
-            AppCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live).listRowSeparator(.hidden)
-            Text(event.title).font(.title3.bold()).textSelection(.enabled)
+            GiriEventCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live).listRowSeparator(.hidden)
             detailValue("形式", event.kind.title)
             detailValue("会の種類", event.meetingType.title)
             if !event.isParticipating {
@@ -91,34 +90,51 @@ struct GiriEventDetail: View {
                 } label: { Label("この回に参加する", systemImage: "person.badge.plus") }
                     .tint(accentActionColor)
             }
-            Picker("参加状況", selection: Binding(get: { self.event?.status ?? event.status }, set: { value in
+            Picker(selection: Binding(get: { self.event?.status ?? event.status }, set: { value in
                 guard var current = self.event else { return }
                 current.status = value
                 store.run { try store.saveEvent(current) }
             })) {
                 ForEach(EventStatus.allCases) { Text($0.title).tag($0) }
-            }.pickerStyle(.menu).tint(.primary)
+            } label: { Text("参加状況").foregroundStyle(.secondary) }
+            .pickerStyle(.menu).tint(.primary)
+            adaptiveName(event.title)
             if !event.organizer.isEmpty {
                 if let player = store.playerByName(event.organizer) {
                     NavigationLink { GiriPlayerDetail(playerID: player.id) } label: {
-                        HStack { GiriEditorLabel("主催者"); Spacer(); Text(event.organizer).foregroundStyle(.primary) }
+                        HStack { Text("主催者").foregroundStyle(.secondary); Spacer(); detailValueText(event.organizer) }
                     }
                 } else { detailValue("主催者", event.organizer) }
             }
             if event.kind == .live {
                 if let day = event.eventDate ?? event.startsAt {
-                    detailValue("日付", giriDetailDate(day)).fontWeight(.semibold)
+                    HStack {
+                        Text("日付").foregroundStyle(.secondary)
+                        Spacer()
+                        Text(giriDetailDate(day))
+                            .font(.body.weight(.semibold))
+                            .foregroundColor(liveDateWeekdayColor(day))
+                            .multilineTextAlignment(.trailing)
+                    }
                 } else { detailValue("日付", "未定") }
                 NavigationLink { GiriLiveTimingEditor(eventID: eventID) } label: {
                     HStack {
-                        GiriEditorLabel("開始・終了")
+                        Text("開始").foregroundStyle(.secondary)
                         Spacer()
-                        Text("\(giriDetailTime(event.startsAt)) / \(giriDetailTime(event.endsAt))").foregroundStyle(.primary)
+                        detailValueText(giriDetailTime(event.startsAt))
+                        Text("終了").foregroundStyle(.secondary).padding(.leading, 16)
+                        Spacer()
+                        detailValueText(giriDetailTime(event.endsAt))
                     }
                 }
                 if let venue = store.venueDirectory.first(where: { $0.id == event.venueId || $0.name == event.venue && !event.venue.isEmpty }) {
                     NavigationLink { GiriVenueDetail(venueID: venue.id) } label: {
-                        HStack { GiriEditorLabel("会場"); Spacer(); Text(venue.name + (venue.prefecture.isEmpty ? "" : "（\(venue.prefecture)）")).foregroundStyle(.primary) }
+                        HStack {
+                            Text("会場").foregroundStyle(.secondary)
+                            Spacer()
+                            detailValueText(venue.name + (venue.prefecture.isEmpty ? "" : "（\(venue.prefecture)）"))
+                                .lineLimit(1).minimumScaleFactor(0.62).allowsTightening(true)
+                        }
                     }
                 } else { detailValue("会場", event.venue.isEmpty ? "未設定" : event.venue) }
             } else {
@@ -128,35 +144,35 @@ struct GiriEventDetail: View {
                 if !event.affiliation.isEmpty { detailValue("所属・部", event.affiliation) }
                 if !event.block.isEmpty { detailValue("自分のブロック", event.block) }
             }
-        }.appSectionCardStyle(accentColor: AppSectionAccent.live)
+        }.appEventDetailCardStyle(accentColor: AppSectionAccent.live)
     }
 
     private func participants(_ event: GiriEvent) -> some View {
         Section {
-            AppCardSectionTitle(title: "参加者", systemImage: "person.2", accentColor: AppSectionAccent.artist)
+            GiriEventCardSectionTitle(title: "参加者", systemImage: "person.2", accentColor: AppSectionAccent.artist)
                 .overlay(alignment: .trailing) { Text("\(event.participants.count)人").font(.subheadline).foregroundStyle(.secondary) }
                 .listRowSeparator(.hidden)
             ForEach(Array(event.participants.enumerated()), id: \.offset) { _, name in
                 playerRow(name)
             }
-        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+        }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
     }
 
     @ViewBuilder private func teams(_ event: GiriEvent) -> some View {
         ForEach(event.teams) { team in
             Section {
-                AppCardSectionTitle(title: team.name.isEmpty ? (team.isMine || event.myTeamId == team.id ? "自分のチーム" : "チーム") : team.name,
+                GiriEventCardSectionTitle(title: team.name.isEmpty ? (team.isMine || event.myTeamId == team.id ? "自分のチーム" : "チーム") : team.name,
                                     systemImage: team.isMine || event.myTeamId == team.id ? "person.3.fill" : "person.3", accentColor: AppSectionAccent.artist)
                     .listRowSeparator(.hidden)
                 ForEach(Array(team.members.enumerated()), id: \.offset) { _, name in playerRow(name) }
-            }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+            }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
         }
         if event.teams.isEmpty, let legacy = event.tournamentResult, legacy.format != .individual,
            !legacy.members.isEmpty || !legacy.teamName.isEmpty {
             Section {
-                AppCardSectionTitle(title: legacy.teamName.isEmpty ? "自分のチーム" : legacy.teamName, systemImage: "person.3.fill", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
+                GiriEventCardSectionTitle(title: legacy.teamName.isEmpty ? "自分のチーム" : legacy.teamName, systemImage: "person.3.fill", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
                 ForEach(Array(legacy.members.enumerated()), id: \.offset) { _, name in playerRow(name) }
-            }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+            }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
         }
     }
 
@@ -181,7 +197,7 @@ struct GiriEventDetail: View {
     @ViewBuilder private func resultSections(_ event: GiriEvent) -> some View {
         Section {
             HStack {
-                AppCardSectionTitle(title: "自分の結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket)
+                GiriEventCardSectionTitle(title: "自分の結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket)
                 NavigationLink { GiriResultEntry(eventID: eventID) } label: { Text(event.hasRecordedResult ? "編集" : "記録").font(.subheadline) }
                     .tint(accentActionColor)
             }.listRowSeparator(.hidden)
@@ -207,10 +223,10 @@ struct GiriEventDetail: View {
                     }
                 }
             }
-        }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+        }.appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
         if !event.standings.isEmpty {
             Section {
-                AppCardSectionTitle(title: "大会の上位成績", systemImage: "medal", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
+                GiriEventCardSectionTitle(title: "大会の上位成績", systemImage: "medal", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
                 ForEach(event.standings.sorted { $0.placement < $1.placement }) { standing in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
@@ -221,15 +237,42 @@ struct GiriEventDetail: View {
                         if !standing.memo.isEmpty { Text(standing.memo).font(.subheadline).foregroundStyle(.secondary) }
                     }
                 }
-            }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+            }.appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
         }
     }
 
+    // LiveDetailView.swift adaptiveEventNameRow and detailValueText.
+    private func adaptiveName(_ value: String) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack {
+                Text("会・大会名").foregroundStyle(.secondary)
+                Spacer(minLength: 16)
+                detailValueText(value)
+                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("会・大会名").foregroundStyle(.secondary)
+                detailValueText(value)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 2)
+        }
+        .textSelection(.enabled)
+    }
+
+    private func detailValueText(_ value: String) -> some View {
+        Text(value.isEmpty ? "未設定" : value)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.primary)
+            .multilineTextAlignment(.trailing)
+    }
+
     private func detailValue(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            GiriEditorLabel(title)
-            Spacer(minLength: 16)
-            Text(value).multilineTextAlignment(.trailing)
+        HStack {
+            Text(title).foregroundStyle(.secondary)
+            Spacer()
+            detailValueText(value)
         }
     }
 
@@ -269,11 +312,11 @@ struct GiriLiveTimingEditor: View {
     var body: some View {
         Form {
             Section {
-                AppCardSectionTitle(title: "日付・時刻", systemImage: "calendar", accentColor: AppSectionAccent.live).listRowSeparator(.hidden)
+                GiriEventCardSectionTitle(title: "日付・時刻", systemImage: "calendar", accentColor: AppSectionAccent.live).listRowSeparator(.hidden)
                 OptionalDateRow(title: "日付", selection: $day, components: .date)
                 OptionalDateRow(title: "開始", selection: $start)
                 OptionalDateRow(title: "終了", selection: $end)
-            }.appSectionCardStyle(accentColor: AppSectionAccent.live)
+            }.appEventDetailCardStyle(accentColor: AppSectionAccent.live)
         }.appEditorFormStyle()
             .navigationTitle("日程を編集").navigationBarTitleDisplayMode(.inline)
             .toolbar(.visible, for: .navigationBar)
@@ -305,16 +348,9 @@ struct GiriLiveTimingEditor: View {
 }
 
 private func giriDetailDate(_ day: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "ja_JP")
-    formatter.dateFormat = "yyyy年M月d日(E)"
-    return formatter.string(from: day)
+    GiriDateText.day(day)
 }
 
 private func giriDetailTime(_ date: Date?) -> String {
-    guard let date else { return "--:--" }
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "ja_JP")
-    formatter.dateFormat = "H:mm"
-    return formatter.string(from: date)
+    GiriDateText.time(date)
 }

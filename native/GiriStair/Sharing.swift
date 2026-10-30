@@ -95,7 +95,7 @@ private struct GiriStatisticsRecords: View {
             Section {
                 AppCardSectionTitle(title: title, systemImage: "clock", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
                 ForEach(records.sorted { (giriAnalyticsDate($0) ?? .distantPast) > (giriAnalyticsDate($1) ?? .distantPast) }) { event in
-                    NavigationLink { GiriEventDetail(eventID: event.id) } label: { VStack(alignment: .leading, spacing: 4) { if let date = giriAnalyticsDate(event) { Text(date.formatted(date: .abbreviated, time: .omitted)).font(.caption).foregroundStyle(.secondary) }; Text(event.title) } }
+                    NavigationLink { GiriEventDetail(eventID: event.id) } label: { VStack(alignment: .leading, spacing: 4) { if let date = giriAnalyticsDate(event) { Text(GiriDateText.day(date)).font(.caption).foregroundStyle(.secondary) }; Text(event.title) } }
                 }
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
         }.appIndexListStyle().toolbar(.visible, for: .navigationBar).navigationTitle(title).navigationBarTitleDisplayMode(.inline)
@@ -211,12 +211,16 @@ struct GiriSharingView: View {
 
     private func paper(page: Int) -> some View {
         VStack(alignment: .leading, spacing: 22) {
-            HStack(alignment: .bottom) {
-                Image("BrandWordmark").resizable().scaledToFit().frame(width: 190, height: 48).padding(8).background(.white).clipShape(RoundedRectangle(cornerRadius: 8))
-                Spacer()
-                Text(periodTitle).font(.system(size: 21, weight: .bold, design: .rounded))
+            if listMode {
+                listHeader(page: page)
+            } else {
+                HStack(alignment: .bottom) {
+                    Image("BrandWordmark").resizable().scaledToFit().frame(width: 190, height: 48).padding(8).background(.white).clipShape(RoundedRectangle(cornerRadius: 8))
+                    Spacer()
+                    Text(periodTitle).font(.system(size: 21, weight: .bold, design: .rounded))
+                }
+                Text("Giri Summary").font(.system(size: 38, weight: .bold, design: .rounded))
             }
-            Text(listMode ? "Giri List" : "Giri Summary").font(.system(size: 38, weight: .bold, design: .rounded))
             if !store.preferences.selfName.isEmpty { Text(store.preferences.selfName).font(.system(size: 20, weight: .semibold)) }
             if listMode { listPaper(page: page) } else { summaryPaper }
             Spacer(minLength: 6)
@@ -259,25 +263,97 @@ struct GiriSharingView: View {
             if entries.count > 5 { Text("ほか\(entries.count - 5)件").font(.system(size: 12)).opacity(0.6) }
         }
     }
-    private func listPaper(page: Int) -> some View {
+
+    // LiveListShareView.header uses default-design black type with deliberate
+    // tracking, a trailing96×34 wordmark and a baseline-aligned period/count row.
+    private func listHeader(page: Int) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(records.dropFirst(page * 15).prefix(15))) { event in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(giriAnalyticsDate(event)?.formatted(.dateTime.year().month(.defaultDigits).day().weekday(.abbreviated)) ?? "日付未定").font(.system(size: 14, weight: .bold))
-                        Spacer()
-                        Text(event.kind == .live ? "生大喜利" : "ネット大喜利").font(.system(size: 12, weight: .semibold)).foregroundStyle(event.kind == .live ? AppSectionAccent.live : AppSectionAccent.artist)
-                    }
-                    Text(event.title).font(.system(size: 19, weight: .bold)).lineLimit(2)
-                    if showVenues && !event.venue.isEmpty { Text(event.venue).font(.system(size: 13)) }
-                    if showOrganizers && !event.organizer.isEmpty { Text("主催　" + event.organizer).font(.system(size: 12)).opacity(0.7) }
-                    if showParticipants && !event.participants.isEmpty { Text(event.participants.joined(separator: " / ")).font(.system(size: 12)).lineLimit(2).opacity(0.7) }
-                    if showResults {
-                        if let rank = event.effectivePlacement { Text(rank == 1 ? "優勝" : rank == 2 ? "準優勝" : "\(rank)位").font(.system(size: 13, weight: .bold)).foregroundStyle(AppSectionAccent.ticket) }
-                        else if !event.resultText.isEmpty { Text(event.resultText).font(.system(size: 12)).lineLimit(2) }
-                    }
-                    Rectangle().fill(foreground.opacity(0.18)).frame(height: 0.5).padding(.top, 6)
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("GIRI LIST")
+                        .font(.system(size: 36, weight: .black)).tracking(-1.2).lineLimit(1)
+                    Text("MY OGIRI HISTORY & SCHEDULE")
+                        .font(.system(size: 9, weight: .semibold)).tracking(2)
+                        .foregroundStyle(foreground.opacity(0.58))
                 }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 4) {
+                    Image("BrandWordmark").resizable().scaledToFit()
+                        .frame(width: 96, height: 34, alignment: .trailing)
+                        .padding(6).background(.white).clipShape(RoundedRectangle(cornerRadius: 8))
+                    if pageCount > 1 {
+                        Text("\(page + 1) / \(pageCount)")
+                            .font(.system(size: 12, weight: .heavy, design: .rounded))
+                            .monospacedDigit().foregroundStyle(foreground.opacity(0.6))
+                    }
+                }.padding(.top, 2)
+            }
+            HStack(alignment: .bottom, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("期間").font(.system(size: 11, weight: .bold)).foregroundStyle(accentActionColor)
+                    Text(periodTitle).font(.system(size: 17, weight: .semibold))
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: -2) {
+                    Text("記録").font(.system(size: 11, weight: .bold)).foregroundStyle(accentActionColor)
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Text("\(records.count)").font(.system(size: 30, weight: .black)).monospacedDigit()
+                        Text("回").font(.system(size: 12, weight: .bold))
+                    }.foregroundStyle(accentActionColor)
+                }.fixedSize()
+            }
+        }
+    }
+
+    private func listPaper(page: Int) -> some View {
+        let pageRecords = Array(records.dropFirst(page * 15).prefix(15))
+        return VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(pageRecords.enumerated()), id: \.element.id) { index, event in
+                let date = giriAnalyticsDate(event)
+                let previousDate = index > 0 ? giriAnalyticsDate(pageRecords[index - 1]) : nil
+                if let date,
+                   previousDate == nil || Calendar(identifier: .gregorian).component(.year, from: date) != Calendar(identifier: .gregorian).component(.year, from: previousDate ?? date) {
+                    HStack(spacing: 8) {
+                        Text(String(Calendar(identifier: .gregorian).component(.year, from: date)) + "年")
+                            .font(.system(size: 14, weight: .black, design: .rounded))
+                            .foregroundStyle(accentActionColor)
+                        Rectangle().fill(accentActionColor.opacity(0.22)).frame(height: 0.8)
+                    }
+                    .padding(.top, 12).padding(.bottom, 2)
+                }
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(date == nil ? "未定" : GiriDateText.monthDay(date))
+                            .font(.system(size: 20, weight: .heavy, design: .rounded))
+                            .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                        Text(GiriDateText.weekdayBadge(date))
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(foreground.opacity(0.6))
+                    }.frame(width: 64, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(event.title).font(.system(size: 14.5, weight: .bold))
+                            .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                        Text(event.kind == .live ? "生大喜利" : "ネット大喜利")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(event.kind == .live ? AppSectionAccent.live : AppSectionAccent.artist)
+                        if showVenues && !event.venue.isEmpty {
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Image(systemName: "mappin.and.ellipse")
+                                    .font(.system(size: 9.5, weight: .semibold)).foregroundStyle(accentActionColor)
+                                Text(event.venue).font(.system(size: 11.5, weight: .medium))
+                                    .foregroundStyle(foreground.opacity(0.7)).lineLimit(1)
+                            }
+                        }
+                        if showOrganizers && !event.organizer.isEmpty { Text("主催　" + event.organizer).font(.system(size: 12)).opacity(0.7) }
+                        if showParticipants && !event.participants.isEmpty { Text(event.participants.joined(separator: " / ")).font(.system(size: 12)).lineLimit(2).opacity(0.7) }
+                        if showResults {
+                            if let rank = event.effectivePlacement { Text(rank == 1 ? "優勝" : rank == 2 ? "準優勝" : "\(rank)位").font(.system(size: 13, weight: .bold)).foregroundStyle(AppSectionAccent.ticket) }
+                            else if !event.resultText.isEmpty { Text(event.resultText).font(.system(size: 12)).lineLimit(2) }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Rectangle().fill(foreground.opacity(0.18)).frame(height: 0.5).padding(.top, 6)
             }
             if records.isEmpty { Text("記録がありません").padding(.vertical, 40) }
         }

@@ -5,6 +5,10 @@ GiriStairのiPhone版は **Swift / SwiftUI**、Android版は既存のFlutter実�
 - 作業前にREADME.md、docs/SPEC.md、docs/DESIGN.md、docs/SETUP.mdを確認します。
 - iPhoneの本体は `native/GiriStair/`。`lib/`・`ios/Runner/*.swift` はAndroid用Flutter実装と旧iPhone実装です。iPhoneの変更をFlutter側だけへ入れないでください。
 - **LiveStairの実コードがデザインと操作の基準**です。LiveStair本体は参照専用で一切変更しません。移植元はdocs/NATIVE_MIGRATION.mdに固定します。参照不能なら推測で作らず報告します。
+- 基準を適用する範囲は **アプリ全体** です。一覧だけでなく、登録・詳細・編集・カレンダー・戦績・思考・設定・プレイヤー／会場／サイト・集計・共有・シートを、LiveStairの対応する画面と部品に照合してください。新しい画面も例外ではありません。
+- 共通部品の移植だけで一致と判断せず、呼び出し側のpadding・spacing・文字のweight・値の幅・位置・改行・空表示・選択時の状態も確認します。共通UIの変更時は5タブと各詳細／編集への影響を確認します。
+- 日時の表示はDatePresentation.swiftを使い、用途ごとのLiveStairの書式を維持します（通常日は年月日＋曜日祝日、一覧の省幅時も年を残す、締切はM/d(E) H:mm、時刻はH:mm）。保存のISO表現を表示合わせのために変更しません。
+
 - 新しい画面も、移植したCommonUI.swiftの実際のForm/List/Picker・AppCardSectionTitle・appSectionCardStyle・appIndexListStyleを使います。字体・角丸・行高を個別の近似値へ置き換えません。
 - ページタイトルは34 boldの標準design、セクション見出しは18 bold Roundedです。すべてをRoundedや同じweightにしません。日本語はiOSのシステムフォントへ任せます。
 - TabView・NavigationStackの標準タブ／戻る＜、SF Symbols、Picker.menuを使います。独自の偽タブ／戻るボタンは作りません。時刻は5分刻み、既存の未定値や1分単位の時刻を開くだけで書き換えません。

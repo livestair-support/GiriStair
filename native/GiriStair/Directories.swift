@@ -33,13 +33,14 @@ struct GiriPlayersView: View {
                 if players.isEmpty { CenteredEmptyMessage(systemImage: "person.2", title: "プレイヤーがいません") }
                 ForEach(players) { player in
                     NavigationLink { GiriPlayerDetail(playerID: player.id) } label: {
-                        HStack {
-                            GiriPlayerAvatar(name: player.name)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(player.name)
-                                if !player.furigana.isEmpty { Text(player.furigana).font(.caption).foregroundStyle(.secondary) }
-                            }
-                        }
+                        HStack(spacing: 12) {
+                            GiriPlayerAvatar(name: player.name, size: 40)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(player.name).font(.headline.weight(.semibold)).lineLimit(1)
+                                if !player.furigana.isEmpty { Text(player.furigana).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                            }.frame(minHeight: 46, alignment: .center).layoutPriority(1)
+                            Spacer(minLength: 8)
+                        }.frame(minHeight: 48).padding(.vertical, 2)
                     }
                 }
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
@@ -72,8 +73,8 @@ struct GiriPlayerDetail: View {
             Section {
                 AppCardSectionTitle(title: "プロフィール", systemImage: "person.crop.circle", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
                 HStack { GiriPlayerAvatar(name: player.name, size: 64); Text(player.name).font(.title2.bold()) }
-                if !player.furigana.isEmpty { LabeledContent("フリガナ", value: player.furigana) }
-                if !player.region.isEmpty { LabeledContent("地域", value: player.region) }
+                if !player.furigana.isEmpty { GiriProfileInfoRow(title: "フリガナ", value: player.furigana) }
+                if !player.region.isEmpty { GiriProfileInfoRow(title: "地域", value: player.region) }
                 if let url = giriWebURL(player.twitterUrl) { Link("X / Twitter", destination: url) }
                 if !player.memo.isEmpty { Text(player.memo).textSelection(.enabled) }
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
@@ -180,7 +181,16 @@ struct GiriVenuesView: View {
                 let venues = store.venueDirectory.filter { query.isEmpty || "\($0.name) \($0.prefecture)".localizedStandardContains(query) }
                 if venues.isEmpty { CenteredEmptyMessage(systemImage: "mappin.and.ellipse", title: "会場がありません") }
                 ForEach(venues) { venue in
-                    NavigationLink { GiriVenueDetail(venueID: venue.id) } label: { VStack(alignment: .leading, spacing: 2) { Text(venue.name); if !venue.prefecture.isEmpty { Text(venue.prefecture).font(.caption).foregroundStyle(.secondary) } } }
+                    NavigationLink { GiriVenueDetail(venueID: venue.id) } label: {
+                        HStack(spacing: 12) {
+                            AppIndexItemBadge(systemImage: "mappin.and.ellipse", color: AppSectionAccent.venue)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(venue.name).font(.headline.weight(.semibold)).lineLimit(1)
+                                if !venue.prefecture.isEmpty { Text(venue.prefecture).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                            }.layoutPriority(1)
+                            Spacer(minLength: 8)
+                        }.frame(minHeight: 48).padding(.vertical, 2)
+                    }
                 }
             }.appSectionCardStyle(accentColor: AppSectionAccent.venue)
         }.appIndexListStyle().searchable(text: $query, prompt: "会場名・都道府県").toolbar(.visible, for: .navigationBar).navigationTitle("会場一覧").navigationBarTitleDisplayMode(.inline)
@@ -201,13 +211,13 @@ struct GiriVenueDetail: View {
                 Form {
                     Section {
                         AppCardSectionTitle(title: "会場", systemImage: "mappin.and.ellipse", accentColor: AppSectionAccent.venue).listRowSeparator(.hidden)
-                        LabeledContent("会場名", value: venue.name)
-                        if !venue.prefecture.isEmpty { LabeledContent("都道府県", value: venue.prefecture) }
+                        GiriProfileInfoRow(title: "会場名", value: venue.name, labelWidth: 80, verticalPadding: 8)
+                        if !venue.prefecture.isEmpty { GiriProfileInfoRow(title: "都道府県", value: venue.prefecture, labelWidth: 80, verticalPadding: 8) }
                         if !venue.mapAddress.isEmpty { Text(venue.mapAddress).foregroundStyle(.secondary) }
                         if let latitude = venue.latitude, let longitude = venue.longitude {
                             let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
                             Map(initialPosition: .region(MKCoordinateRegion(center: coordinate, span: MKCoordinateSpan(latitudeDelta: 0.006, longitudeDelta: 0.006)))) { Marker(venue.name, coordinate: coordinate) }
-                                .frame(height: 190).clipShape(RoundedRectangle(cornerRadius: 12))
+                                .frame(height: 190).clipShape(RoundedRectangle(cornerRadius: 16))
                             Link("マップで開く", destination: URL(string: "https://maps.apple.com/?ll=\(latitude),\(longitude)")!)
                         }
                         if let url = giriWebURL(venue.mapUrl) { Link("登録した地図を開く", destination: url) }
@@ -363,3 +373,24 @@ struct GiriSiteEditor: View {
 
 private enum DirectoryError: LocalizedError { case image; var errorDescription: String? { "画像を読み込めませんでした。別の写真を選んでください。" } }
 func giriWebURL(_ string: String) -> URL? { guard let url = URL(string: string), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }; return url }
+
+// ArtistDetailView.infoRow / VenueDetailView.venueInfoRow from LiveStair.
+private struct GiriProfileInfoRow: View {
+    let title: String
+    let value: String
+    var labelWidth: CGFloat = 104
+    var verticalPadding: CGFloat = 10
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.75)
+                .frame(width: labelWidth, alignment: .leading)
+            Spacer(minLength: 12)
+            Text(value.isEmpty ? "未設定" : value).font(.subheadline)
+                .foregroundStyle(value.isEmpty || value == "未設定" ? Color.secondary : Color.primary)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(.vertical, verticalPadding)
+    }
+}

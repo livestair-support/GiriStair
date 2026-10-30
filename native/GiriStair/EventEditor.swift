@@ -48,10 +48,10 @@ struct GiriEventEditor: View {
                 if draft.meetingType == .tournament { teamSections }
                 if draft.kind == .online { scheduleSections }
                 Section {
-                    AppCardSectionTitle(title: "振り返り", systemImage: "text.alignleft", accentColor: AppSectionAccent.memo)
+                    GiriEventCardSectionTitle(title: "振り返り", systemImage: "text.alignleft", accentColor: AppSectionAccent.memo)
                         .listRowSeparator(.hidden)
                     TextField("メモ", text: $draft.memo, axis: .vertical).lineLimit(3...10)
-                }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+                }.appEventEditorCardStyle(accentColor: AppSectionAccent.memo)
             }
         }
         .appEditorFormStyle()
@@ -139,7 +139,7 @@ struct GiriEventEditor: View {
 
     private var basicSection: some View {
         Section {
-            AppCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live)
+            GiriEventCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live)
                 .listRowSeparator(.hidden)
             Picker(selection: $draft.kind) {
                 ForEach([EventKind.live, .online], id: \.self) { Text($0.title).tag($0) }
@@ -153,18 +153,13 @@ struct GiriEventEditor: View {
                     ForEach([EventStatus.planned, .attended, .canceled], id: \.self) { Text($0.title).tag($0) }
                 } label: { GiriEditorLabel("参加状況") }.pickerStyle(.menu).tint(.primary)
             }
-            TextField(isSite ? "サイト名 *" : "会・大会名 *", text: $draft.title)
+            TextField(isSite ? "サイト名 *" : "会・大会名 *", text: $draft.title, axis: .vertical)
+                .lineLimit(1...5)
             if !isSite {
                 GiriEditorPlayerField(title: "主催者", text: $draft.organizer, preferHosts: true)
                 if draft.kind == .live {
                     OptionalDateRow(title: "日付", selection: $draft.eventDate, components: .date)
-                    HStack(spacing: 12) {
-                        OptionalDateRow(title: "開始", selection: clockBinding(start: true), components: .hourAndMinute)
-                        OptionalDateRow(title: "終了", selection: clockBinding(start: false), components: .hourAndMinute)
-                        Button { draft.startsAt = nil; draft.endsAt = nil } label: {
-                            VStack(spacing: 2) { Image(systemName: "arrow.counterclockwise"); Text("未定").font(.caption2) }
-                        }.buttonStyle(.borderless).tint(accentActionColor)
-                    }
+                    GiriEventTimeRow(startsAt: clockBinding(start: true), endsAt: clockBinding(start: false))
                     TextField("会場名", text: $draft.venue)
                     if !draft.venue.isEmpty {
                         let matches = store.venues.filter { $0.name.localizedCaseInsensitiveContains(draft.venue) }
@@ -185,12 +180,12 @@ struct GiriEventEditor: View {
             } else {
                 TextField("サイトURL", text: $site.url).keyboardType(.URL).textInputAutocapitalization(.never)
             }
-        }.appSectionCardStyle(accentColor: AppSectionAccent.live)
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.live)
     }
 
     private var siteSection: some View {
         Section {
-            AppCardSectionTitle(title: "投稿・投票", systemImage: "globe", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
+            GiriEventCardSectionTitle(title: "投稿・投票", systemImage: "globe", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
             Picker("開催間隔", selection: $site.recurrence) {
                 Text("不定期").tag(SiteRecurrence.irregular)
                 Text("毎週").tag(SiteRecurrence.weekly)
@@ -206,7 +201,7 @@ struct GiriEventEditor: View {
             TextField("所属・部", text: $site.affiliation)
             TextField("ブロック・担当お題", text: $site.block)
             TextField("メモ", text: $site.memo, axis: .vertical).lineLimit(2...6)
-        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
     }
 
     private var siteClock: Binding<Date?> {
@@ -221,7 +216,7 @@ struct GiriEventEditor: View {
 
     private var participantSection: some View {
         Section {
-            AppCardSectionTitle(title: "参加者", systemImage: "person.2", accentColor: AppSectionAccent.artist)
+            GiriEventCardSectionTitle(title: "参加者", systemImage: "person.2", accentColor: AppSectionAccent.artist)
                 .overlay(alignment: .trailing) {
                     Text("\(participants.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count)人")
                         .font(.subheadline).foregroundStyle(.secondary)
@@ -246,12 +241,12 @@ struct GiriEventEditor: View {
                     .environment(\.defaultMinListRowHeight, 36)
             }
             Button { participants.append("") } label: { Label("参加者を追加", systemImage: "plus.circle") }.tint(accentActionColor)
-        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
     }
 
     @ViewBuilder private var teamSections: some View {
         Section {
-            AppCardSectionTitle(title: "大会の形式", systemImage: "person.2", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
+            GiriEventCardSectionTitle(title: "大会の形式", systemImage: "person.2", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
             Picker("参加形式", selection: $draft.tournamentFormat) {
                 Text("個人戦").tag(TournamentFormat.individual)
                 Text("チーム戦").tag(TournamentFormat.team)
@@ -271,12 +266,12 @@ struct GiriEventEditor: View {
                     ForEach(draft.teams) { Text($0.name.isEmpty ? "名前未入力" : $0.name).tag($0.id) }
                 }.pickerStyle(.menu).tint(.primary)
             }
-        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
         if draft.tournamentFormat != .individual {
             ForEach(draft.teams.indices, id: \.self) { index in
                 Section {
                     HStack {
-                        AppCardSectionTitle(title: draft.teams[index].id == draft.myTeamId ? "自分のチーム" : "チーム\(index + 1)", systemImage: "person.3", accentColor: AppSectionAccent.artist)
+                        GiriEventCardSectionTitle(title: draft.teams[index].id == draft.myTeamId ? "自分のチーム" : "チーム\(index + 1)", systemImage: "person.3", accentColor: AppSectionAccent.artist)
                         Button(role: .destructive) {
                             if draft.myTeamId == draft.teams[index].id { draft.myTeamId = nil }
                             draft.teams.remove(at: index)
@@ -290,7 +285,7 @@ struct GiriEventEditor: View {
                         }
                     }
                     Button { draft.teams[index].members.append("") } label: { Label("メンバーを追加", systemImage: "plus.circle") }.tint(accentActionColor)
-                }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+                }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
             }
             Section {
                 Button {
@@ -300,7 +295,7 @@ struct GiriEventEditor: View {
                     team.members = store.preferences.selfName.isEmpty || !team.isMine ? [""] : [store.preferences.selfName]
                     draft.teams.append(team)
                 } label: { Label("チームを追加", systemImage: "plus.circle") }
-            }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+            }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
         }
     }
 
@@ -308,7 +303,7 @@ struct GiriEventEditor: View {
         ForEach(draft.rounds.indices, id: \.self) { index in
             Section {
                 HStack {
-                    AppCardSectionTitle(title: draft.rounds[index].name, systemImage: "calendar", accentColor: AppSectionAccent.artist)
+                    GiriEventCardSectionTitle(title: draft.rounds[index].name, systemImage: "calendar", accentColor: AppSectionAccent.artist)
                     Menu {
                         if index > 0 { Button("上へ移動", systemImage: "arrow.up") { draft.rounds.swapAt(index, index - 1) } }
                         if index + 1 < draft.rounds.count { Button("下へ移動", systemImage: "arrow.down") { draft.rounds.swapAt(index, index + 1) } }
@@ -316,14 +311,14 @@ struct GiriEventEditor: View {
                     } label: { Image(systemName: "ellipsis.circle") }.tint(accentActionColor)
                 }.listRowSeparator(.hidden)
                 GiriRoundFields(round: $draft.rounds[index], automatic: Binding(get: { automaticFields[draft.rounds[index].id] ?? [] }, set: { automaticFields[draft.rounds[index].id] = $0 }), tournament: draft.meetingType == .tournament)
-            }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+            }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
         }
         Section {
             Button { addRound(sameStage: false) } label: { Label(draft.meetingType == .tournament ? "次の段階を追加" : "日程を追加", systemImage: "plus.circle") }
             if draft.meetingType == .tournament && !draft.rounds.isEmpty {
                 Button { addRound(sameStage: true) } label: { Label("同じ段階のお題を追加", systemImage: "plus.square.on.square") }
             }
-        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
     }
 
     private func load() {

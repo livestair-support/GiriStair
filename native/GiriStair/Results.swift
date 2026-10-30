@@ -36,11 +36,12 @@ struct GiriResultsView: View {
         }.count
     }
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                filterHeader
+        VStack(spacing: 0) {
+            filterHeader
+            ScrollView {
+                LazyVStack(spacing: 0) {
                 statistics
-                    .padding(.horizontal, 16).padding(.vertical, 6)
+                    .padding(.horizontal, 18).padding(.vertical, 6)
                 HStack {
                     Text("大会の記録").font(.system(size: appFontSize(18), weight: .bold, design: .rounded))
                     Spacer()
@@ -50,17 +51,18 @@ struct GiriResultsView: View {
                 if filtered.isEmpty {
                     CenteredEmptyMessage(systemImage: "trophy", title: tournaments.isEmpty ? "大会の記録がありません" : "該当する結果がありません")
                         .frame(maxWidth: .infinity, minHeight: 145)
-                        .appTintedCard(accentColor: accent).padding(.horizontal, 16)
+                        .appTintedCard(accentColor: accent).padding(.horizontal, 18)
                 }
                 ForEach(filtered) { event in
                     NavigationLink { GiriEventDetail(eventID: event.id) } label: {
                         GiriEventCard(event: event, showsResult: true)
                     }
                     .buttonStyle(.plain)
-                    .padding(.horizontal, 16).padding(.vertical, 6)
+                    .padding(.horizontal, 18).padding(.vertical, 6)
                 }
             }
-            .padding(.bottom, 16)
+                .padding(.bottom, 104)
+            }
         }
         .background(appBackgroundColor)
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -69,10 +71,11 @@ struct GiriResultsView: View {
         .toolbar(.hidden, for: .navigationBar)
     }
     private var filterHeader: some View {
-        AppIndexHeaderCard(accentColor: accent) {
-            VStack(spacing: 5) {
+        VStack(spacing: 5) {
                 HStack(spacing: 10) {
-                    Image(systemName: "line.3.horizontal.decrease").foregroundStyle(accent).frame(width: 22)
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: appFontSize(16), weight: .semibold))
+                        .foregroundStyle(accent).frame(width: 22)
                     Text("表示・絞り込み").font(.system(size: appFontSize(18), weight: .bold, design: .rounded))
                     Spacer()
                     Text("\(filtered.count)件").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
@@ -91,8 +94,10 @@ struct GiriResultsView: View {
                     GiriListFilterMenu(title: "結果", selection: $resultFilter, options: [
                         ("all", "すべて"), ("recorded", "結果あり"), ("unrecorded", "未入力")])
                 }
-            }
         }
+        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 10)
+        .appTintedCard(accentColor: accent, cornerRadius: 20, railVerticalInset: 14, lightTintOpacity: 0.065)
+        .padding(.horizontal, 18).padding(.bottom, 12)
     }
     private var statistics: some View {
         VStack(alignment: .leading, spacing: 14) {

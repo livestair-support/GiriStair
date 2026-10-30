@@ -24,10 +24,8 @@ struct GiriRoundFields: View {
             Stepper("お題　\(round.promptNumber)", value: $round.promptNumber, in: 1...999)
         }
         TextField("自分のブロック・担当お題", text: $round.block)
-        OptionalDateRow(title: "投稿開始", selection: dateBinding("submissionStart"))
-        OptionalDateRow(title: "投稿締切", selection: dateBinding("submissionEnd"))
-        OptionalDateRow(title: "投票開始", selection: dateBinding("votingStart"))
-        OptionalDateRow(title: "投票締切", selection: dateBinding("votingEnd"))
+        GiriSchedulePeriodRow(title: "投稿", start: dateBinding("submissionStart"), end: dateBinding("submissionEnd"))
+        GiriSchedulePeriodRow(title: "投票", start: dateBinding("votingStart"), end: dateBinding("votingEnd"))
         Toggle("投稿に参加する", isOn: $round.submissionEnabled).tint(AppSectionAccent.artist)
         Toggle("投票が必要", isOn: $round.votingRequired).tint(AppSectionAccent.artist)
     }

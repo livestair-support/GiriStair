@@ -13,7 +13,7 @@ struct GiriSettingsView: View {
     @State private var notificationBusy = false
 
     var body: some View {
-        Form {
+        List {
             settingSection("profile", "自分のプロフィール", "person.crop.circle", AppSectionAccent.artist) {
                 NavigationLink("自分の名前") { GiriSelfProfileEditor() }
             }
@@ -66,8 +66,7 @@ struct GiriSettingsView: View {
                 Button("バックアップを書き出す", action: exportBackup)
                 Button("バックアップから復元") { importing = true }
                 if let backup = store.document.lastBackupAt {
-                    LabeledContent("最終書き出し", value: backup.formatted(date: .abbreviated, time: .shortened))
-                        .font(.footnote).foregroundStyle(.secondary)
+                    settingsValueRow(title: "最終書き出し", value: GiriDateText.backupDateTime(backup))
                 }
             }
             settingSection("support", "サポート", "questionmark.circle", AppSectionAccent.venue) {
@@ -75,11 +74,11 @@ struct GiriSettingsView: View {
                 Link("使い方ガイド", destination: URL(string: "https://github.com/livestair-support/GiriStair/blob/main/docs/SPEC.md")!)
                 NavigationLink("プライバシーについて") { GiriPrivacyView() }
                 Link("サポート・お問い合わせ", destination: URL(string: "https://github.com/livestair-support/GiriStair/issues")!)
-                LabeledContent("バージョン", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
-                    .foregroundStyle(.secondary)
+                settingsValueRow(title: "バージョン", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
             }
         }
-        .appEditorFormStyle()
+        .environment(\.defaultMinListRowHeight, 48)
+        .appIndexListStyle()
         .safeAreaInset(edge: .top, spacing: 0) {
             AppPageHeader(title: "設定", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.memo)
         }
@@ -99,6 +98,22 @@ struct GiriSettingsView: View {
                     if completed { store.run { try store.recordBackupExported() } }
                 }
             }
+        }
+    }
+
+    // LiveStair SettingsView.settingsValueRow: preserve the body label and
+    // trailing subheadline value instead of shrinking the entire row.
+    private func settingsValueRow(title: String, value: String) -> some View {
+        HStack(spacing: 8) {
+            Text(title).font(.body).foregroundStyle(.primary)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .allowsTightening(true)
+                .multilineTextAlignment(.trailing)
         }
     }
 

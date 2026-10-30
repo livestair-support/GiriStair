@@ -396,36 +396,42 @@ private struct GiriThoughtPeriodRow: View {
     let accent: Color
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(accent.opacity(enabled ? 1 : 0.3))
-                .frame(width: 3)
-            Text(title)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 38, alignment: .leading)
-            VStack(alignment: .leading, spacing: 4) {
-                if !enabled {
-                    Text(title == "投稿" ? "投稿対象外" : "投票なし").foregroundStyle(.secondary)
-                }
-                Text(start.map(thoughtDateTime) ?? "開始未定")
-                Text("〜 " + (end.map(thoughtDateTime) ?? "締切未定"))
-            }
-            .font(.subheadline)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if enabled, let start, let end, start <= Date(), Date() < end {
+        VStack(alignment: .leading, spacing: 8) {
+            scheduleLine(title + "開始", date: start, missing: "開始未定")
+            scheduleLine(title + "締切", date: end, missing: "締切未定")
+            if !enabled {
+                Text(title == "投稿" ? "投稿対象外" : "投票なし")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                    .padding(.leading, 28)
+            } else if let start, let end, start <= Date(), Date() < end {
                 Text("期間中")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(accent)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(accent.opacity(0.12), in: Capsule())
-                    .fixedSize()
+                    .font(.caption.weight(.medium)).foregroundStyle(accent)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
         .fixedSize(horizontal: false, vertical: true)
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
+    }
+
+    // TicketScheduleDisplayRows uses a 20pt icon, baseline spacing8 and a
+    // trailing, monospaced date. Keep posting and voting in the same alignment.
+    private func scheduleLine(_ label: String, date: Date?, missing: String) -> some View {
+        let isPast = date.map { $0 < Date() } ?? false
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "clock")
+                .font(.subheadline)
+                .foregroundStyle(isPast || !enabled ? Color.secondary : accent)
+                .frame(width: 20)
+            Text(label)
+                .foregroundStyle(isPast || !enabled ? Color.secondary : .primary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Text(date.map(thoughtDateTime) ?? missing)
+                .font(.subheadline).foregroundStyle(.secondary)
+                .monospacedDigit().lineLimit(1)
+        }
+        .opacity(isPast ? 0.6 : 1)
     }
 }
 
@@ -864,5 +870,5 @@ private func thoughtRoundLabel(event: GiriEvent, round: EventRound) -> String {
 }
 
 private func thoughtDateTime(_ date: Date) -> String {
-    date.formatted(.dateTime.year().month(.defaultDigits).day().weekday(.abbreviated).hour(.twoDigits(amPM: .omitted)).minute().locale(Locale(identifier: "ja_JP")))
+    GiriDateText.dateTime(date)
 }
