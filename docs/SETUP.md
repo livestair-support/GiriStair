@@ -1,5 +1,7 @@
 # iPhoneでGiriStairを確認する手順
 
+iPhone版は0.4.0からSwiftUIです。CodemagicのiPhoneワークフローはFlutterを使用せずnative/GiriStairをビルドします。PRの確認中はその作業ブランチ、マージ後はmainを選びます。
+
 ## 現在の前提
 
 - GitHubのリポジトリは `livestair-support/GiriStair`。
@@ -17,7 +19,7 @@
 
 1. LiveStairを使っているものと同じCodemagicアカウントにログインします。
 2. 「Applications」→「Add application」→「GitHub」を選びます。
-3. `livestair-support/GiriStair`を選び、Flutterプロジェクトとして追加します。
+3. `livestair-support/GiriStair`を選び、codemagic.yamlを使うプロジェクトとして追加します。
 4. 設定方法は`codemagic.yaml`を使います。Flutter workflow editor用に別の設定を作る必要はありません。
 
 GiriStairが候補に出ない場合は「Integrations」→GitHub連携の「Manage integration／Configure」を開き、アクセス対象リポジトリにGiriStairを追加します。
@@ -26,10 +28,10 @@ GiriStairが候補に出ない場合は「Integrations」→GitHub連携の「Ma
 
 1. 「Applications」→「GiriStair」→「Start new build」。
 2. ブランチは`main`。
-3. ワークフローは **「1. 確認（解析・テスト・iOSビルド）」**。
+3. ワークフローは **「1. 確認（Swiftテスト・iOSビルド）」**。
 4. 「Start new build」を押します。
 
-このワークフローは解析・テストと、署名しないiOSビルドを行います。成功しても、まだiPhoneにはインストールできません。失敗した場合は、赤くなった工程名とエラー付近のログをAIに送ってください。
+このワークフローはSwiftの保存互換性テストと、署名しないSwiftUI iOSビルドを行います。成功しても、まだiPhoneにはインストールできません。失敗した場合は、赤くなった工程名とエラー付近のログをAIに送ってください。
 
 ## 4. Apple側のGiriStair登録を確認する
 
@@ -61,7 +63,7 @@ GiriStairが候補に出ない場合は「Integrations」→GitHub連携の「Ma
 3. ワークフローは **「3. iPhone確認用（TestFlightへアップロード）」**。
 4. 「Start new build」を押します。
 
-この工程では、解析・テスト、署名済みIPAの作成、App Store Connectへのアップロードを行います。ビルド番号はCodemagicの`PROJECT_BUILD_NUMBER`を使用します。別のCodemagicアプリや別経路からアップロードするようになった場合は、過去の番号より大きい番号になるようAIに調整を依頼してください。
+この工程では、Swiftの保存互換性テスト、署名済みIPAの作成、App Store Connectへのアップロードを行います。ビルド番号はCodemagicの`PROJECT_BUILD_NUMBER`を使用します。別のCodemagicアプリや別経路からアップロードするようになった場合は、過去の番号より大きい番号になるようAIに調整を依頼してください。
 
 この設定はApp Storeへの審査提出も、外部テスト用のベータ審査への自動提出も行いません。Apple側で処理が終わったビルドを、App Store Connectの内部テストで利用します。
 

@@ -1,4 +1,25 @@
-# LiveStairとの照合記録
+# SwiftUI版・アプリ全体の照合（2026-10-30）
+
+基準はLiveStair `074206d2d92cefdf6e1a076900ed7af807ae1eb8`。LiveStairは参照専用です。共通部品だけでなく、それを呼ぶ画面側の指定も比較します。対象は一覧に限定しません。以下はコード照合と修正内容であり、実機の完全一致を保証するものではありません。
+
+| GiriStairの対象 | 比較したLiveStair | 今回の差と修正 |
+| --- | --- | --- |
+| 登録・編集 | EventBasicEditor、CommonUI | 行inset6→8、tint0.065、日付headline.bold→body.semibold、開始／終了は70×32・ラベル間隔10・区切り高さ34の専用行 |
+| 会の詳細・時刻編集 | LiveDetailView | 独立した大見出しから名前ラベル付きの可変行へ。値body.semibold、開始と終了のlabel/value配置を原文に合わせる |
+| 一覧・検索・条件 | ContentView、LiveListEventCard | 左右18、条件カード16h14v・角丸20・rail14、時刻の隠し幅基準で列固定、種類列70、狭い日付も年を保持、ネイティブListと固定条件欄、確認付きスワイプ削除 |
+| 月間カレンダー | ContentView、JapaneseHolidays | 年月と選択日を別の書式へ、選択日17bold、曜日＋祝表示、月移動の間隔・色を合わせる。祝日計算は内容不変で独立ファイルへ移動 |
+| 戦績 | ArtistAnalyticsView、共通card | 条件の固定表示、16h／14top／10bottom、角丸20、左右18、共通カードの日付・時刻列も適用 |
+| 思考・投稿／投票 | TicketScheduleViews、TicketScheduleGroups | 日時はM/d(E) H:mm、日程行はbaseline・アイコン20・間隔8・右揃え。編集は開始／締切の2列カードと確定・キャンセル、時刻5分刻み |
+| 設定 | SettingsView | Formから実際のListスタイルへ。bodyラベル＋subheadline値、最終書出し日時は日本語medium＋short |
+| プレイヤー・会場一覧と詳細 | IndexViews、ArtistDetailView、VenueDetailView | 行間隔12／副題3／最小48、名前headline.semibold、一覧写真40、プロフィール値ラベル幅104／80、地図角丸16 |
+| 集計・共有一覧 | CommonUI、LiveListShareView、ScreenshotView | 履歴の日付を日本語の共通書式へ。共有一覧は64pt日付列・タイトル14.5・年見出し・ヘッダー字間等の原文を利用 |
+| ブランド | ユーザーの10月30日添付 | 余白の広い新アイコンを原本のまま採用。iOS／Android全サイズと復元zip／manifestを更新。ロゴと起動画面は維持 |
+
+DatePresentation.swiftは表示専用です。保存のISO書式・日付だけのeventDate・モデル／ストア・集計期間の意味を変更しません。日付の年欠落・先頭ゼロ・祝日・ローカル年越し・未定の表示を実Swift回帰で確認します。自動撮影を繰り返す必須工程にはせず、端末上の各画面と編集状態を確認します。
+
+---
+
+# 以前のFlutter版の照合記録
 
 参照コミット: `8431bb50778d7b5f22f73226d3306f9e2f9f0d5e`。CommonUI.swift、EventBasicEditor.swift、ContentView.swiftをGitHubから読み取り、参照用コピーで照合しました。LiveStairのファイルは変更していません。会話中のスクリーンショットも参考にしています。
 
