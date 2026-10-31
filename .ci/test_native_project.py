@@ -54,6 +54,17 @@ class NativeProjectTest(unittest.TestCase):
                     generate(root, value)
             self.assertFalse((root / "build").exists())
 
+    def test_ui_regression_runs_against_app_without_shipping_test_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = json.loads(generate(self.root(directory)).read_text())
+            test = project["targets"]["GiriStairUITests"]
+            self.assertEqual(test["type"], "bundle.ui-testing")
+            self.assertEqual(test["dependencies"], [{"target": "GiriStair"}])
+            self.assertEqual(test["sources"], [{"path": "UITests"}])
+            scheme = project["schemes"]["GiriStair"]
+            self.assertEqual(scheme["build"]["targets"]["GiriStairUITests"], ["test"])
+            self.assertFalse(scheme["test"]["targets"][0]["parallelizable"])
+
 
 if __name__ == "__main__":
     unittest.main()

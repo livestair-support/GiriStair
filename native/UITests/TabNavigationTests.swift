@@ -1,0 +1,41 @@
+import XCTest
+
+/// Exercise real SwiftUI tab and segmented-control transitions without taking
+/// screenshots. A main-thread hang/crash prevents the next control from being
+/// hittable and fails this regression instead of passing a compile-only check.
+final class TabNavigationTests: XCTestCase {
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+    }
+
+    func testListCanSwitchFormatsAndVisitEveryTabRepeatedly() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-tab-navigation"]
+        app.launch()
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.waitForExistence(timeout: 15))
+        let list = tabBar.buttons["一覧"]
+        XCTAssertTrue(list.waitForExistence(timeout: 5))
+        for _ in 0..<3 {
+            list.tap()
+            let formats = app.segmentedControls["format-tabs"].firstMatch
+            XCTAssertTrue(formats.waitForExistence(timeout: 5))
+            for labels in [("生大喜利", "生"), ("ネット大喜利（長考）", "長考"), ("ネット大喜利（短考）", "短考"), ("スプシ系", "スプシ系")] {
+                let button = formats.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", labels.0, labels.1)).firstMatch
+                XCTAssertTrue(button.waitForExistence(timeout: 5))
+                XCTAssertTrue(button.isHittable)
+                button.tap()
+                XCTAssertEqual(app.state, .runningForeground)
+            }
+            for title in ["登録", "戦績", "お題/回答", "設定"] {
+                list.tap()
+                let destination = tabBar.buttons[title]
+                XCTAssertTrue(destination.waitForExistence(timeout: 5))
+                XCTAssertTrue(destination.isHittable)
+                destination.tap()
+                XCTAssertEqual(app.state, .runningForeground)
+                XCTAssertTrue(list.isHittable)
+            }
+        }
+    }
+}

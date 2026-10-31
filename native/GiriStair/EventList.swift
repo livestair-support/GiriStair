@@ -351,7 +351,7 @@ struct GiriFormatPicker: View {
             ForEach(formats) { format in
                 Text(format.shortTitle).tag(format).accessibilityLabel(format.title)
             }
-        }.pickerStyle(.segmented)
+        }.pickerStyle(.segmented).accessibilityIdentifier("format-tabs")
     }
 }
 
