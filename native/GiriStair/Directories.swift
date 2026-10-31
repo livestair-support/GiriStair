@@ -337,10 +337,24 @@ struct GiriSiteDetail: View {
         store.events.filter { $0.onlineSiteId == siteID && $0.isActualParticipant }
             .sorted { ($0.participationStartDate ?? $0.createdAt) > ($1.participationStartDate ?? $1.createdAt) }
     }
-    private var seasons: [String] {
-        var seen = Set<String>()
-        return history.map(\.siteSeason).filter { seen.insert($0).inserted }
+    private var seasonGroups: [GiriSiteSeasonGroup] {
+        var groups: [GiriSiteSeasonGroup] = []
+        for event in history {
+            let key = seasonKey(id: event.siteSeasonID, name: event.siteSeason)
+            if let index = groups.firstIndex(where: { $0.id == key }) {
+                groups[index].events.append(event)
+            } else {
+                let displayName = key == currentSeasonKey ? (site?.cycleSettings?.seasonName ?? event.siteSeason) : event.siteSeason
+                groups.append(GiriSiteSeasonGroup(id: key, seasonID: event.siteSeasonID, name: displayName, events: [event]))
+            }
+        }
+        return groups
     }
+    private var currentSeasonKey: String? {
+        guard let settings = site?.cycleSettings, settings.seasonID != nil || !settings.seasonName.isEmpty else { return nil }
+        return seasonKey(id: settings.seasonID, name: settings.seasonName)
+    }
+    private func seasonKey(id: String?, name: String) -> String { id.map { "season:" + $0 } ?? "legacy:" + name }
 
     var body: some View {
         Group {
@@ -351,6 +365,13 @@ struct GiriSiteDetail: View {
                         GiriSitePeriodActions(site: site)
                     }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
                     siteSection(site)
+                    if let settings = site.cycleSettings, settings.trackSeasonTotals, currentSeasonKey != nil {
+                        Section {
+                            AppCardSectionTitle(title: "シーズンの合計成績", systemImage: "chart.bar", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
+                            if !settings.seasonName.isEmpty { Text(settings.seasonName).font(.headline) }
+                            seasonTotalsRows(site: site, seasonID: settings.seasonID, seasonName: settings.seasonName)
+                        }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+                    }
                     if site.hasAffiliations && !site.leagueChanges.isEmpty {
                         Section {
                             AppCardSectionTitle(title: "シーズン・リーグの履歴", systemImage: "list.number", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
@@ -371,10 +392,14 @@ struct GiriSiteDetail: View {
                         Section { Text("参加した回の履歴がありません").foregroundStyle(.secondary) }
                             .appSectionCardStyle(accentColor: AppSectionAccent.artist)
                     }
-                    ForEach(seasons, id: \.self) { season in
+                    ForEach(seasonGroups) { group in
                         Section {
-                            AppCardSectionTitle(title: season.isEmpty ? "参加履歴" : season, systemImage: "clock", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
-                            ForEach(history.filter { $0.siteSeason == season }) { event in
+                            AppCardSectionTitle(title: group.displayName, systemImage: "clock", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
+                            if site.cycleSettings?.trackSeasonTotals == true, group.id != currentSeasonKey,
+                               group.seasonID != nil || !group.name.isEmpty {
+                                seasonTotalsRows(site: site, seasonID: group.seasonID, seasonName: group.name)
+                            }
+                            ForEach(group.events) { event in
                                 Button { navigation.openThoughts(eventID: event.id) } label: { historyRow(event) }
                                     .buttonStyle(.plain)
                                     .contextMenu {
@@ -402,6 +427,17 @@ struct GiriSiteDetail: View {
         .sheet(item: $resultEvent) { event in NavigationStack { GiriCycleResultEditor(eventID: event.id) } }
     }
 
+    @ViewBuilder private func seasonTotalsRows(site: OnlineSite, seasonID: String?, seasonName: String) -> some View {
+        let totals = giriSeasonTotals(siteID: site.id, seasonID: seasonID, seasonName: seasonName, events: store.events, notes: store.notes)
+        LabeledContent("提出した回答", value: "\(totals.submittedAnswerCount)回答")
+        LabeledContent("得票率の記録済み", value: "\(totals.scoredAnswerCount)回答")
+        LabeledContent("平均得票率", value: totals.averageVoteRate.map { $0.formatted(.number.precision(.fractionLength(2))) + "%" } ?? "未記録")
+        if totals.legacyRoundResultCount > 0 {
+            Text("平均には回単位で残した得票率\(totals.legacyRoundResultCount)件も含みます。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
     private func siteSection(_ site: OnlineSite) -> some View {
         Section {
             AppCardSectionTitle(title: "サイト", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
@@ -411,6 +447,8 @@ struct GiriSiteDetail: View {
             if let settings = site.cycleSettings {
                 GiriProfileInfoRow(title: "繰り返し", value: settings.pattern.title)
                 if !settings.seasonName.isEmpty { GiriProfileInfoRow(title: "シーズン", value: settings.seasonName) }
+                if let start = settings.seasonStart { GiriProfileInfoRow(title: "シーズン開始", value: GiriDateText.dateTime(start)) }
+                if let end = settings.seasonEndsAt { GiriProfileInfoRow(title: "シーズン終了", value: GiriDateText.dateTime(end)) }
             }
             if !site.block.isEmpty { GiriProfileInfoRow(title: "ブロック", value: site.block) }
             if !site.memo.isEmpty { Text(site.memo).textSelection(.enabled) }
@@ -442,6 +480,14 @@ struct GiriSiteDetail: View {
             }.font(.caption).foregroundStyle(AppSectionAccent.memo)
         }.padding(.vertical, 4).contentShape(Rectangle())
     }
+}
+
+private struct GiriSiteSeasonGroup: Identifiable {
+    let id: String
+    let seasonID: String?
+    let name: String
+    var events: [GiriEvent]
+    var displayName: String { name.isEmpty ? (seasonID == nil ? "参加履歴" : "シーズン名未設定") : name }
 }
 
 struct GiriSiteEditor: View {

@@ -295,10 +295,11 @@ struct DomainRegression {
 
             var season = overlap
             season.id = "season-ten-weeks"; season.hasAffiliations = true; season.affiliation = "二部"
-            season.cycleSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: day(28), intervalDays: 7, anchorCycleNumber: 5, seasonName: "第12シーズン", seasonStart: anchor, seasonLengthDays: 70, regularCycleCount: 9, leagues: ["一部", "二部"], leagueChangesPerSeason: true)
+            season.cycleSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: day(28), intervalDays: 7, anchorCycleNumber: 5, seasonName: "第12シーズン", seasonStart: anchor, seasonLengthDays: 70, regularCycleCount: 9, leagues: ["一部", "二部"], leagueChangesPerSeason: true, seasonEndsAt: day(70))
             let middle = siteCycleDescriptors(season, around: day(29)).filter { $0.round.isSubmissionOpen(day(29)) }
             try check(middle.count == 1 && middle[0].cycleNumber == 5 && middle[0].seasonName == "第12シーズン", "registering midseason retains the actual fifth cycle and season name")
             var finalPrompt = EventRound(name: "短縮された最終お題")
+            finalPrompt.promptNumber = 9
             finalPrompt.submissionStart = day(56); finalPrompt.submissionEnd = day(59).addingTimeInterval(43200)
             finalPrompt.votingStart = finalPrompt.submissionEnd; finalPrompt.votingEnd = day(62).addingTimeInterval(43200)
             var playoffRound = EventRound(name: "プレーオフ")
@@ -319,7 +320,7 @@ struct DomainRegression {
 
             var replacementSeason = season
             replacementSeason.id = "six-week-site"
-            replacementSeason.cycleSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: anchor, intervalDays: 7, seasonName: "第3期", seasonStart: anchor, seasonLengthDays: 42, regularCycleCount: 5, leagues: ["一部", "二部"], leagueChangesPerSeason: true)
+            replacementSeason.cycleSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: anchor, intervalDays: 7, seasonName: "第3期", seasonStart: anchor, seasonLengthDays: 42, regularCycleCount: 5, leagues: ["一部", "二部"], leagueChangesPerSeason: true, seasonEndsAt: day(42))
             var replacements: [SiteSpecialPeriod] = []
             for index in 0..<3 {
                 var special = EventRound(name: "入れ替え戦\(index + 1)")
@@ -355,6 +356,7 @@ struct DomainRegression {
             try seasonStore.saveCycleResult(event: promotion, nextAffiliation: "一部")
             var renamedSeason = seasonStore.onlineSites[0]
             renamedSeason.cycleSettings?.seasonName = "第13シーズン"
+            renamedSeason.cycleSettings?.seasonID = UUID().uuidString
             renamedSeason.cycleSettings?.seasonStart = day(70)
             renamedSeason.cycleSettings?.anchorStart = day(70); renamedSeason.cycleSettings?.anchorCycleNumber = 1
             renamedSeason.affiliation = "二部"
@@ -390,6 +392,7 @@ struct DomainRegression {
             var noPostsSite = season; noPostsSite.id = "season-without-posts"; noPostsSite.leagueChanges = []; noPostsSite.leagueBaseline = nil
             try seasonStore.saveOnlineSite(noPostsSite)
             noPostsSite = seasonStore.onlineSites.first { $0.id == noPostsSite.id } ?? noPostsSite
+            noPostsSite.cycleSettings?.seasonID = UUID().uuidString
             noPostsSite.cycleSettings?.seasonName = "第13シーズン"; noPostsSite.cycleSettings?.seasonStart = day(70); noPostsSite.cycleSettings?.anchorStart = day(70); noPostsSite.cycleSettings?.anchorCycleNumber = 1
             noPostsSite.affiliation = "一部"
             try seasonStore.saveOnlineSite(noPostsSite)
@@ -403,6 +406,102 @@ struct DomainRegression {
             var categorized = ThoughtNote(title: "分類", kind: .answers); categorized.answerCategory = "long"
             try seasonStore.saveNote(categorized)
             try check(try GiriJSON.decode(seasonStore.exportBackup()).notes.last?.answerCategory == "long", "standalone answer category survives backup and restore")
+        }
+
+        // 0.7 season identity and rules are independent of arbitrary names,
+        // global prompt numbers and unknown historical boundaries.
+        do {
+            let anchor = GiriDates.parse("2026-10-29T22:00:00Z") ?? Date()
+            func day(_ offset: Int) -> Date { addCalendarDays(anchor, offset) }
+            var site = OnlineSite(id: "stable-season", name: "更新されたサイト", recurrence: .weekly)
+            site.submissionDays = 7; site.votingDays = 3
+            site.hasAffiliations = true; site.affiliation = "二部"
+            site.cycleSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: anchor, intervalDays: 7,
+                anchorCycleNumber: 38, seasonName: "秋の陣", seasonLengthDays: 1, regularCycleCount: 8,
+                leagues: ["一部", "二部"], leagueChangesPerSeason: true, trackSeasonTotals: true)
+            let periods = siteCycleDescriptors(site, around: day(1))
+            try check(periods.contains { $0.cycleNumber == 38 && $0.round.isSubmissionOpen(day(1)) }, "global prompt 38 is not blocked by an old eight-round cap")
+            try check(!periods.contains { ($0.start ?? anchor) < anchor } && site.cycleSettings?.seasonEnd == nil, "unknown season boundaries are not reconstructed from current rules or legacy length")
+            let legacySettings = SiteCycleSettings(pattern: .overlapping, anchorStart: anchor, intervalDays: 7,
+                anchorCycleNumber: 38, seasonName: "秋の陣", seasonStart: day(-259), seasonLengthDays: 1, regularCycleCount: 8)
+            let repairedSettings = try JSONDecoder().decode(SiteCycleSettings.self, from: JSONEncoder().encode(legacySettings))
+            try check(repairedSettings.seasonStart == nil && repairedSettings.legacyInferredSeasonStart == day(-259) && repairedSettings.regularCycleCount == nil && repairedSettings.seasonLengthDays == 1, "recognizable legacy reverse-inferred date is cleared while its deprecated length is retained")
+            var manualStart = legacySettings; manualStart.seasonStart = day(-200)
+            let retainedStart = try JSONDecoder().decode(SiteCycleSettings.self, from: JSONEncoder().encode(manualStart))
+            try check(retainedStart.seasonStart == day(-200), "explicit historical dates different from the old formula are preserved")
+            var oldEvent = GiriEvent(title: "古い自動終了日")
+            oldEvent.eventFormat = .onlineLong; oldEvent.siteSeasonEnd = day(70)
+            let repairedEvent = try GiriJSON.decode(GiriJSON.encode(GiriDocument(events: [oldEvent]))).events[0]
+            try check(repairedEvent.siteSeasonEnd == nil && repairedEvent.legacyInferredSeasonEnd == day(70), "old generated season end is retained for compatibility without becoming a confirmed promotion date")
+
+            let directory = temp.appendingPathComponent("season-rules-07", isDirectory: true)
+            let rulesStore = GiriStore(directory: directory)
+            try rulesStore.saveOnlineSite(site)
+            guard let saved = rulesStore.onlineSites.first, let settings = saved.cycleSettings,
+                  let seasonID = settings.seasonID, let firstRuleID = settings.ruleRevisionID,
+                  let first = siteCycleDescriptors(saved, around: day(1)).first(where: { $0.cycleNumber == 38 }) else {
+                throw GiriDataError.invalid("Missing stable season fixture")
+            }
+            let joined = try rulesStore.createSiteCycle(saved.id, descriptor: first)
+            try check(joined.siteSeasonID == seasonID && joined.siteRuleRevisionID == firstRuleID && joined.siteSeasonStart == nil && joined.siteSeasonEnd == nil, "joined snapshots use stable identity and preserve unknown bounds")
+            var promotion = joined; promotion.leagueMovement = .promoted
+            var unknownDateRejected = false
+            do { try rulesStore.saveCycleResult(event: promotion, nextAffiliation: "一部") } catch { unknownDateRejected = true }
+            try check(unknownDateRejected && rulesStore.events[0].leagueMovement == .unchanged, "seasonal promotion with unknown boundary requires an explicit date and cannot partially save")
+            promotion.nextLeagueEffectiveDate = day(14)
+            try rulesStore.saveCycleResult(event: promotion, nextAffiliation: "一部")
+            try check(siteLeague(rulesStore.onlineSites[0], at: day(13)) == "二部" && siteLeague(rulesStore.onlineSites[0], at: day(14)) == "一部", "explicit league effective dates work without a season start or length")
+            var changed = rulesStore.onlineSites[0]
+            changed.cycleSettings?.anchorStart = day(7); changed.cycleSettings?.anchorCycleNumber = 39
+            changed.submissionDays = 3; changed.votingDays = 2
+            try rulesStore.saveOnlineSite(changed)
+            let revised = rulesStore.onlineSites[0]
+            try check(revised.cycleSettings?.seasonID == seasonID && revised.cycleSettings?.ruleRevisionID != firstRuleID && revised.ruleHistory.count == 1, "changing posting rules creates a rule revision inside the same season")
+            let overlap = siteCycleDescriptors(revised, around: day(8))
+            try check(overlap.contains { $0.ruleRevisionID == firstRuleID && $0.round.isVotingOpen(day(8)) && $0.round.votingEnd == day(10) }, "the previous rule's ongoing vote keeps its original duration")
+            try check(overlap.contains { $0.cycleNumber == 39 && $0.round.submissionStart == day(7) && $0.round.submissionEnd == day(10) }, "the new rule applies from its known current period")
+            try check(rulesStore.events.first { $0.id == joined.id }?.rounds == joined.rounds, "a midseason rule change never rewrites joined dates")
+            var renamed = revised; renamed.cycleSettings?.seasonName = "紅葉大会"
+            try rulesStore.saveOnlineSite(renamed)
+            try check(rulesStore.onlineSites[0].cycleSettings?.seasonID == seasonID && rulesStore.onlineSites[0].ruleHistory.count == 1, "renaming an arbitrary season does not split its identity or add a timing revision")
+            var nextSeason = rulesStore.onlineSites[0]
+            nextSeason.cycleSettings?.seasonID = "another-season"; nextSeason.cycleSettings?.seasonName = "紅葉大会"
+            nextSeason.cycleSettings?.anchorStart = day(30)
+            try rulesStore.saveOnlineSite(nextSeason)
+            try check(rulesStore.onlineSites[0].cycleSettings?.seasonID == "another-season" && rulesStore.events.first { $0.id == joined.id }?.siteSeasonID == seasonID, "seasons with the same display name remain distinct and retain historical results")
+            try check(try GiriJSON.decode(rulesStore.exportBackup()) == rulesStore.document, "rule histories, explicit bounds and stable season identities roundtrip in schema one")
+
+            var event = joined; event.id = "answer-stats"; event.siteSeasonID = "stats-season"; event.siteSeason = "秋の陣"
+            var round = first.round; round.id = "stats-round"; event.rounds = [round]
+            var result = ResultStage(roundId: round.id); result.points = 90; result.voterCount = 100
+            event.tournamentResult = TournamentResult(stages: [result])
+            var own = ThoughtNote(id: "own-stats", title: "お題", eventId: event.id, roundId: round.id)
+            own.answerRecords = [AnswerRecord(text: "回答A", isSubmitted: true, points: 1, voterCount: 4), AnswerRecord(text: "回答B", isSubmitted: true, points: 75, voterCount: 100), AnswerRecord(text: "得票率未記録", isSubmitted: true), AnswerRecord(text: "没案", isSubmitted: false, points: 100, voterCount: 100)]
+            own.usesAnswerRecords = true
+            var others = own; others.id = "other-stats"; others.isOthersAnswer = true; others.answerer = "別の人"
+            var canceled = event; canceled.id = "canceled-stats"; canceled.status = .canceled
+            var canceledNote = own; canceledNote.id = "canceled-note"; canceledNote.eventId = canceled.id
+            var future = event; future.id = "unjoined-stats"; future.isParticipating = false
+            var futureNote = own; futureNote.id = "future-note"; futureNote.eventId = future.id
+            var otherSeason = event; otherSeason.id = "other-season-stats"; otherSeason.siteSeasonID = "other-id"
+            var otherSeasonNote = own; otherSeasonNote.id = "other-season-note"; otherSeasonNote.eventId = otherSeason.id
+            let totals = giriSeasonTotals(siteID: site.id, seasonID: "stats-season", seasonName: "秋の陣", events: [event, canceled, future, otherSeason], notes: [own, others, canceledNote, futureNote, otherSeasonNote])
+            try check(totals.submittedAnswerCount == 3 && totals.scoredAnswerCount == 2 && totals.legacyRoundResultCount == 0, "season totals count submitted own answers only and avoid double-counting their round result")
+            try check(totals.averageVoteRate == 50, "each answer rate has equal weight regardless of its voter count and unknown scores are excluded")
+            let legacyTotals = giriSeasonTotals(siteID: site.id, seasonID: "stats-season", seasonName: "秋の陣", events: [event], notes: [])
+            try check(legacyTotals.submittedAnswerCount == 0 && legacyTotals.scoredAnswerCount == 0 && legacyTotals.legacyRoundResultCount == 1 && legacyTotals.averageVoteRate == 90, "legacy round rates are labelled separately without inventing an answer count")
+            let emptyTotals = giriSeasonTotals(siteID: site.id, seasonID: "absent", seasonName: "別シーズン", events: [event], notes: [own])
+            try check(emptyTotals.rateSampleCount == 0 && emptyTotals.averageVoteRate == nil, "unknown season rates remain unavailable rather than becoming zero")
+
+            var chartCalendar = Calendar(identifier: .gregorian); chartCalendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+            var chartEvent = GiriEvent(title: "1件だけの月別")
+            chartEvent.startsAt = anchor
+            let chart = giriMonthlySeries(events: [chartEvent], year: 2026, calendar: chartCalendar, now: anchor)
+            try check(chart.months.count == 12 && chart.values.count == 48 && chart.values.reduce(0, { $0 + $1.count }) == 1, "one-record charts still include twelve months and all four formats")
+            try check(chart.maximum == 1 && chartCalendar.component(.year, from: chart.end) == 2027 && chartCalendar.component(.month, from: chart.end) == 1, "monthly chart bounds and integer maximum are stable for a single record")
+            var secondChartEvent = chartEvent; secondChartEvent.id = "second-chart"; secondChartEvent.eventFormat = .onlineLong
+            let mixedChart = giriMonthlySeries(events: [chartEvent, secondChartEvent], year: 2026, calendar: chartCalendar, now: anchor)
+            try check(mixedChart.maximum == 2 && mixedChart.values.filter { $0.count > 0 }.count == 2, "monthly chart keeps distinct format series and a stacked integer total")
         }
 
         print("Native domain regressions passed: \(passed)")

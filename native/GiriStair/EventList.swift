@@ -159,33 +159,36 @@ struct GiriListView: View {
         }
     }
     private var eventList: some View {
-        ZStack {
+        // Keep one native List/data source mounted when a format has no rows.
+        // Changing the segmented control must update its rows rather than
+        // replace the collection view while UIKit is handling that selection.
+        List {
+            ForEach(visibleSites) { record in
+                GiriSiteStatusCard(site: record)
+                    .buttonStyle(.plain)
+                    .listRowInsets(EdgeInsets(top: record.id == visibleSites.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
+                    .listRowSeparator(.hidden).listRowBackground(Color.clear)
+            }
+            ForEach(eventCards) { event in
+                Button { destinationID = event.id } label: { GiriEventCard(event: event) }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button { destinationID = event.id } label: { Label("詳細", systemImage: "info.circle") }
+                        Button(role: .destructive) { deletingEvent = event } label: { Label("削除", systemImage: "trash") }
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) { deletingEvent = event } label: { Label("削除", systemImage: "trash") }
+                    }
+                    .listRowInsets(EdgeInsets(top: visibleSites.isEmpty && event.id == eventCards.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
+                    .listRowSeparator(.hidden).listRowBackground(Color.clear)
+            }
+        }
+        .listStyle(.plain).scrollContentBackground(.hidden)
+        .contentMargins(.bottom, 104, for: .scrollContent).scrollIndicators(.hidden)
+        .overlay {
             if eventCards.isEmpty && visibleSites.isEmpty {
                 CenteredEmptyMessage(systemImage: "calendar.badge.exclamationmark", title: searchableEvents.isEmpty ? "記録がありません" : "該当する記録がありません")
-            } else {
-                List {
-                    ForEach(visibleSites) { record in
-                        GiriSiteStatusCard(site: record)
-                            .buttonStyle(.plain)
-                            .listRowInsets(EdgeInsets(top: record.id == visibleSites.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
-                            .listRowSeparator(.hidden).listRowBackground(Color.clear)
-                    }
-                    ForEach(eventCards) { event in
-                        Button { destinationID = event.id } label: { GiriEventCard(event: event) }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                Button { destinationID = event.id } label: { Label("詳細", systemImage: "info.circle") }
-                                Button(role: .destructive) { deletingEvent = event } label: { Label("削除", systemImage: "trash") }
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) { deletingEvent = event } label: { Label("削除", systemImage: "trash") }
-                            }
-                            .listRowInsets(EdgeInsets(top: visibleSites.isEmpty && event.id == eventCards.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
-                            .listRowSeparator(.hidden).listRowBackground(Color.clear)
-                    }
-                }
-                .listStyle(.plain).scrollContentBackground(.hidden)
-                .contentMargins(.bottom, 104, for: .scrollContent).scrollIndicators(.hidden)
+                    .allowsHitTesting(false)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity).background(appBackgroundColor)
@@ -631,7 +634,7 @@ struct GiriEventCard: View {
     let event: GiriEvent
     var showsResult = false
     var resultActionTitle: String? = nil
-    private var accent: Color { GiriEventPresentation.accent(event) }
+    private var accent: Color { GiriEventPresentation.cardAccent(event) }
     private var date: Date? { GiriEventPresentation.date(event) }
     private var venueRecord: GiriVenue? {
         store.venues.first { $0.id == event.venueId || $0.name == event.venue }
@@ -689,10 +692,13 @@ struct GiriEventCard: View {
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if event.participationState() != .completed {
-                    GiriListBadge(text: event.participationState().title, color: accent)
-                        .frame(width: 70, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    GiriListBadge(text: event.meetingType.title, color: accent)
+                    if event.participationState() != .completed {
+                        GiriListBadge(text: event.participationState().title, color: accent)
+                    }
                 }
+                .frame(width: 70, alignment: .leading)
             }
         }
     }
@@ -813,6 +819,11 @@ enum GiriEventPresentation {
         switch status { case .planned: "参加予定"; case .attended: "参加済"; case .canceled: "キャンセル" }
     }
     static func accent(_ event: GiriEvent) -> Color { accent(event.eventFormat) }
+    // The meeting type controls the card rail/background. Format colors remain
+    // unchanged for the format tabs and the calendar's four-category legend.
+    static func cardAccent(_ event: GiriEvent) -> Color {
+        event.meetingType == .tournament ? AppSectionAccent.ticket : accent(event.eventFormat)
+    }
     static func date(_ event: GiriEvent, now: Date = Date()) -> Date? {
         if !event.eventFormat.hasOnlineRounds || event.effectiveRounds.isEmpty { return event.eventDate ?? event.startsAt }
         var dates = event.effectiveRounds.flatMap { round -> [Date] in

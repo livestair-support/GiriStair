@@ -22,9 +22,12 @@ def generate(root: Path = ROOT, build_number: str = "1") -> Path:
     assets = generated / "Brand.xcassets"
     wordmark = assets / "BrandWordmark.imageset"
     wordmark.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(root / "assets/brand/source/wordmark.jpg", wordmark / "wordmark.jpg")
+    transparent_wordmark = root / "assets/brand/derived/wordmark-transparent.png"
+    source_wordmark = transparent_wordmark if transparent_wordmark.exists() else root / "assets/brand/source/wordmark.jpg"
+    wordmark_name = "wordmark" + source_wordmark.suffix
+    shutil.copyfile(source_wordmark, wordmark / wordmark_name)
     (wordmark / "Contents.json").write_text(json.dumps({
-        "images": [{"idiom": "universal", "filename": "wordmark.jpg"}],
+        "images": [{"idiom": "universal", "filename": wordmark_name}],
         "info": {"author": "xcode", "version": 1},
     }))
     (assets / "Contents.json").write_text(json.dumps({"info": {"author": "xcode", "version": 1}}))

@@ -8,7 +8,7 @@
 | 横長ロゴ（1280×282、白背景） | `assets/brand/source/wordmark.jpg` | `BrandWordmark`、共有画像のヘッダー |
 | 起動画面（590×1280） | `assets/brand/source/launch_screen.jpg` | iOS LaunchScreen・Flutter読込中・Android起動ロゴ |
 
-原本JPEGはバイト列をそのまま保存し、`manifest.json`でハッシュを検査します。背景色は原本のクリーム色 `#F5F1E8` です。横長ロゴの白背景は透明化していません。UIの既存アクセント色は変更していません。
+原本JPEGはバイト列をそのまま保存し、`manifest.json`でハッシュを検査します。背景色は原本のクリーム色 `#F5F1E8` です。0.7ではユーザーの指定で横長ロゴの白背景を透明化したPNGを共有に使います。元のJPEGも保持します。UIの既存アクセント色は変更していません。
 
 ## OS用の派生画像
 
@@ -29,3 +29,9 @@ python3 .ci/brand_assets.py
 通常のビルドにはPillowは不要です。生成済みのNative画像・XML・Storyboardを`assets/brand/native-assets.zip`に保存し、`.ci/prepare_project.py`が標準ライブラリで各Nativeディレクトリへ復元します。生成済みファイルもリポジトリへ含めているため、通常の`flutter run`でも採用したアイコンを使用します。
 
 原本、生成用スクリプト、zip、manifest、iOS・Android側の派生ファイルは一緒に更新してください。CIでは画像寸法・App Store用アルファなし・原本ハッシュと、Native素材を消した後の復元を検査します。実機のホーム画面や起動アニメーションは別途確認が必要です。
+
+## 0.7の共有ロゴ
+
+`assets/brand/derived/wordmark-transparent.png` は、元の横長ロゴを参照して白背景を透明化したRGBA PNGです。ユーザーが「背景を透明にしたい」と確認したため、共有ページのBrandWordmarkへ適用します。起動画面・アプリアイコンの原本は変更しません。
+
+SwiftUIプロジェクト生成時に透過PNGがあればそのままコピーし、ない場合だけ元のJPEGへ戻します。生成テストで原本の保持と派生PNGの採用を確認しています。

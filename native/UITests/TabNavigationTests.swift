@@ -8,6 +8,32 @@ final class TabNavigationTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testSharingPreviewSettingsAndReturnToListRemainResponsive() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-tab-navigation"]
+        app.launch()
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.waitForExistence(timeout: 15))
+        for mode in [("Giri Summary", "sharing.summary.preview"), ("Giri List", "sharing.list.preview")] {
+            tabBar.buttons["設定"].tap()
+            let link = app.buttons[mode.0]
+            XCTAssertTrue(link.waitForExistence(timeout: 5))
+            link.tap()
+            let preview = app.descendants(matching: .any).matching(identifier: mode.1).firstMatch
+            XCTAssertTrue(preview.waitForExistence(timeout: 15))
+            let palette = app.buttons["sharing.settings"]
+            XCTAssertTrue(palette.waitForExistence(timeout: 5))
+            palette.tap()
+            XCTAssertEqual(app.state, .runningForeground)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(preview.waitForExistence(timeout: 5))
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            tabBar.buttons["一覧"].tap()
+            XCTAssertTrue(app.segmentedControls["format-tabs"].firstMatch.waitForExistence(timeout: 5))
+            XCTAssertEqual(app.state, .runningForeground)
+        }
+    }
+
     func testTopFormatSwitchesWithOnlyOneLiveRecordAndOneSite() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-tab-navigation", "--uitest-minimal-navigation"]

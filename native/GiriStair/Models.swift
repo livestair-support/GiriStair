@@ -342,8 +342,11 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var nextAffiliation: String = ""
     var siteScheduleCustomized: Bool = false
     var siteSeason: String = ""
+    var siteSeasonID: String? = nil
+    var siteRuleRevisionID: String? = nil
     var siteSeasonStart: Date? = nil
     var siteSeasonEnd: Date? = nil
+    var legacyInferredSeasonEnd: Date? = nil
     var siteCycleNumber: Int? = nil
     var sitePeriodKind: SitePeriodKind = .regular
     var leagueMovement: LeagueMovement = .unchanged
@@ -353,7 +356,7 @@ struct GiriEvent: Codable, Equatable, Identifiable {
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonStart, siteSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -434,8 +437,15 @@ extension GiriEvent {
         nextAffiliation = try c.decodeIfPresent(String.self, forKey: .nextAffiliation) ?? ""
         siteScheduleCustomized = try c.decodeIfPresent(Bool.self, forKey: .siteScheduleCustomized) ?? false
         siteSeason = try c.decodeIfPresent(String.self, forKey: .siteSeason) ?? ""
+        siteSeasonID = try c.decodeIfPresent(String.self, forKey: .siteSeasonID)
+        siteRuleRevisionID = try c.decodeIfPresent(String.self, forKey: .siteRuleRevisionID)
         siteSeasonStart = try c.giriDate(forKey: .siteSeasonStart, required: false, calendarOnly: false)
         siteSeasonEnd = try c.giriDate(forKey: .siteSeasonEnd, required: false, calendarOnly: false)
+        legacyInferredSeasonEnd = try c.giriDate(forKey: .legacyInferredSeasonEnd, required: false, calendarOnly: false)
+        if siteSeasonID == nil && siteRuleRevisionID == nil, let oldEnd = siteSeasonEnd {
+            legacyInferredSeasonEnd = legacyInferredSeasonEnd ?? oldEnd
+            siteSeasonEnd = nil
+        }
         siteCycleNumber = try c.decodeIfPresent(Int.self, forKey: .siteCycleNumber)
         sitePeriodKind = try c.decodeIfPresent(SitePeriodKind.self, forKey: .sitePeriodKind) ?? .regular
         leagueMovement = try c.decodeIfPresent(LeagueMovement.self, forKey: .leagueMovement) ?? .unchanged
@@ -521,8 +531,11 @@ extension GiriEvent {
         try c.encode(nextAffiliation, forKey: .nextAffiliation)
         try c.encode(siteScheduleCustomized, forKey: .siteScheduleCustomized)
         try c.encode(siteSeason, forKey: .siteSeason)
+        try c.encode(siteSeasonID, forKey: .siteSeasonID)
+        try c.encode(siteRuleRevisionID, forKey: .siteRuleRevisionID)
         try c.encode(siteSeasonStart.map(GiriDates.timestamp), forKey: .siteSeasonStart)
         try c.encode(siteSeasonEnd.map(GiriDates.timestamp), forKey: .siteSeasonEnd)
+        try c.encode(legacyInferredSeasonEnd.map(GiriDates.timestamp), forKey: .legacyInferredSeasonEnd)
         try c.encode(siteCycleNumber, forKey: .siteCycleNumber)
         try c.encode(sitePeriodKind, forKey: .sitePeriodKind)
         try c.encode(leagueMovement, forKey: .leagueMovement)
@@ -794,11 +807,12 @@ struct OnlineSite: Codable, Equatable, Identifiable {
     var cycleSettings: SiteCycleSettings? = nil
     var leagueChanges: [SiteLeagueChange] = []
     var leagueBaseline: String? = nil
+    var ruleHistory: [SiteRuleRevision] = []
 }
 
 extension OnlineSite {
     private enum CodingKeys: String, CodingKey {
-        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline
+        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline, ruleHistory
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -832,6 +846,7 @@ extension OnlineSite {
         cycleSettings = try c.decodeIfPresent(SiteCycleSettings.self, forKey: .cycleSettings)
         leagueChanges = try c.decodeIfPresent([SiteLeagueChange].self, forKey: .leagueChanges) ?? []
         leagueBaseline = try c.decodeIfPresent(String.self, forKey: .leagueBaseline)
+        ruleHistory = try c.decodeIfPresent([SiteRuleRevision].self, forKey: .ruleHistory) ?? []
 
         try validate()
     }
@@ -867,6 +882,7 @@ extension OnlineSite {
         try c.encode(cycleSettings, forKey: .cycleSettings)
         try c.encode(leagueChanges, forKey: .leagueChanges)
         try c.encode(leagueBaseline, forKey: .leagueBaseline)
+        try c.encode(ruleHistory, forKey: .ruleHistory)
 
     }
 }
@@ -1285,6 +1301,8 @@ extension OnlineSite {
     func validate() throws {
         try cycleSettings?.validate()
         try uniqueIDs(leagueChanges)
+        try uniqueIDs(ruleHistory)
+        try ruleHistory.forEach { try $0.validate() }
         try validID(id)
         try require(!name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (1...7).contains(weekday) && (0...23).contains(startHour) && (0...59).contains(startMinute) && submissionDays >= 1 && votingDays >= 1, "サイト設定が不正です。")
     }

@@ -719,7 +719,7 @@ struct GiriCycleResultEditor: View {
             if hasLeagueChange {
                 OptionalDateRow(title: "反映する日時", selection: $effectiveDate)
                 if site?.cycleSettings?.leagueChangesPerSeason == true {
-                    Text("次のシーズンから変更する日時を確認できます。")
+                    Text("実際にリーグが変わる日時を指定します。シーズン終了が未定の場合は推測しません。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
@@ -780,7 +780,11 @@ struct GiriCycleResultEditor: View {
 
     private func fillEffectiveDate() {
         guard effectiveDate == nil, let event else { return }
-        if let site { effectiveDate = siteLeagueEffectiveDate(site, after: event) }
+        if let site {
+            if site.cycleSettings?.leagueChangesPerSeason == true,
+               event.siteSeasonEnd == nil, site.cycleSettings?.seasonEndsAt == nil { return }
+            effectiveDate = siteLeagueEffectiveDate(site, after: event)
+        }
         else { effectiveDate = event.participationEndDate ?? Date() }
     }
 

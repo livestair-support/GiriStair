@@ -253,7 +253,7 @@ struct GiriSiteCycleSettingsForm: View {
                         Button(role: .destructive) { var value = settings.wrappedValue; value.leagues.remove(at: index); settings.wrappedValue = value } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
                     }
                 }
-                Button("リーグを追加", systemImage: "plus.circle") { var value = settings.wrappedValue; value.leagues.append(""); settings.wrappedValue = value }.buttonStyle(.borderless)
+                Button("リーグ名を追加", systemImage: "plus.circle") { var value = settings.wrappedValue; value.leagues.append(""); settings.wrappedValue = value }.buttonStyle(.borderless)
                 Picker("現在のリーグ", selection: $site.affiliation) {
                     Text("未設定").tag("")
                     ForEach(Array(settings.wrappedValue.leagues.enumerated()), id: \.offset) { _, name in
@@ -274,19 +274,33 @@ struct GiriSiteCycleSettingsForm: View {
                 Toggle("シーズンがある", isOn: Binding(get: { seasons }, set: changeSeason))
                     .tint(AppSectionAccent.artist)
                 if seasons {
-                    TextField("シーズン名（例：第12シーズン）", text: settings.seasonName)
-                    Stepper("登録するお題は第\(currentCycle)回", value: Binding(get: { currentCycle }, set: { currentCycle = $0; updateAnchor() }), in: 1...999)
-                    OptionalDateRow(title: "シーズン開始", selection: settings.seasonStart)
-                    Stepper("通常のお題　\(settings.wrappedValue.regularCycleCount ?? 9)回", value: optionalInteger(\.regularCycleCount, fallback: 9), in: 1...999)
-                    Stepper("1シーズン　\(settings.wrappedValue.seasonLengthDays ?? 70)日", value: optionalInteger(\.seasonLengthDays, fallback: 70), in: 1...730)
-                    if site.hasAffiliations { Toggle("昇降格はシーズン終了後", isOn: settings.leagueChangesPerSeason).tint(AppSectionAccent.artist) }
+                    TextField("シーズン名（例：秋シーズン）", text: settings.seasonName)
+                    Stepper("このお題は第\(currentCycle)回", value: Binding(get: { currentCycle }, set: { currentCycle = $0; updateAnchor() }), in: 1...max(9999, currentCycle))
+                    Toggle("シーズンの合計成績を記録", isOn: settings.trackSeasonTotals)
+                        .tint(AppSectionAccent.artist)
+                    DisclosureGroup("分かっている日程・最終回") {
+                        OptionalDateRow(title: "シーズン開始（任意）", selection: settings.seasonStart)
+                        OptionalDateRow(title: "シーズン終了（任意）", selection: settings.seasonEndsAt)
+                        Toggle("最後のお題番号が分かる", isOn: Binding(get: {
+                            settings.wrappedValue.regularCycleCount != nil
+                        }, set: { enabled in
+                            var value = settings.wrappedValue
+                            value.regularCycleCount = enabled ? currentCycle : nil
+                            settings.wrappedValue = value
+                        }))
+                        if settings.wrappedValue.regularCycleCount != nil {
+                            Stepper("最後のお題は第\(settings.wrappedValue.regularCycleCount ?? currentCycle)回", value: optionalInteger(\.regularCycleCount, fallback: currentCycle), in: currentCycle...max(9999, currentCycle))
+                        }
+                    }
+                    if site.hasAffiliations {
+                        Toggle("昇降格はシーズン終了後", isOn: settings.leagueChangesPerSeason)
+                            .tint(AppSectionAccent.artist)
+                    }
                     if !isNew {
                         Button("次のシーズンを設定", systemImage: "arrow.right.circle") { startNextSeason() }
                             .buttonStyle(.borderless)
-                        Text("次のシーズンの特別週は、日程を確認して追加してください。過去の参加記録は残ります。")
-                            .font(.caption).foregroundStyle(.secondary)
                     }
-                    Text("通常回の後は、下の特別週に日程を追加します。入れ替え戦への出場と昇降格は別に記録できます。")
+                    Text("お題の回数からシーズン開始を逆算しません。途中でルールが変わった場合も、上で指定した回から先の日程だけに反映します。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -342,8 +356,13 @@ struct GiriSiteCycleSettingsForm: View {
             if isNew { site.recurrence = .weekly }
             else if site.recurrence == .irregular { specialExpanded = true }
         }
+        if let cap = settings.wrappedValue.regularCycleCount, cap < settings.wrappedValue.anchorCycleNumber {
+            var corrected = settings.wrappedValue
+            corrected.regularCycleCount = nil
+            settings.wrappedValue = corrected
+        }
         let value = settings.wrappedValue
-        seasons = value.seasonStart != nil || value.regularCycleCount != nil || !value.seasonName.isEmpty
+        seasons = value.seasonID != nil || value.seasonStart != nil || value.seasonEndsAt != nil || value.trackSeasonTotals || !value.seasonName.isEmpty
         seasonExpanded = seasons
         currentCycle = value.anchorCycleNumber
         phaseStart = value.anchorStart
@@ -362,9 +381,7 @@ struct GiriSiteCycleSettingsForm: View {
         var value = settings.wrappedValue
         value.anchorStart = phase == .posting ? phaseStart : addCalendarDays(phaseStart, -site.submissionDays)
         value.anchorCycleNumber = currentCycle
-        if seasons {
-            value.seasonStart = addCalendarDays(value.anchorStart, -(currentCycle - 1) * value.intervalDays)
-        }
+        if let last = value.regularCycleCount, last < currentCycle { value.regularCycleCount = nil }
         settings.wrappedValue = value
         site.startHour = Calendar.current.component(.hour, from: value.anchorStart)
         site.startMinute = Calendar.current.component(.minute, from: value.anchorStart)
@@ -384,27 +401,35 @@ struct GiriSiteCycleSettingsForm: View {
         seasons = enabled
         var value = settings.wrappedValue
         if enabled {
-            if value.seasonName.isEmpty { value.seasonName = "シーズン1" }
-            value.seasonStart = addCalendarDays(value.anchorStart, -(currentCycle - 1) * value.intervalDays)
-            value.regularCycleCount = value.regularCycleCount ?? 9
-            value.seasonLengthDays = value.seasonLengthDays ?? 70
+            if value.seasonID == nil { value.seasonID = UUID().uuidString }
         } else {
-            value.seasonName = ""; value.seasonStart = nil; value.regularCycleCount = nil; value.seasonLengthDays = nil
+            value.seasonID = nil
+            value.seasonName = ""
+            value.seasonStart = nil
+            value.seasonEndsAt = nil
+            value.regularCycleCount = nil
+            value.seasonLengthDays = nil
+            value.trackSeasonTotals = false
             value.leagueChangesPerSeason = false
         }
         settings.wrappedValue = value
     }
     private func startNextSeason() {
         var value = settings.wrappedValue
-        let next = value.seasonStart.map { addCalendarDays($0, value.seasonLengthDays ?? 70) } ?? Date()
-        if site.hasAffiliations { site.affiliation = siteLeague(site, at: next) }
-        value.anchorStart = next; value.anchorCycleNumber = 1; value.seasonStart = next
-        value.seasonName = "次のシーズン"
-        // Joined historical events retain their snapshots. New-season special
-        // dates receive fresh IDs when the user adds them.
+        value.seasonID = UUID().uuidString
+        value.ruleRevisionID = UUID().uuidString
+        value.seasonName = ""
+        value.seasonStart = nil
+        value.seasonEndsAt = nil
+        value.seasonLengthDays = nil
+        value.regularCycleCount = nil
+        // A new season can use the site's continuing question numbering. Its
+        // actual first posting date is entered above, rather than inferred.
+        value.anchorStart = phase == .posting ? phaseStart : addCalendarDays(phaseStart, -site.submissionDays)
+        value.anchorCycleNumber = currentCycle
         value.specialPeriods = []
         settings.wrappedValue = value
-        phase = .posting; phaseStart = next; currentCycle = 1
+        seasonExpanded = true
     }
     private func optionalInteger(_ keyPath: WritableKeyPath<SiteCycleSettings, Int?>, fallback: Int) -> Binding<Int> {
         Binding(get: { settings.wrappedValue[keyPath: keyPath] ?? fallback }, set: { var value = settings.wrappedValue; value[keyPath: keyPath] = $0; settings.wrappedValue = value })
