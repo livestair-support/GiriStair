@@ -4,8 +4,18 @@ import SwiftUI
 @main
 @MainActor
 struct GiriStairApp: App {
-    @StateObject private var store = GiriStore()
+    @StateObject private var store: GiriStore
     @StateObject private var navigation = GiriNavigation()
+
+    init() {
+        #if DEBUG
+        let store = ProcessInfo.processInfo.arguments.contains("--uitest-tab-navigation")
+            ? GiriNavigationTestSeed.makeStore() : GiriStore()
+        #else
+        let store = GiriStore()
+        #endif
+        _store = StateObject(wrappedValue: store)
+    }
 
     var body: some Scene {
         WindowGroup {

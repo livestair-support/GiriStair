@@ -9,7 +9,7 @@ import plistlib
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 MINIMUM_IOS = "18.1"
 
 
@@ -22,9 +22,12 @@ def generate(root: Path = ROOT, build_number: str = "1") -> Path:
     assets = generated / "Brand.xcassets"
     wordmark = assets / "BrandWordmark.imageset"
     wordmark.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(root / "assets/brand/source/wordmark.jpg", wordmark / "wordmark.jpg")
+    transparent_wordmark = root / "assets/brand/derived/wordmark-transparent.png"
+    source_wordmark = transparent_wordmark if transparent_wordmark.exists() else root / "assets/brand/source/wordmark.jpg"
+    wordmark_name = "wordmark" + source_wordmark.suffix
+    shutil.copyfile(source_wordmark, wordmark / wordmark_name)
     (wordmark / "Contents.json").write_text(json.dumps({
-        "images": [{"idiom": "universal", "filename": "wordmark.jpg"}],
+        "images": [{"idiom": "universal", "filename": wordmark_name}],
         "info": {"author": "xcode", "version": 1},
     }))
     (assets / "Contents.json").write_text(json.dumps({"info": {"author": "xcode", "version": 1}}))
@@ -66,8 +69,21 @@ def generate(root: Path = ROOT, build_number: str = "1") -> Path:
                 "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
                 "CODE_SIGN_STYLE": "Automatic", "SWIFT_EMIT_LOC_STRINGS": "YES",
             }},
+        }, "GiriStairUITests": {
+            "type": "bundle.ui-testing", "platform": "iOS",
+            "sources": [{"path": "UITests"}],
+            "dependencies": [{"target": "GiriStair"}],
+            "settings": {"base": {
+                "PRODUCT_BUNDLE_IDENTIFIER": config["bundle_id"] + ".uitests",
+                "GENERATE_INFOPLIST_FILE": "YES", "TEST_TARGET_NAME": "GiriStair",
+                "CODE_SIGNING_ALLOWED": "NO",
+            }},
         }},
-        "schemes": {"GiriStair": {"build": {"targets": {"GiriStair": "all"}}, "run": {"config": "Debug"}, "archive": {"config": "Release"}}},
+        "schemes": {"GiriStair": {
+            "build": {"targets": {"GiriStair": "all", "GiriStairUITests": ["test"]}},
+            "run": {"config": "Debug"}, "archive": {"config": "Release"},
+            "test": {"config": "Debug", "targets": [{"name": "GiriStairUITests", "parallelizable": False}]},
+        }},
     }
     path = root / "native/project.json"
     path.write_text(json.dumps(project, indent=2) + "\n")

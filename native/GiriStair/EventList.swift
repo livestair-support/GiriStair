@@ -21,6 +21,7 @@ struct GiriListView: View {
     @State private var isCollapsed = false
     @State private var destinationID: String?
     @State private var deletingEvent: GiriEvent?
+    @State private var timelineStart = Date()
 
     private var accent: Color { GiriEventPresentation.accent(selectedFormat) }
     private var isCalendar: Bool { store.preferences.listCurrentMode }
@@ -106,13 +107,13 @@ struct GiriListView: View {
     private var hasParticipantFilter: Bool { selectedFormat.hasLiveTiming }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { _ in
+        TimelineView(.periodic(from: timelineStart, by: 60)) { context in
             VStack(spacing: 0) {
                 if isCalendar {
                     ScrollView { GiriCalendarView(events: store.events) }
                 } else {
                     filterHeader
-                    eventList
+                    eventList(now: context.date)
                 }
             }
         }
@@ -158,34 +159,37 @@ struct GiriListView: View {
             Button("キャンセル", role: .cancel) { deletingEvent = nil }
         }
     }
-    private var eventList: some View {
-        ZStack {
+    private func eventList(now: Date) -> some View {
+        // Keep one native List/data source mounted when a format has no rows.
+        // Changing the segmented control must update its rows rather than
+        // replace the collection view while UIKit is handling that selection.
+        List {
+            ForEach(visibleSites) { record in
+                GiriSiteStatusCard(site: record, now: now)
+                    .buttonStyle(.plain)
+                    .listRowInsets(EdgeInsets(top: record.id == visibleSites.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
+                    .listRowSeparator(.hidden).listRowBackground(Color.clear)
+            }
+            ForEach(eventCards) { event in
+                Button { destinationID = event.id } label: { GiriEventCard(event: event) }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button { destinationID = event.id } label: { Label("詳細", systemImage: "info.circle") }
+                        Button(role: .destructive) { deletingEvent = event } label: { Label("削除", systemImage: "trash") }
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) { deletingEvent = event } label: { Label("削除", systemImage: "trash") }
+                    }
+                    .listRowInsets(EdgeInsets(top: visibleSites.isEmpty && event.id == eventCards.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
+                    .listRowSeparator(.hidden).listRowBackground(Color.clear)
+            }
+        }
+        .listStyle(.plain).scrollContentBackground(.hidden)
+        .contentMargins(.bottom, 104, for: .scrollContent).scrollIndicators(.hidden)
+        .overlay {
             if eventCards.isEmpty && visibleSites.isEmpty {
                 CenteredEmptyMessage(systemImage: "calendar.badge.exclamationmark", title: searchableEvents.isEmpty ? "記録がありません" : "該当する記録がありません")
-            } else {
-                List {
-                    ForEach(visibleSites) { record in
-                        GiriSiteStatusCard(site: record)
-                            .buttonStyle(.plain)
-                            .listRowInsets(EdgeInsets(top: record.id == visibleSites.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
-                            .listRowSeparator(.hidden).listRowBackground(Color.clear)
-                    }
-                    ForEach(eventCards) { event in
-                        Button { destinationID = event.id } label: { GiriEventCard(event: event) }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                Button { destinationID = event.id } label: { Label("詳細", systemImage: "info.circle") }
-                                Button(role: .destructive) { deletingEvent = event } label: { Label("削除", systemImage: "trash") }
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) { deletingEvent = event } label: { Label("削除", systemImage: "trash") }
-                            }
-                            .listRowInsets(EdgeInsets(top: visibleSites.isEmpty && event.id == eventCards.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
-                            .listRowSeparator(.hidden).listRowBackground(Color.clear)
-                    }
-                }
-                .listStyle(.plain).scrollContentBackground(.hidden)
-                .contentMargins(.bottom, 104, for: .scrollContent).scrollIndicators(.hidden)
+                    .allowsHitTesting(false)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity).background(appBackgroundColor)
@@ -351,7 +355,7 @@ struct GiriFormatPicker: View {
             ForEach(formats) { format in
                 Text(format.shortTitle).tag(format).accessibilityLabel(format.title)
             }
-        }.pickerStyle(.segmented)
+        }.pickerStyle(.segmented).accessibilityIdentifier("format-tabs")
     }
 }
 
@@ -413,56 +417,21 @@ private enum LiveListFilterTextMeasurement {
     }
 }
 
-private struct LiveListFilterValueText: UIViewRepresentable {
+/// Keep the source label's typography and measured placement, but let SwiftUI
+/// draw the text. Changing a live UILabel's font from layoutSubviews and then
+/// invalidating its intrinsic size during representable updates can re-enter
+/// the layout graph while a format removes/replaces the filter rows.
+private struct LiveListFilterValueText: View {
     let text: String
     let pointSize: CGFloat
 
-    func makeUIView(context: Context) -> FittingLabel {
-        let label = FittingLabel()
-        label.textColor = .label
-        label.textAlignment = .right
-        label.numberOfLines = 0
-        label.lineBreakMode = .byWordWrapping
-        label.adjustsFontSizeToFitWidth = false
-        label.adjustsFontForContentSizeCategory = false
-        label.clipsToBounds = true
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return label
-    }
-
-    func updateUIView(_ uiView: FittingLabel, context: Context) {
-        uiView.text = text
-        uiView.basePointSize = pointSize
-        uiView.invalidateIntrinsicContentSize()
-        uiView.setNeedsLayout()
-    }
-
-    func sizeThatFits(
-        _ proposal: ProposedViewSize,
-        uiView: FittingLabel,
-        context: Context
-    ) -> CGSize? {
-        guard let width = proposal.width, width.isFinite else {
-            let font = UIFont.systemFont(ofSize: pointSize, weight: .medium)
-            let naturalSize = (text as NSString).size(withAttributes: [.font: font])
-            return CGSize(width: ceil(naturalSize.width), height: ceil(naturalSize.height) + 2)
-        }
-        // 高さの提案で文字を圧縮せず、親の Layout と同じ幅から全文の高さを返す。
-        return LiveListFilterTextMeasurement.fitted(text, pointSize: pointSize, width: width).size
-    }
-
-    final class FittingLabel: UILabel {
-        var basePointSize: CGFloat = 17
-
-        override func layoutSubviews() {
-            let fittedFont = LiveListFilterTextMeasurement.fitted(
-                text ?? "", pointSize: basePointSize, width: bounds.width
-            ).font
-            if font != fittedFont {
-                font = fittedFont
-            }
-            super.layoutSubviews()
-        }
+    var body: some View {
+        Text(text)
+            .font(.system(size: pointSize, weight: .medium))
+            .minimumScaleFactor(LiveListFilterTextMeasurement.minimumScale)
+            .multilineTextAlignment(.trailing)
+            .lineLimit(nil)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
 
@@ -631,7 +600,7 @@ struct GiriEventCard: View {
     let event: GiriEvent
     var showsResult = false
     var resultActionTitle: String? = nil
-    private var accent: Color { GiriEventPresentation.accent(event) }
+    private var accent: Color { GiriEventPresentation.cardAccent(event) }
     private var date: Date? { GiriEventPresentation.date(event) }
     private var venueRecord: GiriVenue? {
         store.venues.first { $0.id == event.venueId || $0.name == event.venue }
@@ -689,10 +658,13 @@ struct GiriEventCard: View {
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if event.participationState() != .completed {
-                    GiriListBadge(text: event.participationState().title, color: accent)
-                        .frame(width: 70, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    GiriListBadge(text: event.meetingType.title, color: accent)
+                    if event.participationState() != .completed {
+                        GiriListBadge(text: event.participationState().title, color: accent)
+                    }
                 }
+                .frame(width: 70, alignment: .leading)
             }
         }
     }
@@ -813,6 +785,11 @@ enum GiriEventPresentation {
         switch status { case .planned: "参加予定"; case .attended: "参加済"; case .canceled: "キャンセル" }
     }
     static func accent(_ event: GiriEvent) -> Color { accent(event.eventFormat) }
+    // The meeting type controls the card rail/background. Format colors remain
+    // unchanged for the format tabs and the calendar's four-category legend.
+    static func cardAccent(_ event: GiriEvent) -> Color {
+        event.meetingType == .tournament ? AppSectionAccent.ticket : accent(event.eventFormat)
+    }
     static func date(_ event: GiriEvent, now: Date = Date()) -> Date? {
         if !event.eventFormat.hasOnlineRounds || event.effectiveRounds.isEmpty { return event.eventDate ?? event.startsAt }
         var dates = event.effectiveRounds.flatMap { round -> [Date] in

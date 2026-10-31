@@ -190,6 +190,12 @@ final class GiriStore: ObservableObject {
         var event = Self.normalizedEvent(candidate)
         if let nextAffiliation { event.nextAffiliation = nextAffiliation.trimmingCharacters(in: .whitespacesAndNewlines) }
         try event.validate()
+        if let target = nextAffiliation?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !target.isEmpty, target != event.affiliation,
+           let site = onlineSiteById(event.onlineSiteId), site.cycleSettings?.leagueChangesPerSeason == true,
+           event.nextLeagueEffectiveDate == nil, event.siteSeasonEnd == nil, site.cycleSettings?.seasonEnd == nil {
+            throw GiriDataError.invalid("シーズン終了が未定です。リーグ変更の適用日を入力してください。")
+        }
         try mutate { next in
             Self.upsert(event, into: &next.events)
             guard event.isActualParticipant, let siteID = event.onlineSiteId,
@@ -295,25 +301,68 @@ final class GiriStore: ObservableObject {
     }
     func saveOnlineSite(_ candidate: OnlineSite) throws {
         var site = candidate
+        let previous = onlineSites.first { $0.id == site.id }
+        let previousSettings = previous?.cycleSettings
+        let previousSeasonID: String? = previousSettings.flatMap { settings in
+            guard settings.seasonID != nil || !settings.seasonName.isEmpty || settings.trackSeasonTotals || settings.seasonStart != nil || settings.seasonEndsAt != nil else { return nil }
+            return settings.seasonID ?? "legacy-season:\(site.id):\(settings.seasonName)"
+        }
+        if var settings = site.cycleSettings {
+            let hasSeason = settings.seasonID != nil || !settings.seasonName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || settings.trackSeasonTotals || settings.seasonStart != nil || settings.seasonEndsAt != nil
+            if hasSeason && settings.seasonID == nil { settings.seasonID = previousSeasonID ?? UUID().uuidString }
+            if !hasSeason { settings.seasonID = nil }
+            if let cap = settings.regularCycleCount, cap < settings.anchorCycleNumber { settings.regularCycleCount = nil }
+            let changedRules = previousSettings.map { old in
+                settings.anchorStart != old.anchorStart || settings.anchorCycleNumber != old.anchorCycleNumber ||
+                settings.pattern != old.pattern || settings.intervalDays != old.intervalDays ||
+                settings.seasonID != previousSeasonID || site.submissionDays != previous?.submissionDays ||
+                site.votingDays != previous?.votingDays || site.recurrence != previous?.recurrence ||
+                (settings.ruleRevisionID != nil && settings.ruleRevisionID != old.ruleRevisionID)
+            } ?? false
+            if let previous, var old = previousSettings, changedRules {
+                let oldID = old.ruleRevisionID ?? "legacy-rule:\(site.id):\(cycleKeyFor(old.anchorStart))"
+                old.ruleRevisionID = oldID
+                if old.seasonID == nil && !old.seasonName.isEmpty { old.seasonID = previousSeasonID }
+                if !site.ruleHistory.contains(where: { $0.id == oldID }) {
+                    site.ruleHistory.append(SiteRuleRevision(id: oldID, settings: old,
+                        submissionDays: previous.submissionDays, votingDays: previous.votingDays,
+                        recurrence: previous.recurrence))
+                }
+                // A new rule applies from the actual period the user knows.
+                // It cannot reconstruct dates preceding that anchor.
+                if settings.ruleRevisionID == nil || settings.ruleRevisionID == previousSettings?.ruleRevisionID {
+                    settings.ruleRevisionID = UUID().uuidString
+                }
+            }
+            if settings.ruleRevisionID == nil { settings.ruleRevisionID = previousSettings?.ruleRevisionID ?? UUID().uuidString }
+            site.cycleSettings = settings
+        }
         try site.validate()
-        if let previous = onlineSites.first(where: { $0.id == site.id }) {
-            let newSeason = site.cycleSettings?.seasonName != previous.cycleSettings?.seasonName || site.cycleSettings?.seasonStart != previous.cycleSettings?.seasonStart
+        if let previous {
+            let newSeason = site.cycleSettings?.seasonID != previousSeasonID
             let namedNewSeason = newSeason && site.hasAffiliations && !(site.cycleSettings?.seasonName.isEmpty ?? true)
             if (site.affiliation != siteLeague(previous) || namedNewSeason), previous.cycleSettings != nil || !previous.leagueChanges.isEmpty {
                 if site.leagueBaseline == nil { site.leagueBaseline = previous.leagueBaseline ?? previous.leagueChanges.sorted { $0.effectiveFrom < $1.effectiveFrom }.first?.fromLeague ?? previous.affiliation }
                 let noJoinedHistory = !events.contains { $0.onlineSiteId == site.id && $0.isActualParticipant }
-                let effective = (newSeason || noJoinedHistory) ? (site.cycleSettings?.inferredSeasonStart ?? Date()) : Date()
+                let effective = (newSeason || noJoinedHistory) ? (site.cycleSettings?.seasonStart ?? site.cycleSettings?.anchorStart ?? Date()) : Date()
                 let change = SiteLeagueChange(sourceEventID: "site-setting:" + UUID().uuidString, fromLeague: siteLeague(previous, at: effective), toLeague: site.affiliation, effectiveFrom: effective, seasonName: site.cycleSettings?.seasonName ?? "")
                 site.leagueChanges.append(change)
                 site.affiliation = siteLeague(site)
             }
         } else if site.hasAffiliations, let settings = site.cycleSettings, !settings.seasonName.isEmpty, !site.affiliation.isEmpty {
-            // Registering a season preserves its initial league even if no
-            // submission is ultimately joined before the next season begins.
             site.leagueBaseline = site.affiliation
-            site.leagueChanges.append(SiteLeagueChange(id: "season-start:" + site.id, sourceEventID: "season-start:" + site.id, fromLeague: site.affiliation, toLeague: site.affiliation, effectiveFrom: settings.inferredSeasonStart, seasonName: settings.seasonName))
+            site.leagueChanges.append(SiteLeagueChange(id: "season-start:" + site.id, sourceEventID: "season-start:" + site.id, fromLeague: site.affiliation, toLeague: site.affiliation, effectiveFrom: settings.seasonStart ?? settings.anchorStart, seasonName: settings.seasonName))
         }
-        try mutate { Self.upsert(site, into: &$0.onlineSites) }
+        try mutate { next in
+            Self.upsert(site, into: &next.onlineSites)
+            // Give old same-season snapshots a stable identity once. A rename
+            // or a rule revision then cannot fragment season totals.
+            if let oldName = previousSettings?.seasonName, let previousSeasonID {
+                for index in next.events.indices where next.events[index].onlineSiteId == site.id && next.events[index].siteSeasonID == nil && next.events[index].siteSeason == oldName {
+                    next.events[index].siteSeasonID = previousSeasonID
+                }
+            }
+        }
     }
     func deleteOnlineSite(_ id: String) throws {
         try mutate { next in
@@ -365,14 +414,20 @@ final class GiriStore: ObservableObject {
                 if let previousRoundID { round.id = previousRoundID; round.stageId = previousRoundID }
                 event.rounds = [round]
                 event.siteSeason = descriptor.seasonName
-                event.siteSeasonStart = site.cycleSettings?.inferredSeasonStart
-                event.siteSeasonEnd = site.cycleSettings?.seasonEnd
+                event.siteSeasonID = descriptor.seasonID ?? (descriptor.seasonName == site.cycleSettings?.seasonName ? site.cycleSettings?.seasonID : nil)
+                event.siteRuleRevisionID = descriptor.ruleRevisionID ?? (descriptor.seasonName == site.cycleSettings?.seasonName ? site.cycleSettings?.ruleRevisionID : nil)
+                event.siteSeasonStart = descriptor.seasonStart
+                event.siteSeasonEnd = descriptor.seasonEnd
                 event.siteCycleNumber = descriptor.cycleNumber
                 event.sitePeriodKind = descriptor.kind
             }
             if join {
                 event.isParticipating = true; event.isInterested = false; event.status = .planned
                 event.eventFormat = site.format
+                if event.siteSeasonID == nil && event.siteSeason == descriptor.seasonName {
+                    event.siteSeasonID = descriptor.seasonID ?? site.cycleSettings?.seasonID
+                    event.siteRuleRevisionID = descriptor.ruleRevisionID ?? site.cycleSettings?.ruleRevisionID
+                }
                 event.affiliation = site.hasAffiliations ? siteLeague(site, at: descriptor.start ?? Date()) : ""
                 let name = preferences.selfName
                 if !name.isEmpty && !event.participants.contains(where: { playerSearchKey($0) == playerSearchKey(name) }) { event.participants.append(name) }
@@ -386,8 +441,10 @@ final class GiriStore: ObservableObject {
         event.onlineSiteId = siteID; event.cycleKey = descriptor.cycleKey
         event.affiliation = site.hasAffiliations ? siteLeague(site, at: descriptor.start ?? Date()) : ""
         event.siteSeason = descriptor.seasonName
-        event.siteSeasonStart = site.cycleSettings?.inferredSeasonStart
-        event.siteSeasonEnd = site.cycleSettings?.seasonEnd
+        event.siteSeasonID = descriptor.seasonID ?? (descriptor.seasonName == site.cycleSettings?.seasonName ? site.cycleSettings?.seasonID : nil)
+        event.siteRuleRevisionID = descriptor.ruleRevisionID ?? (descriptor.seasonName == site.cycleSettings?.seasonName ? site.cycleSettings?.ruleRevisionID : nil)
+        event.siteSeasonStart = descriptor.seasonStart
+        event.siteSeasonEnd = descriptor.seasonEnd
         event.siteCycleNumber = descriptor.cycleNumber
         event.sitePeriodKind = descriptor.kind
         event.block = site.block; event.siteUrl = site.url; event.memo = site.memo

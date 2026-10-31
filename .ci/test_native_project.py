@@ -54,6 +54,28 @@ class NativeProjectTest(unittest.TestCase):
                     generate(root, value)
             self.assertFalse((root / "build").exists())
 
+    def test_transparent_wordmark_is_used_while_source_is_retained(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.root(directory)
+            (root / "assets/brand/derived").mkdir()
+            transparent = root / "assets/brand/derived/wordmark-transparent.png"
+            transparent.write_bytes(b"transparent PNG derivative")
+            generate(root)
+            copied = root / "build/native/Brand.xcassets/BrandWordmark.imageset/wordmark.png"
+            self.assertEqual(copied.read_bytes(), transparent.read_bytes())
+            self.assertEqual((root / "assets/brand/source/wordmark.jpg").read_bytes(), b"original supplied wordmark")
+
+    def test_ui_regression_runs_against_app_without_shipping_test_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = json.loads(generate(self.root(directory)).read_text())
+            test = project["targets"]["GiriStairUITests"]
+            self.assertEqual(test["type"], "bundle.ui-testing")
+            self.assertEqual(test["dependencies"], [{"target": "GiriStair"}])
+            self.assertEqual(test["sources"], [{"path": "UITests"}])
+            scheme = project["schemes"]["GiriStair"]
+            self.assertEqual(scheme["build"]["targets"]["GiriStairUITests"], ["test"])
+            self.assertFalse(scheme["test"]["targets"][0]["parallelizable"])
+
 
 if __name__ == "__main__":
     unittest.main()

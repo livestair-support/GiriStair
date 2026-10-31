@@ -56,18 +56,28 @@ struct SiteCycleSettings: Codable, Equatable {
     var leagues: [String] = []
     var specialPeriods: [SiteSpecialPeriod] = []
     var leagueChangesPerSeason: Bool = false
+    var seasonID: String? = nil
+    var seasonEndsAt: Date? = nil
+    var trackSeasonTotals: Bool = false
+    var ruleRevisionID: String? = nil
+    var legacyInferredSeasonStart: Date? = nil
 
     var inferredSeasonStart: Date {
-        seasonStart ?? addCalendarDays(anchorStart, -(anchorCycleNumber - 1) * intervalDays)
+        // Compatibility alias for old call sites; never reconstruct unknown
+        // season history from a global prompt number or current rule duration.
+        seasonStart ?? anchorStart
     }
     var seasonEnd: Date? {
-        seasonLengthDays.map { addCalendarDays(inferredSeasonStart, $0) }
+        seasonEndsAt
     }
     func validate() throws {
         guard (1...730).contains(intervalDays), (1...10000).contains(anchorCycleNumber),
               regularCycleCount.map({ (1...10000).contains($0) }) ?? true,
               seasonLengthDays.map({ (1...3660).contains($0) }) ?? true else {
             throw GiriDataError.invalid("周期・シーズンの回数と日数を確認してください。")
+        }
+        if let start = seasonStart, let end = seasonEndsAt, end < start {
+            throw GiriDataError.invalid("シーズンの終了が開始より前です。")
         }
         let names = leagues.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         guard !names.contains(where: \.isEmpty), Set(names.map(playerSearchKey)).count == names.count,
@@ -88,7 +98,7 @@ struct SiteCycleSettings: Codable, Equatable {
 }
 
 extension SiteCycleSettings {
-    private enum CodingKeys: String, CodingKey { case pattern, anchorStart, intervalDays, anchorCycleNumber, seasonName, seasonStart, seasonLengthDays, regularCycleCount, leagues, specialPeriods, leagueChangesPerSeason }
+    private enum CodingKeys: String, CodingKey { case pattern, anchorStart, intervalDays, anchorCycleNumber, seasonName, seasonStart, seasonLengthDays, regularCycleCount, leagues, specialPeriods, leagueChangesPerSeason, seasonID, seasonEndsAt, trackSeasonTotals, ruleRevisionID, legacyInferredSeasonStart }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         pattern = try c.decodeIfPresent(SiteCyclePattern.self, forKey: .pattern) ?? .alternating
@@ -102,6 +112,19 @@ extension SiteCycleSettings {
         leagues = try c.decodeIfPresent([String].self, forKey: .leagues) ?? []
         specialPeriods = try c.decodeIfPresent([SiteSpecialPeriod].self, forKey: .specialPeriods) ?? []
         leagueChangesPerSeason = try c.decodeIfPresent(Bool.self, forKey: .leagueChangesPerSeason) ?? false
+        seasonID = try c.decodeIfPresent(String.self, forKey: .seasonID)
+        seasonEndsAt = try c.giriDate(forKey: .seasonEndsAt, required: false, calendarOnly: false)
+        trackSeasonTotals = try c.decodeIfPresent(Bool.self, forKey: .trackSeasonTotals) ?? false
+        ruleRevisionID = try c.decodeIfPresent(String.self, forKey: .ruleRevisionID)
+        legacyInferredSeasonStart = try c.giriDate(forKey: .legacyInferredSeasonStart, required: false, calendarOnly: false)
+        // 0.6 filled this date by counting backwards with today's rule. Clear
+        // only that recognizable generated value, preserving explicit dates.
+        if seasonID == nil && ruleRevisionID == nil && anchorCycleNumber > 1,
+           seasonStart == addCalendarDays(anchorStart, -(anchorCycleNumber - 1) * intervalDays) {
+            legacyInferredSeasonStart = legacyInferredSeasonStart ?? seasonStart
+            seasonStart = nil
+        }
+        if let cap = regularCycleCount, cap < anchorCycleNumber { regularCycleCount = nil }
         try validate()
     }
     func encode(to encoder: Encoder) throws {
@@ -117,6 +140,30 @@ extension SiteCycleSettings {
         try c.encode(leagues, forKey: .leagues)
         try c.encode(specialPeriods, forKey: .specialPeriods)
         try c.encode(leagueChangesPerSeason, forKey: .leagueChangesPerSeason)
+        try c.encode(seasonID, forKey: .seasonID)
+        try c.encode(seasonEndsAt.map(GiriDates.timestamp), forKey: .seasonEndsAt)
+        try c.encode(trackSeasonTotals, forKey: .trackSeasonTotals)
+        try c.encode(ruleRevisionID, forKey: .ruleRevisionID)
+        try c.encode(legacyInferredSeasonStart.map(GiriDates.timestamp), forKey: .legacyInferredSeasonStart)
+    }
+}
+
+/// A prior rule window is retained when a site relaunches or changes timing.
+/// It ends when the next revision's anchor starts; joined events remain exact
+/// snapshots independently of these templates.
+struct SiteRuleRevision: Codable, Equatable, Identifiable {
+    var id: String
+    var settings: SiteCycleSettings
+    var submissionDays: Int
+    var votingDays: Int
+    var recurrence: SiteRecurrence
+
+    var effectiveFrom: Date { settings.anchorStart }
+    func validate() throws {
+        try settings.validate()
+        guard !id.isEmpty, submissionDays >= 1, votingDays >= 1 else {
+            throw GiriDataError.invalid("過去のルール設定が不正です。")
+        }
     }
 }
 
@@ -157,6 +204,10 @@ struct SiteCycleDescriptor: Equatable, Identifiable {
     let cycleNumber: Int?
     let kind: SitePeriodKind
     let title: String
+    var seasonID: String? = nil
+    var ruleRevisionID: String? = nil
+    var seasonStart: Date? = nil
+    var seasonEnd: Date? = nil
     var id: String { cycleKey }
     var start: Date? { round.submissionStart ?? round.votingStart }
     var end: Date? { round.votingEnd ?? round.submissionEnd }
@@ -166,52 +217,79 @@ struct SiteCycleDescriptor: Equatable, Identifiable {
 /// Keep both a preceding vote and the current submission visible. A 7-day
 /// cadence with 7 submission + 3 voting days therefore has two simultaneous rows.
 func siteCycleDescriptors(_ site: OnlineSite, around now: Date = Date(), calendar: Calendar = .current) -> [SiteCycleDescriptor] {
-    guard let settings = site.cycleSettings, settings.intervalDays > 0 else { return [] }
-    let dayDifference = calendar.dateComponents([.day], from: settings.anchorStart, to: now).day ?? 0
-    let approximateIndex = Int(floor(Double(dayDifference) / Double(settings.intervalDays)))
-    let span = min(732, max(2, (site.submissionDays + site.votingDays + settings.intervalDays - 1) / settings.intervalDays + 1))
-    var output: [SiteCycleDescriptor] = []
-    let seasonStart = settings.seasonStart ?? addCalendarDays(settings.anchorStart, -(settings.anchorCycleNumber - 1) * settings.intervalDays, calendar: calendar)
-    let seasonEnd = settings.seasonLengthDays.map { addCalendarDays(seasonStart, $0, calendar: calendar) }
-    let hasSeasonBounds = !settings.seasonName.isEmpty || settings.seasonStart != nil || settings.seasonLengthDays != nil || settings.regularCycleCount != nil
-    if site.recurrence == .weekly {
-    for offset in (approximateIndex - span)...(approximateIndex + 1) {
-        let number = settings.anchorCycleNumber + offset
-        guard !hasSeasonBounds || number >= 1 else { continue }
-        guard settings.regularCycleCount.map({ number <= $0 }) ?? true else { continue }
-        let start = addCalendarDays(settings.anchorStart, offset * settings.intervalDays, calendar: calendar)
-        guard !hasSeasonBounds || start >= seasonStart else { continue }
-        guard seasonEnd.map({ start < $0 }) ?? true else { continue }
-        let key = cycleKeyFor(start)
-        let identifier = "site:\(site.id):\(key)"
-        var round = EventRound(id: identifier)
-        round.stageId = identifier; round.name = number < 1 ? "前の回" : "第\(number)回"; round.promptNumber = max(1, number)
-        round.block = site.block; round.submissionStart = start
-        round = completeRoundSchedule(round, submissionDays: site.submissionDays, votingDays: site.votingDays)
-        // The last regular prompt may have shortened dates; explicit custom
-        // periods with the same start replace it rather than create duplicates.
-        if settings.specialPeriods.contains(where: { $0.kind == .regular && $0.round.submissionStart == start }) { continue }
-        output.append(SiteCycleDescriptor(cycleKey: key, round: round, seasonName: settings.seasonName, cycleNumber: number >= 1 ? number : nil, kind: .regular, title: round.name))
-    }
-    }
-    for period in settings.specialPeriods {
-        var round = period.round
-        let key = "special:" + period.id
-        round.id = "site:\(site.id):\(key)"; round.stageId = round.id
-        round.name = period.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? period.kind.title : period.title
-        var cycleNumber: Int? = nil
-        if period.kind == .regular, let start = round.submissionStart {
-            let days = calendar.dateComponents([.day], from: settings.anchorStart, to: start).day ?? 0
-            let candidate = settings.anchorCycleNumber + days / settings.intervalDays
-            cycleNumber = candidate > 0 ? candidate : nil
-            round.promptNumber = max(1, candidate)
+    guard let current = site.cycleSettings else { return [] }
+    var revisions = site.ruleHistory
+    let currentID = current.ruleRevisionID ?? "current"
+    revisions.removeAll { $0.id == currentID }
+    revisions.append(SiteRuleRevision(id: currentID, settings: current,
+        submissionDays: site.submissionDays, votingDays: site.votingDays, recurrence: site.recurrence))
+    revisions = revisions.enumerated().sorted {
+        $0.element.effectiveFrom == $1.element.effectiveFrom ? $0.offset < $1.offset : $0.element.effectiveFrom < $1.element.effectiveFrom
+    }.map(\.element)
+    var output: [String: SiteCycleDescriptor] = [:]
+    for (index, revision) in revisions.enumerated() {
+        let upper = index + 1 < revisions.count ? revisions[index + 1].effectiveFrom : nil
+        for descriptor in siteRevisionDescriptors(siteID: site.id, block: site.block,
+            revision: revision, around: now, upperBound: upper,
+            hasPreviousRevision: index > 0, calendar: calendar) {
+            output[descriptor.cycleKey] = descriptor
         }
-        output.append(SiteCycleDescriptor(cycleKey: key, round: round, seasonName: period.seasonName.isEmpty ? settings.seasonName : period.seasonName, cycleNumber: cycleNumber, kind: period.kind, title: round.name))
     }
-    return output.sorted {
+    return output.values.sorted {
         let first = $0.start ?? .distantFuture, second = $1.start ?? .distantFuture
         return first == second ? $0.cycleKey < $1.cycleKey : first < second
     }
+}
+
+private func siteRevisionDescriptors(siteID: String, block: String, revision: SiteRuleRevision,
+    around now: Date, upperBound: Date?, hasPreviousRevision: Bool, calendar: Calendar) -> [SiteCycleDescriptor] {
+    let settings = revision.settings
+    guard settings.intervalDays > 0 else { return [] }
+    let dayDifference = calendar.dateComponents([.day], from: settings.anchorStart, to: now).day ?? 0
+    let approximateIndex = Int(floor(Double(dayDifference) / Double(settings.intervalDays)))
+    let span = min(732, max(2, (revision.submissionDays + revision.votingDays + settings.intervalDays - 1) / settings.intervalDays + 1))
+    let hasSeason = settings.seasonID != nil || !settings.seasonName.isEmpty || settings.trackSeasonTotals
+    // A known current period is an anchor, not evidence about all previous
+    // seasons. A changed rule is always forward-only, even with known dates.
+    let lower = hasPreviousRevision ? settings.anchorStart : settings.seasonStart ?? (hasSeason ? settings.anchorStart : nil)
+    let validCap = settings.regularCycleCount.flatMap { $0 >= settings.anchorCycleNumber ? $0 : nil }
+    var output: [SiteCycleDescriptor] = []
+    if revision.recurrence == .weekly {
+        for offset in (approximateIndex - span)...(approximateIndex + 1) {
+            let number = settings.anchorCycleNumber + offset
+            guard !hasSeason || number >= 1, validCap.map({ number <= $0 }) ?? true else { continue }
+            let start = addCalendarDays(settings.anchorStart, offset * settings.intervalDays, calendar: calendar)
+            guard lower.map({ start >= $0 }) ?? true,
+                  upperBound.map({ start < $0 }) ?? true,
+                  settings.seasonEnd.map({ start < $0 }) ?? true else { continue }
+            let key = cycleKeyFor(start)
+            let identifier = "site:\(siteID):\(key)"
+            var round = EventRound(id: identifier)
+            round.stageId = identifier; round.name = number < 1 ? "前の回" : "第\(number)回"; round.promptNumber = max(1, number)
+            round.block = block; round.submissionStart = start
+            round = completeRoundSchedule(round, submissionDays: revision.submissionDays, votingDays: revision.votingDays)
+            if settings.specialPeriods.contains(where: { $0.kind == .regular && $0.round.submissionStart == start }) { continue }
+            output.append(SiteCycleDescriptor(cycleKey: key, round: round, seasonName: settings.seasonName,
+                cycleNumber: number >= 1 ? number : nil, kind: .regular, title: round.name,
+                seasonID: settings.seasonID, ruleRevisionID: settings.ruleRevisionID,
+                seasonStart: settings.seasonStart, seasonEnd: settings.seasonEnd))
+        }
+    }
+    for period in settings.specialPeriods {
+        var round = period.round
+        let start = round.submissionStart ?? round.votingStart
+        guard upperBound.map({ boundary in start.map { $0 < boundary } ?? false }) ?? true else { continue }
+        let key = "special:" + period.id
+        round.id = "site:\(siteID):\(key)"; round.stageId = round.id
+        round.name = period.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? period.kind.title : period.title
+        let number: Int? = period.kind == .regular ? max(1, round.promptNumber) : nil
+        output.append(SiteCycleDescriptor(cycleKey: key, round: round,
+            seasonName: period.seasonName.isEmpty ? settings.seasonName : period.seasonName,
+            cycleNumber: number, kind: period.kind, title: round.name,
+            seasonID: settings.seasonID, ruleRevisionID: settings.ruleRevisionID,
+            seasonStart: settings.seasonStart, seasonEnd: settings.seasonEnd))
+    }
+    return output
 }
 
 func siteLeagueAfterMovement(_ site: OnlineSite, from league: String, movement: LeagueMovement) -> String? {
