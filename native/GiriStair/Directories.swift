@@ -331,6 +331,7 @@ struct GiriSiteDetail: View {
     let siteID: String
     @State private var deleting = false
     @State private var resultEvent: GiriEvent?
+    @State private var timelineStart = Date()
 
     private var site: OnlineSite? { store.onlineSites.first { $0.id == siteID } }
     private var history: [GiriEvent] {
@@ -362,7 +363,9 @@ struct GiriSiteDetail: View {
                 Form {
                     Section {
                         AppCardSectionTitle(title: "現在の状況", systemImage: "globe", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
-                        GiriSitePeriodActions(site: site)
+                        TimelineView(.periodic(from: timelineStart, by: 60)) { context in
+                            GiriSitePeriodActions(site: site, now: context.date)
+                        }
                     }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
                     siteSection(site)
                     if let settings = site.cycleSettings, settings.trackSeasonTotals, currentSeasonKey != nil {

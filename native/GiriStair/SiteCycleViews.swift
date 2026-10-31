@@ -5,6 +5,7 @@ import SwiftUI
 struct GiriSiteStatusCard: View {
     @EnvironmentObject private var navigation: GiriNavigation
     let site: OnlineSite
+    let now: Date
     @State private var showingSite = false
 
     var body: some View {
@@ -21,7 +22,7 @@ struct GiriSiteStatusCard: View {
             if site.hasAffiliations && !league.isEmpty {
                 Text(league).font(.subheadline).foregroundStyle(.secondary)
             }
-            GiriSitePeriodActions(site: site)
+            GiriSitePeriodActions(site: site, now: now)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -49,13 +50,14 @@ struct GiriSitePeriodActions: View {
     @EnvironmentObject private var store: GiriStore
     @EnvironmentObject private var navigation: GiriNavigation
     let site: OnlineSite
+    let now: Date
     @State private var showingSetup = false
     @State private var resultEvent: GiriEvent?
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            periodRows(now: context.date)
-        }
+        // The page owns its clock. A List cell must not create a second
+        // TimelineView while it is being inserted by the format picker.
+        periodRows(now: now)
         .sheet(isPresented: $showingSetup) { NavigationStack { GiriSiteEditor(site: site) } }
         .sheet(item: $resultEvent) { event in NavigationStack { GiriCycleResultEditor(eventID: event.id) } }
     }

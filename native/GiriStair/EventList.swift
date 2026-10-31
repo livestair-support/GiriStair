@@ -21,6 +21,7 @@ struct GiriListView: View {
     @State private var isCollapsed = false
     @State private var destinationID: String?
     @State private var deletingEvent: GiriEvent?
+    @State private var timelineStart = Date()
 
     private var accent: Color { GiriEventPresentation.accent(selectedFormat) }
     private var isCalendar: Bool { store.preferences.listCurrentMode }
@@ -106,13 +107,13 @@ struct GiriListView: View {
     private var hasParticipantFilter: Bool { selectedFormat.hasLiveTiming }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { _ in
+        TimelineView(.periodic(from: timelineStart, by: 60)) { context in
             VStack(spacing: 0) {
                 if isCalendar {
                     ScrollView { GiriCalendarView(events: store.events) }
                 } else {
                     filterHeader
-                    eventList
+                    eventList(now: context.date)
                 }
             }
         }
@@ -158,13 +159,13 @@ struct GiriListView: View {
             Button("キャンセル", role: .cancel) { deletingEvent = nil }
         }
     }
-    private var eventList: some View {
+    private func eventList(now: Date) -> some View {
         // Keep one native List/data source mounted when a format has no rows.
         // Changing the segmented control must update its rows rather than
         // replace the collection view while UIKit is handling that selection.
         List {
             ForEach(visibleSites) { record in
-                GiriSiteStatusCard(site: record)
+                GiriSiteStatusCard(site: record, now: now)
                     .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets(top: record.id == visibleSites.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
                     .listRowSeparator(.hidden).listRowBackground(Color.clear)

@@ -47,8 +47,8 @@ def main():
                     pids = subprocess.check_output(["pgrep", "-x", "GiriStair"], text=True).split()
                     for pid in pids:
                         path = log.parent / ("hang-" + str(action["case"]) + "-" + pid + ".txt")
-                        subprocess.run(["sample", pid, "2", "1", "-file", str(path)],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+                        subprocess.run(["sample", pid, "1", "10", "-mayDie", "-file", str(path)],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=45, check=True)
                         print("Native hang sample after " + action["label"] + ": " + str(path), flush=True)
                 except (subprocess.SubprocessError, OSError) as error:
                     print("Native hang sample unavailable: " + str(error), flush=True)

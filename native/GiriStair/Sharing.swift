@@ -249,6 +249,9 @@ struct GiriSharingView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     AppCardSectionTitle(title: "プレビュー", systemImage: "rectangle.on.rectangle", accentColor: AppSectionAccent.live)
+                        // Keep the page marker on this non-interactive heading;
+                        // a container identifier can propagate to its controls.
+                        .accessibilityIdentifier(listMode ? "sharing.list.preview" : "sharing.summary.preview")
                     periodControls
                     if listMode && pageCount > 1 { pageControls }
                     preview
@@ -263,7 +266,6 @@ struct GiriSharingView: View {
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(appHeaderColor, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
-        .accessibilityIdentifier(listMode ? "sharing.list.preview" : "sharing.summary.preview")
         .task(id: previewRequest) { await renderPreview() }
         .task(id: photoItem) { await loadBackground(photoItem) }
         .task(id: background) { loadSavedBackground() }
@@ -277,7 +279,11 @@ struct GiriSharingView: View {
             Text(shareTitle).font(.system(size: 28, weight: .heavy, design: .rounded)).tracking(-0.5)
                 .lineLimit(1).minimumScaleFactor(0.6).frame(maxWidth: .infinity, alignment: .leading).layoutPriority(1)
             NavigationLink { displaySettings } label: { headerIcon("paintpalette.fill") }
-                .accessibilityLabel(shareTitle + "表示設定").accessibilityIdentifier("sharing.settings")
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(shareTitle + "表示設定")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityIdentifier("sharing.settings")
             Button { Task { await export(saveToPhotos: false) } } label: {
                 if exporting { ProgressView().frame(width: 36, height: 36) }
                 else { headerIcon("square.and.arrow.up") }
