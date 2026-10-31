@@ -52,6 +52,7 @@ enum GiriNavigationTestSeed {
             completed.eventDate = Calendar.current.startOfDay(for: completed.startsAt ?? now)
             try store.saveEvent(completed)
             }
+            if !ProcessInfo.processInfo.arguments.contains("--uitest-without-sites") {
             var site = OnlineSite(name: "大喜利天文台", recurrence: .weekly)
             site.hasAffiliations = true
             site.affiliation = "一部"
@@ -64,6 +65,7 @@ enum GiriNavigationTestSeed {
                 regularCycleCount: 8, leagues: ["一部", "二部"])
             try store.saveOnlineSite(site)
             try store.ensureCurrentSiteCycles()
+            }
         } catch {
             preconditionFailure("Could not prepare isolated navigation fixture: \(error)")
         }

@@ -8,6 +8,24 @@ final class TabNavigationTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testFormatsWithoutSiteCardsRemainResponsive() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-tab-navigation", "--uitest-minimal-navigation", "--uitest-without-sites"]
+        app.launch()
+        let list = app.tabBars.buttons["一覧"]
+        XCTAssertTrue(list.waitForExistence(timeout: 15))
+        list.tap()
+        let formats = app.segmentedControls["format-tabs"].firstMatch
+        XCTAssertTrue(formats.waitForExistence(timeout: 5))
+        for labels in [("ネット大喜利（長考）", "長考"), ("ネット大喜利（短考）", "短考"), ("スプシ系", "スプシ系"), ("生大喜利", "生")] {
+            let button = formats.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", labels.0, labels.1)).firstMatch
+            XCTAssertTrue(button.waitForExistence(timeout: 5))
+            button.tap()
+            XCTAssertTrue(button.isSelected)
+        }
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
     func testSharingPreviewSettingsAndReturnToListRemainResponsive() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-tab-navigation"]
@@ -23,7 +41,8 @@ final class TabNavigationTests: XCTestCase {
             XCTAssertTrue(preview.waitForExistence(timeout: 15))
             let rendered = app.images[mode.1.replacingOccurrences(of: ".preview", with: ".image")]
             XCTAssertTrue(rendered.waitForExistence(timeout: 25), "The preview must finish rendering before settings open")
-            let palette = app.buttons["sharing.settings"]
+            let palette = app.descendants(matching: .any).matching(identifier: "sharing.settings").firstMatch
+            if !palette.waitForExistence(timeout: 5) { print(app.debugDescription) }
             XCTAssertTrue(palette.waitForExistence(timeout: 5))
             palette.tap()
             XCTAssertEqual(app.state, .runningForeground)
