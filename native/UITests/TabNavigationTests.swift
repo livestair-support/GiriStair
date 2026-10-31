@@ -21,6 +21,8 @@ final class TabNavigationTests: XCTestCase {
             link.tap()
             let preview = app.descendants(matching: .any).matching(identifier: mode.1).firstMatch
             XCTAssertTrue(preview.waitForExistence(timeout: 15))
+            let rendered = app.images[mode.1.replacingOccurrences(of: ".preview", with: ".image")]
+            XCTAssertTrue(rendered.waitForExistence(timeout: 25), "The preview must finish rendering before settings open")
             let palette = app.buttons["sharing.settings"]
             XCTAssertTrue(palette.waitForExistence(timeout: 5))
             palette.tap()

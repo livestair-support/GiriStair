@@ -416,56 +416,21 @@ private enum LiveListFilterTextMeasurement {
     }
 }
 
-private struct LiveListFilterValueText: UIViewRepresentable {
+/// Keep the source label's typography and measured placement, but let SwiftUI
+/// draw the text. Changing a live UILabel's font from layoutSubviews and then
+/// invalidating its intrinsic size during representable updates can re-enter
+/// the layout graph while a format removes/replaces the filter rows.
+private struct LiveListFilterValueText: View {
     let text: String
     let pointSize: CGFloat
 
-    func makeUIView(context: Context) -> FittingLabel {
-        let label = FittingLabel()
-        label.textColor = .label
-        label.textAlignment = .right
-        label.numberOfLines = 0
-        label.lineBreakMode = .byWordWrapping
-        label.adjustsFontSizeToFitWidth = false
-        label.adjustsFontForContentSizeCategory = false
-        label.clipsToBounds = true
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return label
-    }
-
-    func updateUIView(_ uiView: FittingLabel, context: Context) {
-        uiView.text = text
-        uiView.basePointSize = pointSize
-        uiView.invalidateIntrinsicContentSize()
-        uiView.setNeedsLayout()
-    }
-
-    func sizeThatFits(
-        _ proposal: ProposedViewSize,
-        uiView: FittingLabel,
-        context: Context
-    ) -> CGSize? {
-        guard let width = proposal.width, width.isFinite else {
-            let font = UIFont.systemFont(ofSize: pointSize, weight: .medium)
-            let naturalSize = (text as NSString).size(withAttributes: [.font: font])
-            return CGSize(width: ceil(naturalSize.width), height: ceil(naturalSize.height) + 2)
-        }
-        // 高さの提案で文字を圧縮せず、親の Layout と同じ幅から全文の高さを返す。
-        return LiveListFilterTextMeasurement.fitted(text, pointSize: pointSize, width: width).size
-    }
-
-    final class FittingLabel: UILabel {
-        var basePointSize: CGFloat = 17
-
-        override func layoutSubviews() {
-            let fittedFont = LiveListFilterTextMeasurement.fitted(
-                text ?? "", pointSize: basePointSize, width: bounds.width
-            ).font
-            if font != fittedFont {
-                font = fittedFont
-            }
-            super.layoutSubviews()
-        }
+    var body: some View {
+        Text(text)
+            .font(.system(size: pointSize, weight: .medium))
+            .minimumScaleFactor(LiveListFilterTextMeasurement.minimumScale)
+            .multilineTextAlignment(.trailing)
+            .lineLimit(nil)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
 

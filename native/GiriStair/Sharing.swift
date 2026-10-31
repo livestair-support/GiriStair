@@ -333,6 +333,8 @@ struct GiriSharingView: View {
             if let previewImage {
                 Image(uiImage: previewImage).resizable().scaledToFit()
                     .frame(maxWidth: .infinity)
+                    .accessibilityLabel(shareTitle + "プレビュー画像")
+                    .accessibilityIdentifier(listMode ? "sharing.list.image" : "sharing.summary.image")
                     .overlay(alignment: .topTrailing) { if renderingPreview { ProgressView().padding(12) } }
                     .accessibilityLabel(shareTitle + "の共有画像")
             } else {
