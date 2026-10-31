@@ -16,8 +16,10 @@ enum GiriNavigationTestSeed {
             preferences.hasShownInitialResultPrompt = true
             try store.savePreferences(preferences)
             let now = Date()
-            for format in EventFormat.allCases {
-                for tournament in [false, true] {
+            let minimal = ProcessInfo.processInfo.arguments.contains("--uitest-minimal-navigation")
+            let formats: [EventFormat] = minimal ? [.live] : EventFormat.allCases
+            for format in formats {
+                for tournament in minimal ? [false] : [false, true] {
                     var event = GiriEvent(title: "\(format.title)・\(tournament ? "大会" : "通常")")
                     event.id = "navigation-\(format.rawValue)-\(tournament ? "tournament" : "casual")"
                     event.eventFormat = format
@@ -39,6 +41,16 @@ enum GiriNavigationTestSeed {
                     }
                     try store.saveEvent(event)
                 }
+            }
+            if !minimal {
+            var completed = GiriEvent(title: "共有グラフの1件")
+            completed.id = "navigation-completed"
+            completed.eventFormat = .live
+            completed.meetingType = .casual
+            completed.startsAt = now.addingTimeInterval(-86400 * 2)
+            completed.endsAt = now.addingTimeInterval(-86400)
+            completed.eventDate = Calendar.current.startOfDay(for: completed.startsAt ?? now)
+            try store.saveEvent(completed)
             }
             var site = OnlineSite(name: "大喜利天文台", recurrence: .weekly)
             site.hasAffiliations = true

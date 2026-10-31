@@ -8,6 +8,29 @@ final class TabNavigationTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testTopFormatSwitchesWithOnlyOneLiveRecordAndOneSite() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-tab-navigation", "--uitest-minimal-navigation"]
+        app.launch()
+        let list = app.tabBars.buttons["一覧"]
+        XCTAssertTrue(list.waitForExistence(timeout: 15))
+        list.tap()
+        let formats = app.segmentedControls["format-tabs"].firstMatch
+        XCTAssertTrue(formats.waitForExistence(timeout: 5))
+        // Switching into empty categories removes all event rows. This differs
+        // from the populated-format test and matches the user's stored data.
+        for _ in 0..<3 {
+            for labels in [("ネット大喜利（長考）", "長考"), ("ネット大喜利（短考）", "短考"), ("スプシ系", "スプシ系"), ("生大喜利", "生")] {
+                let button = formats.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", labels.0, labels.1)).firstMatch
+                XCTAssertTrue(button.waitForExistence(timeout: 5))
+                XCTAssertTrue(button.isHittable)
+                button.tap()
+                XCTAssertTrue(button.isSelected)
+                XCTAssertEqual(app.state, .runningForeground)
+            }
+        }
+    }
+
     func testListCanSwitchFormatsAndVisitEveryTabRepeatedly() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-tab-navigation"]
@@ -25,6 +48,7 @@ final class TabNavigationTests: XCTestCase {
                 XCTAssertTrue(button.waitForExistence(timeout: 5))
                 XCTAssertTrue(button.isHittable)
                 button.tap()
+                XCTAssertTrue(button.isSelected)
                 XCTAssertEqual(app.state, .runningForeground)
             }
             for title in ["登録", "戦績", "お題/回答", "設定"] {
