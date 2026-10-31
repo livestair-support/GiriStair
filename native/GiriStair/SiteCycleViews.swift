@@ -366,7 +366,11 @@ struct GiriSiteCycleSettingsForm: View {
         seasonExpanded = seasons
         currentCycle = value.anchorCycleNumber
         phaseStart = value.anchorStart
+        // Editing the current rule must not silently adopt an older rule's
+        // still-open posting/voting window or a one-off special week.
         let descriptors = siteCycleDescriptors(site)
+            .filter { $0.ruleRevisionID == value.ruleRevisionID && !$0.cycleKey.hasPrefix("special:") }
+            .sorted { ($0.round.submissionStart ?? .distantPast) > ($1.round.submissionStart ?? .distantPast) }
         if let active = descriptors.first(where: { $0.round.isSubmissionOpen(Date()) }) {
             phase = .posting; phaseStart = active.round.submissionStart ?? value.anchorStart; currentCycle = active.cycleNumber ?? value.anchorCycleNumber
         } else if let active = descriptors.first(where: { $0.round.isVotingOpen(Date()) }) {
