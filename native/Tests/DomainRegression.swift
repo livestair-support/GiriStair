@@ -64,6 +64,8 @@ struct DomainRegression {
         try check(!liveHidden.formatChoices(including: nil).contains(.live) && liveHidden.formatChoices(including: .live).last == .live, "a record of a hidden format keeps its own format as a choice")
         var freeEvent = GiriEvent(); freeEvent.entryFee = 0
         try check((try? freeEvent.validate()) != nil, "a free event (0 yen) is valid")
+        try check(restored.events[0].hashtag.isEmpty, "documents without a hashtag keep it empty")
+        try check(giriNormalizedHashtag(" ＃大喜利 文化杯Ω ") == "大喜利文化杯Ω" && giriNormalizedHashtag("##吉永対策会") == "吉永対策会", "hashtags are stored without # and spaces")
         try reject(Data(#"{"schemaVersion":1,"events":[{"id":"fee","title":"負","kind":"live","meetingType":"casual","createdAt":"2026-10-29T13:00:00Z","entryFee":-1}],"notes":[]}"#.utf8), "negative entry fee")
         let local = GiriDates.parse("2026-10-29T22:00:00.000")
         try check(local.map { Calendar.current.component(.hour, from: $0) == 22 } ?? false, "unzoned Dart time stays local")

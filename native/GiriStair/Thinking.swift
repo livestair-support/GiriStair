@@ -48,6 +48,7 @@ struct GiriThinkingView: View {
                 case .site(let id): GiriThoughtsForSite(siteID: id)
                 case .round(let eventID, let roundID): GiriRoundWorkspace(eventID: eventID, roundID: roundID)
                 case .note(let id): GiriThoughtNotePage(noteID: id)
+                case .answerer(let name): GiriThoughtsForAnswerer(name: name)
                 }
             }
             .confirmationDialog("メモを削除しますか？", isPresented: Binding(
@@ -363,6 +364,43 @@ struct GiriThoughtsForEvent: View {
             .sheet(isPresented: $creating) {
                 NavigationStack { GiriThoughtEditor(kind: .answers, eventID: eventID) }
             }
+    }
+}
+
+/// プレイヤーの「好きな回答」：自分が他人の回答として記録したもの。
+@MainActor
+struct GiriThoughtsForAnswerer: View {
+    @EnvironmentObject private var store: GiriStore
+    let name: String
+    @State private var search = ""
+    private var notes: [ThoughtNote] {
+        let key = playerSearchKey(name)
+        return store.notes.filter { note in
+            note.kind == .answers && note.isOthersAnswer && playerSearchKey(note.answerer) == key &&
+                thoughtSearchMatches(note, event: store.events.first { $0.id == note.eventId }, query: search)
+        }.sorted { $0.updatedAt > $1.updatedAt }
+    }
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                AppSearchField(text: $search, placeholder: "お題・回答・会を検索")
+                    .padding(.horizontal, 18).padding(.vertical, 8)
+                let values = notes
+                if values.isEmpty {
+                    CenteredEmptyMessage(systemImage: "text.bubble", title: search.isEmpty ? "好きな回答の記録がありません" : "該当する記録がありません")
+                        .frame(maxWidth: .infinity, minHeight: 108)
+                        .appTintedCard(accentColor: AppSectionAccent.memo)
+                        .thoughtCardRow()
+                }
+                ForEach(values) { note in
+                    NavigationLink(value: GiriThoughtDestination.note(note.id)) {
+                        GiriThoughtCard(note: note, event: store.events.first { $0.id == note.eventId })
+                    }.buttonStyle(.plain).thoughtCardRow()
+                }
+            }.padding(.bottom, 24)
+        }.background(appBackgroundColor).scrollDismissesKeyboard(.interactively)
+            .navigationTitle("\(name)の回答").navigationBarTitleDisplayMode(.inline)
+            .toolbar(.visible, for: .navigationBar)
     }
 }
 
@@ -1279,7 +1317,7 @@ private func thoughtEditorPrimaryText(_ note: ThoughtNote) -> String {
 private func thoughtSearchMatches(_ note: ThoughtNote, event: GiriEvent?, query: String) -> Bool {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return true }
-    let fields = [note.title, note.prompt, note.body, note.answerer, event?.title ?? "", event?.affiliation ?? "", event?.block ?? ""] + note.effectiveAnswerRecords.map(\.text)
+    let fields = [note.title, note.prompt, note.body, note.answerer, event?.title ?? "", event?.hashtag ?? "", event?.organizer ?? "", event?.affiliation ?? "", event?.block ?? ""] + note.effectiveAnswerRecords.map(\.text)
     return fields.joined(separator: " ").localizedStandardContains(trimmed)
 }
 
@@ -1290,9 +1328,12 @@ private func thoughtTweetURL(_ note: ThoughtNote, event: GiriEvent?, record: Ans
     return components?.url
 }
 
+/// ツボ上げの形：「回答者「回答」」を並べ、会のハッシュタグを最後に付ける。
+/// ハッシュタグがない会は会の名前を先頭に残す。お題は画像がない場合だけ文字で入れる。
 private func thoughtShareText(_ note: ThoughtNote, event: GiriEvent?, record: AnswerRecord? = nil) -> String {
     var parts: [String] = []
-    if let event { parts.append(event.title) }
+    let hashtag = event?.hashtag ?? ""
+    if let event, hashtag.isEmpty { parts.append(event.title) }
     if note.kind == .answers {
         if !note.prompt.isEmpty { parts.append("お題：" + note.prompt) }
         let records: [AnswerRecord]
@@ -1301,11 +1342,16 @@ private func thoughtShareText(_ note: ThoughtNote, event: GiriEvent?, record: An
             let submitted = note.effectiveAnswerRecords.filter(\.isSubmitted)
             records = submitted.isEmpty ? note.effectiveAnswerRecords : submitted
         }
-        parts.append(contentsOf: records.map(\.text).filter { !$0.isEmpty })
-        if note.isOthersAnswer && !note.answerer.isEmpty { parts.append("回答：" + note.answerer) }
+        let texts = records.map(\.text).filter { !$0.isEmpty }
+        if note.isOthersAnswer && !note.answerer.isEmpty {
+            parts.append(texts.map { "\(note.answerer)「\($0)」" }.joined(separator: "\n"))
+        } else {
+            parts.append(contentsOf: texts)
+        }
     } else {
         parts.append(thoughtTitle(note))
         if !note.body.isEmpty { parts.append(note.body) }
     }
-    return parts.joined(separator: "\n\n")
+    if !hashtag.isEmpty { parts.append("#" + hashtag) }
+    return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
 }

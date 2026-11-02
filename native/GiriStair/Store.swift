@@ -166,6 +166,7 @@ final class GiriStore: ObservableObject {
         var event = candidate
         if let format = event.format { event.kind = format == .live ? .live : .online }
         if event.isInterested { event.isParticipating = false }
+        event.hashtag = giriNormalizedHashtag(event.hashtag)
         return event
     }
     private static func normalizedNote(_ candidate: ThoughtNote) -> ThoughtNote {

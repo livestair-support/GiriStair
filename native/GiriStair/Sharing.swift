@@ -84,7 +84,7 @@ struct GiriStatisticsView: View {
             }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
             Section {
                 AppCardSectionTitle(title: "参加費", systemImage: "yensign.circle", accentColor: AppSectionAccent.ticket,
-                                    infoTitle: "参加費の集計について", infoMessage: "参加した会のうち、参加費を入力した記録を合計します。キャンセル・興味ありの記録は含めません。")
+                                    infoTitle: "参加費の集計について", infoMessage: "参加した生大喜利のうち、参加費を入力した記録を合計します。キャンセル・興味ありは含めません。")
                     .listRowSeparator(.hidden)
                 let fees = records.compactMap(\.entryFee)
                 LabeledContent("合計", value: giriYenText(fees.reduce(0, +)))

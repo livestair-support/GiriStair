@@ -169,9 +169,16 @@ struct GiriEventEditor: View {
         Section {
             GiriEventCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live)
                 .listRowSeparator(.hidden)
-            Picker(selection: $draft.eventFormat) {
-                ForEach(store.preferences.formatChoices(including: event?.eventFormat)) { Text($0.title).tag($0) }
-            } label: { GiriEditorLabel("形式") }.pickerStyle(.menu).tint(.primary)
+            HStack(spacing: 4) {
+                GiriEditorLabel("形式")
+                AppInfoButton(title: "形式について",
+                              message: "使わない形式は、設定→デフォルト設定の「使用する形式・並び順」でチェックを外すと、ここと一覧・戦績のタブに出なくなります。登録済みの記録は消えません。",
+                              tintColor: AppSectionAccent.live)
+                Spacer(minLength: 8)
+                Picker("形式", selection: $draft.eventFormat) {
+                    ForEach(store.preferences.formatChoices(including: event?.eventFormat)) { Text($0.title).tag($0) }
+                }.labelsHidden().pickerStyle(.menu).tint(.primary)
+            }
             Picker(selection: $draft.meetingType) {
                 Text("通常").tag(MeetingType.casual)
                 Text("大会").tag(MeetingType.tournament)
@@ -187,11 +194,15 @@ struct GiriEventEditor: View {
                 .lineLimit(1...5)
             if !isSite {
                 GiriEditorPlayerField(title: "主催者", text: $draft.organizer, preferHosts: true)
+                GiriHashtagField(text: $draft.hashtag)
                 if draft.eventFormat.hasLiveTiming {
                     OptionalDateRow(title: "日付", selection: $draft.eventDate, components: .date)
                     GiriEventTimeRow(startsAt: clockBinding(start: true), endsAt: clockBinding(start: false))
                     if draft.eventFormat != .onlineShort {
                         GiriVenueSuggestionField(text: $draft.venue)
+                    }
+                    // 参加費は生大喜利だけ（スプシ系・ネットは参加費なし）。
+                    if draft.eventFormat == .live || draft.entryFee != nil {
                         GiriEntryFeeField(value: $draft.entryFee)
                     }
                 }
@@ -527,6 +538,26 @@ struct GiriEntryFeeField: View {
         .onChange(of: value) { _, newValue in
             let current = newValue.map(String.init) ?? ""
             if current != text { text = current }
+        }
+    }
+}
+
+/// 会が指定するツボ上げ・感想用のハッシュタグ。「#」は表示だけで、保存時に外す。
+struct GiriHashtagField: View {
+    @Binding var text: String
+    var body: some View {
+        HStack(spacing: 4) {
+            GiriEditorLabel("ハッシュタグ")
+            AppInfoButton(title: "ハッシュタグについて",
+                          message: "会がツボ上げや感想に指定するタグです。お題/回答から投稿を作るときに末尾へ付けます。",
+                          tintColor: AppSectionAccent.live)
+            Spacer(minLength: 8)
+            Text("#").foregroundStyle(.secondary)
+            TextField("未入力", text: $text)
+                .multilineTextAlignment(.trailing)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityLabel("ハッシュタグ")
         }
     }
 }

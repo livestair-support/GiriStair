@@ -128,6 +128,13 @@ struct GiriEventDetail: View {
             }
             detailValue("参加状況", event.participationState().title)
             adaptiveName(event.title)
+            if !event.hashtag.isEmpty {
+                HStack {
+                    Text("ハッシュタグ").foregroundStyle(.secondary)
+                    Spacer()
+                    detailValueText("#" + event.hashtag).textSelection(.enabled)
+                }
+            }
             if !event.organizer.isEmpty {
                 if let player = store.playerByName(event.organizer) {
                     NavigationLink { GiriPlayerDetail(playerID: player.id) } label: {
@@ -166,7 +173,7 @@ struct GiriEventDetail: View {
                         }
                     }
                 } else if event.eventFormat == .live || event.eventFormat == .hybrid { detailValue("会場", event.venue.isEmpty ? "未設定" : event.venue) }
-                if event.eventFormat == .live || event.eventFormat == .hybrid || event.entryFee != nil {
+                if event.eventFormat == .live || event.entryFee != nil {
                     detailValue("参加費", event.entryFee.map(giriYenText) ?? "未入力")
                 }
             }

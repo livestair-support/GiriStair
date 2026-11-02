@@ -185,6 +185,13 @@ extension GiriEvent {
 }
 
 
+/// 「#大喜利〇〇杯」「＃〇〇」「 〇〇 」を「大喜利〇〇杯」の形で保存する（空白は除く）。
+func giriNormalizedHashtag(_ raw: String) -> String {
+    var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    while let first = value.first, first == "#" || first == "＃" { value.removeFirst() }
+    return value.components(separatedBy: .whitespacesAndNewlines).joined()
+}
+
 /// 参加費などの金額表示（例：¥1,500）。
 func giriYenText(_ value: Int) -> String { "¥" + value.formatted(.number) }
 

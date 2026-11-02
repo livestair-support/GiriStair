@@ -200,6 +200,33 @@ struct GiriProfileShortcutRow<Destination: View>: View {
         NavigationLink {
             destination()
         } label: {
+            GiriProfileShortcutLabel(title: title, systemImage: systemImage, accentColor: accentColor, countText: countText)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// 一覧タブなど、画面を切り替えるショートカット。
+struct GiriProfileShortcutButton: View {
+    let title: String
+    let systemImage: String
+    let accentColor: Color
+    var countText: String = ""
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            GiriProfileShortcutLabel(title: title, systemImage: systemImage, accentColor: accentColor, countText: countText)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct GiriProfileShortcutLabel: View {
+    let title: String
+    let systemImage: String
+    let accentColor: Color
+    var countText: String = ""
+    var body: some View {
             HStack(spacing: 12) {
                 Image(systemName: systemImage)
                     .font(.system(size: appFontSize(16), weight: .semibold))
@@ -218,8 +245,6 @@ struct GiriProfileShortcutRow<Destination: View>: View {
             }
             .padding(.vertical, 13)
             .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -568,6 +593,7 @@ struct GiriPlayersView: View {
 
 struct GiriPlayerDetail: View {
     @EnvironmentObject private var store: GiriStore
+    @EnvironmentObject private var navigation: GiriNavigation
     var playerID: String
     @State private var resolvedID: String?
     @State private var page = 0
@@ -578,7 +604,6 @@ struct GiriPlayerDetail: View {
     @State private var loadingIcon = false
 
     private var player: GiriPlayer? { store.playerDirectory.first { $0.id == (resolvedID ?? playerID) } }
-    private var pageAccent: Color { page == 1 ? AppSectionAccent.ticket : AppSectionAccent.artist }
 
     var body: some View {
         Group {
@@ -587,17 +612,15 @@ struct GiriPlayerDetail: View {
                     GiriProfileNameHeader(name: player.name, kind: .artist)
                     Picker("表示", selection: $page) {
                         Text("基本情報").tag(0)
-                        Text("アイコン").tag(1)
-                        Text("参加集計").tag(2)
+                        Text("参加集計").tag(1)
                     }
                     .pickerStyle(.segmented)
-                    .tint(pageAccent)
+                    .tint(AppSectionAccent.artist)
                     .padding(.horizontal, 18)
                     .padding(.bottom, 12)
                     TabView(selection: $page) {
                         basicPage(player).tag(0)
-                        iconPage(player).tag(1)
-                        analyticsPage(player).tag(2)
+                        analyticsPage(player).tag(1)
                     }
                     .tabViewStyle(.page(indexDisplayMode: .never))
                 }
@@ -631,6 +654,7 @@ struct GiriPlayerDetail: View {
         let key = playerSearchKey(player.name)
         let together = store.events.filter { $0.isActualParticipant && giriEventPeople($0).contains { playerSearchKey($0) == key } }
         let hosted = store.events.filter { $0.isActualParticipant && playerSearchKey($0.organizer) == key }
+        let favorites = store.notes.filter { $0.kind == .answers && $0.isOthersAnswer && playerSearchKey($0.answerer) == key }
         return ScrollView {
             VStack(spacing: 14) {
                 GiriDetailCard(title: "基本情報", systemImage: "person.text.rectangle", accentColor: AppSectionAccent.artist,
@@ -643,13 +667,17 @@ struct GiriPlayerDetail: View {
                         GiriProfileInfoRow(title: "地域", value: player.region)
                     }
                 }
+                iconCard(player)
                 GiriDetailCard(title: "ショートカット", systemImage: "arrow.up.right.square", accentColor: AppSectionAccent.live) {
                     VStack(spacing: 0) {
-                        GiriProfileShortcutRow(title: "一緒に参加した記録", systemImage: "list.bullet", accentColor: AppSectionAccent.live,
-                                               countText: "\(together.count)件") {
-                            GiriProfileRecordsPage(title: player.name) { event in
-                                giriEventPeople(event).contains { playerSearchKey($0) == key }
-                            }
+                        GiriProfileShortcutButton(title: "このプレイヤーと参加した会", systemImage: "list.bullet", accentColor: AppSectionAccent.live,
+                                                  countText: "\(together.count)件") {
+                            navigation.openList(players: [player.name])
+                        }
+                        Divider().overlay(appSeparatorColor)
+                        GiriProfileShortcutButton(title: "好きな回答", systemImage: "text.bubble", accentColor: AppSectionAccent.live,
+                                                  countText: "\(favorites.count)件") {
+                            navigation.openThoughts(answerer: player.name)
                         }
                         Divider().overlay(appSeparatorColor)
                         GiriProfileShortcutRow(title: "主催した会", systemImage: "person.crop.circle", accentColor: AppSectionAccent.live,
@@ -682,81 +710,58 @@ struct GiriPlayerDetail: View {
         .scrollIndicators(.hidden)
     }
 
-    // MARK: アイコン（ArtistDetailView.artistPhotoSection）
+    // MARK: アイコン（ArtistDetailView.artistPhotoSection を小さなアイコン用にしたもの）
 
-    private func iconPage(_ player: GiriPlayer) -> some View {
+    private func iconCard(_ player: GiriPlayer) -> some View {
         let accent = AppSectionAccent.ticket
         let image = Data(base64Encoded: player.iconDataBase64).flatMap(UIImage.init(data:))
-        return ScrollView {
-            VStack(spacing: 14) {
-                GiriDetailCard(title: "アイコン", systemImage: "photo", accentColor: accent,
-                               infoTitle: "アイコンについて",
-                               infoMessage: "一覧や会の参加者に表示します。表示するかは設定の「プレイヤーのアイコン」で選べます。",
-                               trailing: {
-                    if image != nil {
-                        Button(role: .destructive) { deletingIcon = true } label: {
-                            Label("アイコンを削除", systemImage: "trash")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(accentActionColor)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }) {
-                    if let image {
-                        Text("プレビュー").font(.caption).foregroundStyle(.secondary)
-                        PhotosPicker(selection: $photo, matching: .images) {
-                            VStack(spacing: 8) {
-                                Image(uiImage: image)
-                                    .resizable().scaledToFill()
-                                    .frame(width: 160, height: 160)
-                                    .clipShape(Circle())
-                                    .overlay { Circle().stroke(accent.opacity(0.28), lineWidth: 1) }
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 210)
-                                    .background(Color.primary.opacity(0.035))
-                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                Text("タップしてアイコンを変更").font(.caption).foregroundStyle(.secondary)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(loadingIcon)
-                    } else {
-                        PhotosPicker(selection: $photo, matching: .images) {
-                            VStack(spacing: 10) {
-                                ZStack {
-                                    Circle().fill(accent.opacity(0.10)).frame(width: 58, height: 58)
-                                    if loadingIcon { ProgressView() }
-                                    else {
-                                        Image(systemName: "photo.badge.plus")
-                                            .font(.system(size: appFontSize(24), weight: .semibold))
-                                            .foregroundStyle(accent)
-                                    }
-                                }
-                                Text("アイコンを選択")
-                                    .font(.system(size: appFontSize(16), weight: .bold, design: .rounded))
-                                    .foregroundStyle(.primary)
-                                Text("プレイヤーのアイコンとして保存されます").font(.caption).foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 180)
-                            .background(accent.opacity(0.035))
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .stroke(accent.opacity(0.22), lineWidth: 1)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(loadingIcon)
-                    }
+        return GiriDetailCard(title: "アイコン", systemImage: "photo", accentColor: accent,
+                              infoTitle: "アイコンについて",
+                              infoMessage: "一覧や会の参加者に表示します。表示するかは設定の「プレイヤーのアイコン」で選べます。",
+                              trailing: {
+            if image != nil {
+                Button(role: .destructive) { deletingIcon = true } label: {
+                    Label("削除", systemImage: "trash")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(accentActionColor)
                 }
+                .buttonStyle(.plain)
             }
-            .padding(.top, 4)
-            .padding(.bottom, 110)
+        }) {
+            PhotosPicker(selection: $photo, matching: .images) {
+                HStack(spacing: 14) {
+                    ZStack {
+                        if let image {
+                            Image(uiImage: image).resizable().scaledToFill()
+                                .frame(width: 64, height: 64)
+                                .clipShape(Circle())
+                                .overlay { Circle().stroke(accent.opacity(0.28), lineWidth: 1) }
+                        } else {
+                            Circle().fill(accent.opacity(0.10)).frame(width: 64, height: 64)
+                            Image(systemName: "photo.badge.plus")
+                                .font(.system(size: appFontSize(22), weight: .semibold))
+                                .foregroundStyle(accent)
+                        }
+                        if loadingIcon { ProgressView() }
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(image == nil ? "アイコンを選択" : "アイコンを変更")
+                            .font(.system(size: appFontSize(16), weight: .bold, design: .rounded))
+                            .foregroundStyle(.primary)
+                        Text(image == nil ? "プレイヤーのアイコンとして保存されます" : "タップして別の写真を選びます")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                }
+                .padding(10)
+                .background(accent.opacity(0.035))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay { RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(accent.opacity(0.22), lineWidth: 1) }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(loadingIcon)
         }
-        .scrollIndicators(.hidden)
     }
 
     @MainActor private func saveIcon(_ item: PhotosPickerItem, player: GiriPlayer) async {
@@ -1067,6 +1072,7 @@ struct GiriVenuesView: View {
 
 struct GiriVenueDetail: View {
     @EnvironmentObject private var store: GiriStore
+    @EnvironmentObject private var navigation: GiriNavigation
     var venueID: String
     @State private var resolvedID: String?
     @State private var page = 0
@@ -1139,8 +1145,8 @@ struct GiriVenueDetail: View {
             VStack(spacing: 14) {
                 mapCard(venue)
                 GiriDetailCard(title: "ショートカット", systemImage: "arrow.up.right.square", accentColor: AppSectionAccent.live, kind: .venue) {
-                    NavigationLink {
-                        GiriProfileRecordsPage(title: venue.name) { event in matches(event, venue: venue) }
+                    Button {
+                        navigation.openList(venue: venue.name)
                     } label: {
                         HStack(spacing: 10) {
                             Image(systemName: "list.bullet").foregroundStyle(AppSectionAccent.live).frame(width: 24)

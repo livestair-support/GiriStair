@@ -354,11 +354,13 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var nextLeagueEffectiveDate: Date? = nil
     /// 参加費（円）。旧データにはないため未入力（nil）として読み込む。
     var entryFee: Int? = nil
+    /// ツボ上げ・感想用に会が指定するハッシュタグ（「#」なしで保存）。旧データは空。
+    var hashtag: String = ""
 }
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -454,6 +456,7 @@ extension GiriEvent {
         siteQualification = try c.decodeIfPresent(SiteQualification.self, forKey: .siteQualification) ?? .none
         nextLeagueEffectiveDate = try c.giriDate(forKey: .nextLeagueEffectiveDate, required: false, calendarOnly: false)
         entryFee = try c.decodeIfPresent(Int.self, forKey: .entryFee)
+        hashtag = try c.decodeIfPresent(String.self, forKey: .hashtag) ?? ""
 
         try validate()
     }
@@ -545,6 +548,7 @@ extension GiriEvent {
         try c.encode(siteQualification, forKey: .siteQualification)
         try c.encode(nextLeagueEffectiveDate.map(GiriDates.timestamp), forKey: .nextLeagueEffectiveDate)
         try c.encode(entryFee, forKey: .entryFee)
+        try c.encode(hashtag, forKey: .hashtag)
 
     }
 }
