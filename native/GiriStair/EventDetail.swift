@@ -166,6 +166,9 @@ struct GiriEventDetail: View {
                         }
                     }
                 } else if event.eventFormat == .live || event.eventFormat == .hybrid { detailValue("会場", event.venue.isEmpty ? "未設定" : event.venue) }
+                if event.eventFormat == .live || event.eventFormat == .hybrid || event.entryFee != nil {
+                    detailValue("参加費", event.entryFee.map(giriYenText) ?? "未入力")
+                }
             }
             if event.eventFormat != .live {
                 if !event.siteUrl.isEmpty, let url = URL(string: event.siteUrl), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {

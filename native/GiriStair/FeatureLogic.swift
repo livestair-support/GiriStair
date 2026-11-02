@@ -185,10 +185,27 @@ extension GiriEvent {
 }
 
 
+/// 参加費などの金額表示（例：¥1,500）。
+func giriYenText(_ value: Int) -> String { "¥" + value.formatted(.number) }
+
 extension AppPreferences {
     /// A partial/duplicated old preference still exposes all four categories.
     var effectiveFormatOrder: [EventFormat] {
         var seen = Set<EventFormat>()
         return (formatOrder + EventFormat.allCases).filter { seen.insert($0).inserted }
+    }
+    /// 一覧・戦績のタブと登録の選択肢に出す形式。すべて外れた古い値でも
+    /// タブが空にならないよう、その場合は4形式を出す。
+    var visibleFormatOrder: [EventFormat] {
+        let hidden = Set(hiddenFormats)
+        let visible = effectiveFormatOrder.filter { !hidden.contains($0) }
+        return visible.isEmpty ? effectiveFormatOrder : visible
+    }
+    func isFormatVisible(_ format: EventFormat) -> Bool { visibleFormatOrder.contains(format) }
+    /// 選択肢用。使わない形式でも、いま選ばれている（保存済みの記録の）形式は残す。
+    func formatChoices(including current: EventFormat?) -> [EventFormat] {
+        var choices = visibleFormatOrder
+        if let current, !choices.contains(current) { choices.append(current) }
+        return choices
     }
 }

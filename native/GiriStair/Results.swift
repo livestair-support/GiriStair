@@ -66,11 +66,11 @@ struct GiriResultsView: View {
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             guard !didInitializeFormat else { return }
-            selectedFormat = store.preferences.effectiveFormatOrder.first ?? .live
+            selectedFormat = store.preferences.visibleFormatOrder.first ?? .live
             didInitializeFormat = true
         }
-        .onChange(of: store.preferences.effectiveFormatOrder) { previous, next in
-            if selectedFormat == previous.first { selectedFormat = next.first ?? .live }
+        .onChange(of: store.preferences.visibleFormatOrder) { previous, next in
+            if selectedFormat == previous.first || !next.contains(selectedFormat) { selectedFormat = next.first ?? .live }
         }
         .onChange(of: selectedFormat) { _, _ in year = "all" }
     }
@@ -92,7 +92,7 @@ struct GiriResultsView: View {
                 Text("\(filtered.count)件").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 AppHeaderCollapseButton(isCollapsed: $collapsed, tintColor: accent)
             }
-            GiriFormatPicker(selection: $selectedFormat, formats: store.preferences.effectiveFormatOrder)
+            GiriFormatPicker(selection: $selectedFormat, formats: store.preferences.visibleFormatOrder)
             Picker("大会の記録", selection: $showsUnentered) {
                 Text("結果記入済").tag(false)
                 Text("結果未入力").tag(true)

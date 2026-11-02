@@ -352,11 +352,13 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var leagueMovement: LeagueMovement = .unchanged
     var siteQualification: SiteQualification = .none
     var nextLeagueEffectiveDate: Date? = nil
+    /// 参加費（円）。旧データにはないため未入力（nil）として読み込む。
+    var entryFee: Int? = nil
 }
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -451,6 +453,7 @@ extension GiriEvent {
         leagueMovement = try c.decodeIfPresent(LeagueMovement.self, forKey: .leagueMovement) ?? .unchanged
         siteQualification = try c.decodeIfPresent(SiteQualification.self, forKey: .siteQualification) ?? .none
         nextLeagueEffectiveDate = try c.giriDate(forKey: .nextLeagueEffectiveDate, required: false, calendarOnly: false)
+        entryFee = try c.decodeIfPresent(Int.self, forKey: .entryFee)
 
         try validate()
     }
@@ -541,6 +544,7 @@ extension GiriEvent {
         try c.encode(leagueMovement, forKey: .leagueMovement)
         try c.encode(siteQualification, forKey: .siteQualification)
         try c.encode(nextLeagueEffectiveDate.map(GiriDates.timestamp), forKey: .nextLeagueEffectiveDate)
+        try c.encode(entryFee, forKey: .entryFee)
 
     }
 }
@@ -710,11 +714,13 @@ struct AppPreferences: Codable, Equatable {
     var playerIconMode: String = "auto"
     var hasShownInitialResultPrompt: Bool = false
     var formatOrder: [EventFormat] = EventFormat.allCases
+    /// デフォルト設定で使わないことにした形式。記録は残し、タブと選択肢にだけ出さない。
+    var hiddenFormats: [EventFormat] = []
 }
 
 extension AppPreferences {
     private enum CodingKeys: String, CodingKey {
-        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder
+        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder, hiddenFormats
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -749,6 +755,7 @@ extension AppPreferences {
 
         hasShownInitialResultPrompt = try c.decodeIfPresent(Bool.self, forKey: .hasShownInitialResultPrompt) ?? false
         formatOrder = try c.decodeIfPresent([EventFormat].self, forKey: .formatOrder) ?? EventFormat.allCases
+        hiddenFormats = try c.decodeIfPresent([EventFormat].self, forKey: .hiddenFormats) ?? []
 
         try validate()
     }
@@ -785,6 +792,7 @@ extension AppPreferences {
 
         try c.encode(hasShownInitialResultPrompt, forKey: .hasShownInitialResultPrompt)
         try c.encode(formatOrder, forKey: .formatOrder)
+        try c.encode(hiddenFormats, forKey: .hiddenFormats)
 
     }
 }
@@ -1254,6 +1262,7 @@ extension GiriEvent {
         try tournamentResult?.validate()
         try positive(cyclePlacement, "順位")
         try positive(siteCycleNumber, "周期の回数")
+        if let entryFee { try require(entryFee >= 0, "参加費が不正です。") }
         try require(Set(promptedResultKeys).count == promptedResultKeys.count, "結果案内のキーが重複しています。")
     }
     func isHostedBy(_ name: String) -> Bool { !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && playerSearchKey(organizer) == playerSearchKey(name) }

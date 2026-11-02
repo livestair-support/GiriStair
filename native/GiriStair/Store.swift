@@ -101,6 +101,20 @@ final class GiriStore: ObservableObject {
         }
         return values.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
+    /// 会・結果・他人の回答で使われている名前。LiveStair の一覧と同じく、
+    /// 記録のないプレイヤーだけを一覧から削除できるようにするために使う。
+    var referencedPlayerKeys: Set<String> {
+        var keys = Set(events.flatMap(referencedNames).map(playerSearchKey))
+        keys.formUnion(notes.filter(\.isOthersAnswer).map { playerSearchKey($0.answerer) })
+        keys.remove("")
+        return keys
+    }
+    /// 会で使われている会場（ID・名前）。記録のある会場は一覧から削除しない。
+    var referencedVenueKeys: (ids: Set<String>, names: Set<String>) {
+        var names = Set(events.map { playerSearchKey($0.venue) })
+        names.remove("")
+        return (Set(events.compactMap(\.venueId)), names)
+    }
     func playerByName(_ name: String) -> GiriPlayer? { playerDirectory.first { playerSearchKey($0.name) == playerSearchKey(name) } }
     func venueById(_ id: String?) -> GiriVenue? { venueDirectory.first { $0.id == id } }
     func onlineSiteById(_ id: String?) -> OnlineSite? { onlineSites.first { $0.id == id } }
@@ -251,6 +265,9 @@ final class GiriStore: ObservableObject {
         var preferences = candidate
         preferences.selfName = preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
         preferences.formatOrder = preferences.effectiveFormatOrder
+        let hidden = Set(preferences.hiddenFormats)
+        preferences.hiddenFormats = EventFormat.allCases.filter { hidden.contains($0) }
+        guard preferences.hiddenFormats.count < EventFormat.allCases.count else { throw GiriDataError.invalid("使用する形式を1つ以上選んでください。") }
         try preferences.validate()
         let oldName = self.preferences.selfName
         try mutate { next in

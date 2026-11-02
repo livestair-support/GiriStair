@@ -50,6 +50,21 @@ struct DomainRegression {
         try check(encodedString.contains("13:00:00.123456Z"), "microsecond timestamp retained")
         let again = try GiriJSON.decode(encoded)
         try check(again == restored, "legacy document roundtrip")
+        // 参加費と使わない形式は任意項目。旧JSONは未入力・全形式表示のまま読む。
+        try check(restored.events[0].entryFee == nil && restored.preferences.hiddenFormats.isEmpty, "documents without fee or hidden formats keep their defaults")
+        var feeDocument = restored
+        feeDocument.events[0].entryFee = 1500
+        feeDocument.preferences.hiddenFormats = [.hybrid]
+        let feeRoundTrip = try GiriJSON.decode(GiriJSON.encode(feeDocument))
+        try check(feeRoundTrip.events[0].entryFee == 1500 && feeRoundTrip.preferences.hiddenFormats == [.hybrid], "entry fee and hidden formats survive backup and restore")
+        try check(feeRoundTrip.preferences.visibleFormatOrder == [.live, .onlineLong, .onlineShort], "hidden formats leave the tabs while keeping the saved order")
+        var allHidden = AppPreferences(); allHidden.hiddenFormats = EventFormat.allCases
+        try check(allHidden.visibleFormatOrder == EventFormat.allCases, "an all-hidden value never empties the format tabs")
+        var liveHidden = AppPreferences(); liveHidden.hiddenFormats = [.live]
+        try check(!liveHidden.formatChoices(including: nil).contains(.live) && liveHidden.formatChoices(including: .live).last == .live, "a record of a hidden format keeps its own format as a choice")
+        var freeEvent = GiriEvent(); freeEvent.entryFee = 0
+        try check((try? freeEvent.validate()) != nil, "a free event (0 yen) is valid")
+        try reject(Data(#"{"schemaVersion":1,"events":[{"id":"fee","title":"負","kind":"live","meetingType":"casual","createdAt":"2026-10-29T13:00:00Z","entryFee":-1}],"notes":[]}"#.utf8), "negative entry fee")
         let local = GiriDates.parse("2026-10-29T22:00:00.000")
         try check(local.map { Calendar.current.component(.hour, from: $0) == 22 } ?? false, "unzoned Dart time stays local")
         try check(GiriDates.parse("2026-02-30", calendarOnly: true) == nil, "invalid calendar day refused")
@@ -402,6 +417,15 @@ struct DomainRegression {
             try check(customOrder.effectiveFormatOrder == [.onlineLong, .hybrid, .live, .onlineShort], "format preference removes duplicates while retaining all four categories")
             try seasonStore.savePreferences(customOrder)
             try check(seasonStore.preferences.formatOrder == customOrder.effectiveFormatOrder, "saved format order is normalized")
+            var hideAll = seasonStore.preferences; hideAll.hiddenFormats = EventFormat.allCases
+            var refusedHideAll = false
+            do { try seasonStore.savePreferences(hideAll) } catch { refusedHideAll = true }
+            try check(refusedHideAll && seasonStore.preferences.hiddenFormats.isEmpty, "at least one format stays in use")
+            var hideSome = seasonStore.preferences; hideSome.hiddenFormats = [.hybrid, .onlineShort, .hybrid]
+            try seasonStore.savePreferences(hideSome)
+            try check(seasonStore.preferences.hiddenFormats == [.onlineShort, .hybrid], "hidden formats are stored once in a stable order")
+            hideSome.hiddenFormats = []
+            try seasonStore.savePreferences(hideSome)
             try check(EventFormat.hybrid.rawValue == "hybrid" && EventFormat.hybrid.title == "スプシ系", "the spreadsheet category keeps the legacy hybrid raw value")
             var categorized = ThoughtNote(title: "分類", kind: .answers); categorized.answerCategory = "long"
             try seasonStore.saveNote(categorized)

@@ -170,7 +170,7 @@ struct GiriEventEditor: View {
             GiriEventCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live)
                 .listRowSeparator(.hidden)
             Picker(selection: $draft.eventFormat) {
-                ForEach(EventFormat.allCases) { Text($0.title).tag($0) }
+                ForEach(store.preferences.formatChoices(including: event?.eventFormat)) { Text($0.title).tag($0) }
             } label: { GiriEditorLabel("形式") }.pickerStyle(.menu).tint(.primary)
             Picker(selection: $draft.meetingType) {
                 Text("通常").tag(MeetingType.casual)
@@ -192,6 +192,7 @@ struct GiriEventEditor: View {
                     GiriEventTimeRow(startsAt: clockBinding(start: true), endsAt: clockBinding(start: false))
                     if draft.eventFormat != .onlineShort {
                         GiriVenueSuggestionField(text: $draft.venue)
+                        GiriEntryFeeField(value: $draft.entryFee)
                     }
                 }
                 if draft.eventFormat.hasOnlineRounds {
@@ -379,7 +380,13 @@ struct GiriEventEditor: View {
 
     private func load() {
         draft = event ?? GiriEvent()
-        if event == nil { draft.eventDate = Calendar.current.startOfDay(for: Date()) }
+        if event == nil {
+            draft.eventDate = Calendar.current.startOfDay(for: Date())
+            // 使わない形式を新規登録の初期値にしない（並び順の先頭を使う）。
+            if !store.preferences.isFormatVisible(draft.eventFormat), let first = store.preferences.visibleFormatOrder.first {
+                draft.eventFormat = first
+            }
+        }
         if draft.rounds.isEmpty { draft.rounds = draft.effectiveRounds }
         participants = draft.participants.isEmpty ? [""] : draft.participants + [""]
         if draft.teams.isEmpty, let old = draft.tournamentResult, old.format != .individual,
@@ -491,6 +498,36 @@ struct GiriEventEditor: View {
             playLiveStairSaveFeedback()
             if event != nil { dismiss() } else { loaded = false; load(); onSaved?() }
         } catch { store.errorMessage = error.localizedDescription }
+    }
+}
+
+/// LiveStair EventBasicEditor.priceInputRow の「¥」と数字だけの入力を、
+/// 左に項目名を置く登録画面の行にしたもの。空欄は未入力（nil）、0円は無料として保存する。
+struct GiriEntryFeeField: View {
+    @Binding var value: Int?
+    @State private var text = ""
+    var body: some View {
+        HStack(spacing: 8) {
+            GiriEditorLabel("参加費")
+            Spacer(minLength: 8)
+            Text("¥").foregroundStyle(.secondary)
+            TextField("未入力", text: $text)
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: 140)
+                .accessibilityLabel("参加費（円）")
+        }
+        .onAppear { text = value.map(String.init) ?? "" }
+        .onChange(of: text) { _, newValue in
+            let digits = String(newValue.filter { $0.isASCII && $0.isWholeNumber }.prefix(7))
+            if digits != newValue { text = digits; return }
+            let number = digits.isEmpty ? nil : Int(digits)
+            if number != value { value = number }
+        }
+        .onChange(of: value) { _, newValue in
+            let current = newValue.map(String.init) ?? ""
+            if current != text { text = current }
+        }
     }
 }
 

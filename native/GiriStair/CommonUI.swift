@@ -1938,3 +1938,31 @@ struct EventDateCalendarPickerView: View {
     }
 }
 
+
+// LiveStair CommonUI.swift RankNumberView（会場・プレイヤー詳細の上位表示）。
+struct RankNumberView: View {
+    let rank: Int
+    var width: CGFloat = 34
+
+    private var fontSize: CGFloat {
+        if rank < 10 {
+            return 19
+        } else if rank < 100 {
+            return 17
+        } else if rank < 1000 {
+            return 14
+        } else {
+            return 12
+        }
+    }
+
+    var body: some View {
+        Text(String(rank))
+            .font(.system(size: appFontSize(fontSize), weight: .bold))
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.55)
+            .allowsTightening(true)
+            .frame(width: width, alignment: .center)
+    }
+}

@@ -720,7 +720,7 @@ struct GiriThoughtEditor: View {
                 AppCardSectionTitle(title: "関連する会", systemImage: "link", accentColor: AppSectionAccent.memo)
                     .listRowSeparator(.hidden)
                 Picker("形式", selection: $selectedFormat) {
-                    ForEach(EventFormat.allCases) { format in Text(format.title).tag(format) }
+                    ForEach(store.preferences.formatChoices(including: selectedFormat)) { format in Text(format.title).tag(format) }
                 }.pickerStyle(.menu).tint(.primary)
                 eventPicker
                 if event?.eventFormat.hasOnlineRounds == true { roundPicker }
@@ -764,6 +764,10 @@ struct GiriThoughtEditor: View {
         }
         .onAppear {
             if !relationInitialized {
+                if event == nil, !store.preferences.isFormatVisible(selectedFormat),
+                   let first = store.preferences.visibleFormatOrder.first {
+                    selectedFormat = first
+                }
                 if let event {
                     selectedFormat = event.eventFormat
                     if initial.answerCategory == nil && requestedAnswerCategory == nil {

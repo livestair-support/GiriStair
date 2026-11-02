@@ -134,11 +134,11 @@ struct GiriListView: View {
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             guard !didInitializeFormat else { return }
-            selectedFormat = store.preferences.effectiveFormatOrder.first ?? .live
+            selectedFormat = store.preferences.visibleFormatOrder.first ?? .live
             didInitializeFormat = true
         }
-        .onChange(of: store.preferences.effectiveFormatOrder) { previous, next in
-            if selectedFormat == previous.first {
+        .onChange(of: store.preferences.visibleFormatOrder) { previous, next in
+            if selectedFormat == previous.first || !next.contains(selectedFormat) {
                 selectedFormat = next.first ?? .live
             }
         }
@@ -227,7 +227,7 @@ struct GiriListView: View {
                 Text("\(visibleEntryCount)件").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 AppHeaderCollapseButton(isCollapsed: $isCollapsed, tintColor: accent)
             }
-            GiriFormatPicker(selection: $selectedFormat, formats: store.preferences.effectiveFormatOrder)
+            GiriFormatPicker(selection: $selectedFormat, formats: store.preferences.visibleFormatOrder)
             if !isCollapsed {
                 AppSearchField(text: $search, placeholder: selectedFormat.hasLiveTiming ? "会・大会名・会場・主催者・参加者・メモ" : "大会・サイト・段階・ブロック・メモ")
                     .padding(.bottom, 2)

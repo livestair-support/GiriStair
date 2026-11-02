@@ -30,7 +30,7 @@ struct GiriSettingsView: View {
                 NavigationLink("ネット大喜利サイト一覧") { GiriSitesView() }
             }
             settingSection("defaults", "デフォルト設定", "slider.horizontal.3", AppSectionAccent.live) {
-                NavigationLink("形式タブの並び順") { GiriFormatOrderEditor() }
+                NavigationLink("使用する形式・並び順") { GiriFormatOrderEditor() }
                 Picker("テーマ", selection: preference(\.theme)) {
                     Text("端末に合わせる").tag("system")
                     Text("ライト").tag("light")
@@ -244,24 +244,75 @@ struct GiriShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
-/// Standard iOS reordering; the first format is the default on list/results.
+/// 使う形式のチェックと並び順。先頭の形式が一覧・戦績で最初に開く。
+/// チェックを外しても記録は消さず、タブと登録の選択肢にだけ出さない。
 private struct GiriFormatOrderEditor: View {
     @EnvironmentObject private var store: GiriStore
+
+    private var hidden: Set<EventFormat> { Set(store.preferences.hiddenFormats) }
 
     var body: some View {
         List {
             Section {
+                AppCardSectionTitle(
+                    title: "使用する形式",
+                    systemImage: "square.grid.2x2",
+                    accentColor: AppSectionAccent.live,
+                    infoTitle: "使用する形式について",
+                    infoMessage: "チェックを外した形式は、一覧・戦績のタブと登録の選択肢に出しません。記録は消えません。右の≡で並べ替えると、先頭の形式が最初に開きます。"
+                )
+                .listRowSeparator(.hidden)
                 ForEach(store.preferences.effectiveFormatOrder) { format in
-                    Text(format.title).font(.body)
+                    formatRow(format)
                 }
                 .onMove(perform: move)
+            } footer: {
+                Text("1つ以上の形式を選んでください。")
             }
+            .appSectionCardStyle(accentColor: AppSectionAccent.live)
         }
+        .environment(\.defaultMinListRowHeight, settingsMinimumListRowHeight)
         .appIndexListStyle()
         .environment(\.editMode, .constant(.active))
         .toolbar(.visible, for: .navigationBar)
-        .navigationTitle("形式タブの並び順")
+        .navigationTitle("使用する形式・並び順")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func formatRow(_ format: EventFormat) -> some View {
+        let isVisible = !hidden.contains(format)
+        let isLastVisible = isVisible && hidden.count >= EventFormat.allCases.count - 1
+        return Button {
+            toggle(format)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: isVisible ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: appFontSize(20), weight: .semibold))
+                    .foregroundStyle(isVisible ? GiriEventPresentation.accent(format) : Color.secondary)
+                    .frame(width: 26)
+                Text(format.title)
+                    .font(.body)
+                    .foregroundStyle(isVisible ? Color.primary : Color.secondary)
+                Spacer(minLength: 8)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .disabled(isLastVisible)
+        .accessibilityLabel(format.title)
+        .accessibilityValue(isVisible ? "使用する" : "使用しない")
+    }
+
+    private func toggle(_ format: EventFormat) {
+        var preferences = store.preferences
+        var values = Set(preferences.hiddenFormats)
+        if values.contains(format) { values.remove(format) } else { values.insert(format) }
+        guard values.count < EventFormat.allCases.count else { return }
+        preferences.hiddenFormats = EventFormat.allCases.filter { values.contains($0) }
+        store.run {
+            try store.savePreferences(preferences)
+            playLiveStairSaveFeedback()
+        }
     }
 
     private func move(from source: IndexSet, to destination: Int) {

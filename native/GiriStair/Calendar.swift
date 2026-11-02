@@ -294,9 +294,14 @@ struct GiriCalendarView: View {
         .padding(.horizontal, 10).frame(maxWidth: 460)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+    // 使わない形式は凡例から外す。記録が残っている形式は色の意味が分かるよう残す。
+    private var legendFormats: [EventFormat] {
+        let recorded = Set(events.map(\.eventFormat))
+        return store.preferences.effectiveFormatOrder.filter { store.preferences.isFormatVisible($0) || recorded.contains($0) }
+    }
     private var formatLegend: some View {
         HStack(spacing: 10) {
-            ForEach(EventFormat.allCases) { format in
+            ForEach(legendFormats) { format in
                 Label(format.shortTitle, systemImage: GiriEventPresentation.symbol(format))
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(GiriEventPresentation.accent(format))
