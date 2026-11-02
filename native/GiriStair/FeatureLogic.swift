@@ -292,9 +292,9 @@ enum GiriFinalResultChoice: String, CaseIterable, Identifiable {
         case .other: return .other
         case .placed:
             switch bestOf {
-            case 4: return .best4
-            case 8: return .best8
-            case 16: return .best16
+            case 4?: return .best4
+            case 8?: return .best8
+            case 16?: return .best16
             default: return placement == 3 ? .third : .placed
             }
         }

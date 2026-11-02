@@ -231,8 +231,11 @@ struct DomainRegression {
         let bridged = oldAnswer.effectiveAnswerRecords
         try check(bridged.map(\.text) == oldAnswer.answers && bridged.map(\.id) == oldAnswer.effectiveAnswerRecords.map(\.id), "legacy answer text receives stable editor identities without mutation")
         oldAnswer.answerRecords = [AnswerRecord(id: "submitted-a", text: "提出A", isSubmitted: true, placement: 2, points: 15, voterCount: 10, maxPointsPerVoter: 3), AnswerRecord(id: "submitted-b", text: "提出B", isSubmitted: true), AnswerRecord(id: "rejected", text: "没回答")]
-        oldAnswer.usesAnswerRecords = true; oldAnswer.isOthersAnswer = true; oldAnswer.answerer = "回答者"
-        try check(oldAnswer.submittedAnswers.count == 2 && oldAnswer.answerRecords[0].voteRate == 50, "multiple submitted answers keep independent rank and weighted vote rate")
+        oldAnswer.usesAnswerRecords = true
+        try check(oldAnswer.submittedAnswers.count == 2 && oldAnswer.answerRecords[0].voteRate == 50 && oldAnswer.answerRecords[0].pointsPerVoter == 1.5, "multiple submitted answers keep independent rank, weighted vote rate and points per voter")
+        oldAnswer.isOthersAnswer = true; oldAnswer.answerer = "回答者"
+        // 0.8：旧「他人の回答」メモは、その人の回答（ツボ）として読み、自分の提出には数えない。
+        try check(oldAnswer.submittedAnswers.isEmpty && oldAnswer.otherAnswerRecords.count == 3 && oldAnswer.otherAnswerRecords.allSatisfy { $0.answerer == "回答者" }, "a legacy other-person note is read as that person's answers, not one's submissions")
         let featureDirectory = temp.appendingPathComponent("features", isDirectory: true)
         let featureStore = GiriStore(directory: featureDirectory)
         try featureStore.saveNote(oldAnswer)

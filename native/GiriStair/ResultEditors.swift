@@ -613,8 +613,8 @@ struct GiriStageEditor: View {
         .toolbar(.visible, for: .navigationBar)
         .giriDeleteAlert(isStageWide ? "段階の記録を削除しますか？" : "この回の記録を削除しますか？", isPresented: $deleting,
                          message: "「\(stage.name)」の結果を削除します。お題と回答は残ります。保存すると確定します。") {
+            // 親の editingStageID を外すと、この画面は自動で閉じる（dismiss を重ねない）。
             onDelete()
-            dismiss()
         }
     }
 
