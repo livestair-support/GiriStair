@@ -4,6 +4,7 @@ import UIKit
 // LiveStair-native filters and cards, with four independent GiriStair formats.
 struct GiriListView: View {
     @EnvironmentObject private var store: GiriStore
+    @EnvironmentObject private var navigation: GiriNavigation
     @State private var search = ""
     @State private var selectedFormat: EventFormat = .live
     @State private var didInitializeFormat = false
@@ -65,9 +66,11 @@ struct GiriListView: View {
                 guard let date = GiriEventPresentation.date(event),
                       String(Calendar(identifier: .gregorian).component(.year, from: date)) == year else { return false }
             }
-            if venue != "all" && event.venue != venue { return false }
+            // 会場・参加者の条件は、その行を表示する形式（生・短考・スプシ系）でだけ使う。
+            // 形式を切り替えても条件は残し、長考では適用しない。
+            if hasParticipantFilter && venue != "all" && event.venue != venue { return false }
             // LiveStair selectedArtists is an AND filter, retaining all selected people.
-            if !selectedPlayers.isEmpty && !selectedPlayers.allSatisfy({ person in
+            if hasParticipantFilter && !selectedPlayers.isEmpty && !selectedPlayers.allSatisfy({ person in
                 (event.participants + event.teams.flatMap(\.members)).contains { playerSearchKey($0) == playerSearchKey(person) }
             }) { return false }
             if site != "all" && event.onlineSiteId != site { return false }
@@ -133,17 +136,21 @@ struct GiriListView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
-            guard !didInitializeFormat else { return }
-            selectedFormat = store.preferences.effectiveFormatOrder.first ?? .live
-            didInitializeFormat = true
+            if !didInitializeFormat {
+                selectedFormat = store.preferences.visibleFormatOrder.first ?? .live
+                didInitializeFormat = true
+            }
+            consumeListRequest()
         }
-        .onChange(of: store.preferences.effectiveFormatOrder) { previous, next in
-            if selectedFormat == previous.first {
+        .onChange(of: navigation.listRequest) { _, _ in consumeListRequest() }
+        .onChange(of: store.preferences.visibleFormatOrder) { previous, next in
+            if selectedFormat == previous.first || !next.contains(selectedFormat) {
                 selectedFormat = next.first ?? .live
             }
         }
         .onChange(of: selectedFormat) { _, _ in
-            year = "all"; meeting = "all"; status = "all"; venue = "all"; site = "all"; stage = "all"; selectedPlayers.removeAll()
+            // 会場・参加者は詳細のショートカットから開いた条件を形式の切替後も残す。
+            year = "all"; meeting = "all"; status = "all"; site = "all"; stage = "all"
             closePlayerDropdown()
         }
         .onChange(of: isCalendar) { _, _ in closePlayerDropdown() }
@@ -151,12 +158,11 @@ struct GiriListView: View {
         .navigationDestination(isPresented: Binding(get: { destinationID != nil }, set: { if !$0 { destinationID = nil } })) {
             if let id = destinationID { GiriEventDetail(eventID: id) }
         }
-        .confirmationDialog("この記録を削除しますか？", isPresented: Binding(get: { deletingEvent != nil }, set: { if !$0 { deletingEvent = nil } }), titleVisibility: .visible) {
-            Button("削除", role: .destructive) {
-                guard let event = deletingEvent else { return }
-                store.run { try store.deleteEvent(event.id); playLiveStairDeleteFeedback() }; deletingEvent = nil
-            }
-            Button("キャンセル", role: .cancel) { deletingEvent = nil }
+        .giriDeleteAlert("記録を削除しますか？", isPresented: Binding(get: { deletingEvent != nil }, set: { if !$0 { deletingEvent = nil } }),
+                         message: "「\(deletingEvent?.title ?? "")」を削除します。お題と回答のメモは残ります。") {
+            guard let event = deletingEvent else { return }
+            store.run { try store.deleteEvent(event.id); playLiveStairDeleteFeedback() }
+            deletingEvent = nil
         }
     }
     private func eventList(now: Date) -> some View {
@@ -227,7 +233,7 @@ struct GiriListView: View {
                 Text("\(visibleEntryCount)件").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 AppHeaderCollapseButton(isCollapsed: $isCollapsed, tintColor: accent)
             }
-            GiriFormatPicker(selection: $selectedFormat, formats: store.preferences.effectiveFormatOrder)
+            GiriFormatPicker(selection: $selectedFormat, formats: store.preferences.visibleFormatOrder)
             if !isCollapsed {
                 AppSearchField(text: $search, placeholder: selectedFormat.hasLiveTiming ? "会・大会名・会場・主催者・参加者・メモ" : "大会・サイト・段階・ブロック・メモ")
                     .padding(.bottom, 2)
@@ -247,7 +253,7 @@ struct GiriListView: View {
                     separator
                     participantFilter
                     separator
-                    GiriListFilterMenu(title: "会場", selection: $venue, options: [("all", "全会場")] + venueNames.map { ($0, $0) })
+                    GiriListFilterMenu(title: "会場", selection: $venue, options: [("all", "全会場")] + (venueNames + (venue != "all" && !venueNames.contains(venue) ? [venue] : [])).map { ($0, $0) })
                 }
                 if selectedFormat == .onlineLong {
                     separator
@@ -340,6 +346,39 @@ struct GiriListView: View {
         .contentShape(Rectangle())
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
+    /// プレイヤー・会場詳細のショートカット。並び順の左から、該当する記録がある形式を開く。
+    private func consumeListRequest() {
+        guard let request = navigation.listRequest else { return }
+        navigation.listRequest = nil
+        destinationID = nil
+        closePlayerDropdown()
+        let people = request.players.map(playerSearchKey).filter { !$0.isEmpty }
+        let venueKey = request.venue.map(playerSearchKey) ?? ""
+        func matches(_ event: GiriEvent) -> Bool {
+            guard event.isActualParticipant, event.eventFormat.hasLiveTiming else { return false }
+            let names = (event.participants + event.teams.flatMap(\.members)).map(playerSearchKey)
+            if !people.allSatisfy({ names.contains($0) }) { return false }
+            if !venueKey.isEmpty && playerSearchKey(event.venue) != venueKey { return false }
+            return true
+        }
+        let candidates = store.preferences.visibleFormatOrder.filter(\.hasLiveTiming)
+        let format = candidates.first { format in store.events.contains { $0.eventFormat == format && matches($0) } }
+            ?? candidates.first ?? store.preferences.visibleFormatOrder.first ?? .live
+        let now = Date()
+        let hasCompleted = store.events.contains { $0.eventFormat == format && matches($0) && $0.participationState(now: now) == .completed }
+        if store.preferences.listCurrentMode {
+            var preferences = store.preferences
+            preferences.listCurrentMode = false
+            store.run { try store.savePreferences(preferences) }
+        }
+        selectedFormat = format
+        search = ""; year = "all"; meeting = "all"; status = "all"; site = "all"; stage = "all"; ascending = nil
+        attended = hasCompleted
+        selectedPlayers = Set(request.players.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+        venue = request.venue.flatMap { $0.isEmpty ? nil : $0 } ?? "all"
+        // 一覧の会場名と表記が違う場合は、記録に保存された名前で絞り込む。
+        if let saved = store.events.first(where: { matches($0) && !$0.venue.isEmpty })?.venue, !venueKey.isEmpty { venue = saved }
+    }
     private func closePlayerDropdown() {
         showsPlayerDropdown = false
         playerSearch = ""
@@ -350,12 +389,14 @@ struct GiriListView: View {
 struct GiriFormatPicker: View {
     @Binding var selection: EventFormat
     var formats: [EventFormat] = EventFormat.allCases
+    /// 一覧・戦績は "format-tabs"（UIテストで使う）。お題/回答は別のIDにする。
+    var identifier = "format-tabs"
     var body: some View {
         Picker("形式", selection: $selection) {
             ForEach(formats) { format in
                 Text(format.shortTitle).tag(format).accessibilityLabel(format.title)
             }
-        }.pickerStyle(.segmented).accessibilityIdentifier("format-tabs")
+        }.pickerStyle(.segmented).accessibilityIdentifier(identifier)
     }
 }
 
@@ -831,6 +872,9 @@ enum GiriEventPresentation {
         }
     }
     static func resultSummary(_ event: GiriEvent) -> String {
+        // 例：予選1位通過・本戦1回戦敗退／決勝 優勝
+        let progress = event.resultProgressSummary
+        if !progress.isEmpty { return progress }
         var parts: [String] = []
         if let result = event.tournamentResult, result.outcome != .unrecorded {
             parts.append(outcomeTitle(result.outcome))

@@ -54,32 +54,33 @@ struct GiriEventDetail: View {
         }
         .navigationTitle("詳細")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .toolbar {
             if let event {
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink { GiriEventEditor(event: event) } label: { Text("編集") }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
+                // LiveDetailView と同じ並び：ほかの操作 → 削除 → 編集
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Menu {
                         ShareLink(item: shareText(event)) { Label("共有", systemImage: "square.and.arrow.up") }
-                        Divider()
-                        Button("削除", systemImage: "trash", role: .destructive) { deleteQuestion = true }
-                    } label: { Image(systemName: "ellipsis") }
-                    .accessibilityLabel("記録の操作")
+                    } label: {
+                        Image(systemName: "ellipsis.circle").foregroundStyle(accentActionColor).frame(width: 32, height: 32)
+                    }
+                    .accessibilityLabel("ほかの操作")
+                    Button(role: .destructive) { deleteQuestion = true } label: {
+                        Image(systemName: "trash").foregroundStyle(accentActionColor)
+                    }
+                    .accessibilityLabel("この記録を削除")
+                    NavigationLink { GiriEventEditor(event: event) } label: { Text("編集") }
                 }
             }
         }
-        .confirmationDialog("この記録を削除しますか？", isPresented: $deleteQuestion, titleVisibility: .visible) {
-            Button("削除", role: .destructive) {
-                do {
-                    try store.deleteEvent(eventID)
-                    playLiveStairDeleteFeedback()
-                    dismiss()
-                } catch { store.errorMessage = error.localizedDescription }
-            }
-            Button("キャンセル", role: .cancel) {}
-        } message: { Text("お題と回答のメモは残ります。") }
+        .giriDeleteAlert("記録を削除しますか？", isPresented: $deleteQuestion,
+                         message: "「\(event?.title ?? "")」を削除します。お題と回答のメモは残ります。") {
+            do {
+                try store.deleteEvent(eventID)
+                playLiveStairDeleteFeedback()
+                dismiss()
+            } catch { store.errorMessage = error.localizedDescription }
+        }
         .task { offerResultIfNeeded() }
         .alert("結果を入力しますか？", isPresented: $showResultPrompt) {
             Button("後で", role: .cancel) {}
@@ -109,7 +110,7 @@ struct GiriEventDetail: View {
                     current.isInterested = false
                     if current.status == .canceled { current.status = .planned }
                     let me = store.preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !me.isEmpty && !current.participants.contains(where: { playerSearchKey($0) == playerSearchKey(me) }) {
+                    if !me.isEmpty && !current.participants.contains(where: { store.preferences.isSelf($0) }) {
                         current.participants.append(me)
                     }
                     store.run {
@@ -128,6 +129,13 @@ struct GiriEventDetail: View {
             }
             detailValue("参加状況", event.participationState().title)
             adaptiveName(event.title)
+            if !event.hashtag.isEmpty {
+                HStack {
+                    Text("ハッシュタグ").foregroundStyle(.secondary)
+                    Spacer()
+                    detailValueText("#" + event.hashtag).textSelection(.enabled)
+                }
+            }
             if !event.organizer.isEmpty {
                 if let player = store.playerByName(event.organizer) {
                     NavigationLink { GiriPlayerDetail(playerID: player.id) } label: {
@@ -166,6 +174,9 @@ struct GiriEventDetail: View {
                         }
                     }
                 } else if event.eventFormat == .live || event.eventFormat == .hybrid { detailValue("会場", event.venue.isEmpty ? "未設定" : event.venue) }
+                if event.eventFormat == .live || event.entryFee != nil {
+                    detailValue("参加費", event.entryFee.map(giriYenText) ?? "未入力")
+                }
             }
             if event.eventFormat != .live {
                 if !event.siteUrl.isEmpty, let url = URL(string: event.siteUrl), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
@@ -232,25 +243,27 @@ struct GiriEventDetail: View {
                     .tint(accentActionColor)
             }.listRowSeparator(.hidden)
             if event.hasFinalResult {
-                detailValue("最終結果", event.tournamentResult?.outcome.title ?? (event.placement == nil ? "未記録" : "\(event.placement ?? 0)位"))
+                detailValue("最終結果", event.finalResultTitle ?? "未記録")
             } else {
                 detailValue("進行状況", latestProgress(event))
             }
-            if let rank = event.effectivePlacement { detailValue("最終順位", "\(rank)位") }
+            if let rank = event.effectivePlacement, event.finalResultTitle != "\(rank)位", rank > 2 { detailValue("最終順位", "\(rank)位") }
             if let result = event.tournamentResult, !result.memo.isEmpty { Text(result.memo).textSelection(.enabled) }
             else if !event.resultText.isEmpty { Text(event.resultText).textSelection(.enabled) }
             ForEach(event.tournamentResult?.stages ?? []) { stage in
                 NavigationLink { GiriResultEntry(eventID: eventID, initialRoundID: stage.roundId, initialStageID: stage.id) } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(stage.name).font(.headline).foregroundStyle(.primary)
+                        let format = [stage.group, stage.lineup, stage.judging].filter { !$0.isEmpty }
+                        if !format.isEmpty { Text(format.joined(separator: "・")).font(.caption).foregroundStyle(.secondary) }
                         HStack(spacing: 10) {
-                            if stage.outcome != .unrecorded { Text(stage.outcome.title) }
-                            if let rank = stage.placement { Text("\(rank)位") }
+                            let text = giriStageResultText(stage)
+                            if !text.isEmpty { Text(text.hasPrefix(stage.name) ? String(text.dropFirst(stage.name.count)).trimmingCharacters(in: .whitespaces) : text) }
                             if let rank = stage.teamPlacement { Text("チーム\(rank)位") }
                             if let rank = stage.individualPlacement { Text("個人\(rank)位") }
                         }.font(.subheadline).foregroundStyle(.secondary)
-                        if let rate = stage.voteRate {
-                            Text("得票率 " + rate.formatted(.number.precision(.fractionLength(2))) + "%")
+                        if let points = stage.points, let voters = stage.voterCount, let perVoter = stage.pointsPerVoter {
+                            Text(points.formatted(.number.precision(.fractionLength(0...2))) + "点 ÷ \(voters)人 = 1人あたり " + giriScoreText(perVoter))
                                 .font(.subheadline).foregroundStyle(.secondary)
                         }
                         if !stage.memo.isEmpty { Text(stage.memo).font(.subheadline).foregroundStyle(.secondary) }
@@ -396,6 +409,8 @@ struct GiriEventDetail: View {
     }
 
     private func latestProgress(_ event: GiriEvent) -> String {
+        let summary = event.resultProgressSummary
+        if !summary.isEmpty { return summary }
         let stages = event.tournamentResult?.stages ?? []
         for round in event.effectiveRounds.reversed() {
             if let stage = stages.first(where: { $0.roundId == round.id && $0.outcome != .unrecorded }) { return stage.outcome.title }
@@ -470,7 +485,7 @@ struct GiriLiveTimingEditor: View {
             }.appEventDetailCardStyle(accentColor: AppSectionAccent.live)
         }.appEditorFormStyle()
             .navigationTitle("日程を編集").navigationBarTitleDisplayMode(.inline)
-            .toolbar(.visible, for: .navigationBar)
+            .giriNavigationBarStyle()
             .navigationBarBackButtonHidden(dirty)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -485,10 +500,7 @@ struct GiriLiveTimingEditor: View {
                 }
             }
             .interactiveDismissDisabled(dirty)
-            .alert("変更を保存せず戻りますか？", isPresented: $leave) {
-                Button("編集を続ける", role: .cancel) {}
-                Button("変更を破棄", role: .destructive) { dismiss() }
-            }
+            .giriDiscardChangesAlert(isPresented: $leave) { dismiss() }
     }
     private func save() {
         guard var event = store.events.first(where: { $0.id == eventID }) else { return }

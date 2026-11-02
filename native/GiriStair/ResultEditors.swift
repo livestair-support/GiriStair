@@ -120,7 +120,7 @@ struct GiriRoundEditor: View {
         .appEditorFormStyle()
         .navigationTitle("日程を編集")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .navigationBarBackButtonHidden(changed)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -129,10 +129,7 @@ struct GiriRoundEditor: View {
             ToolbarItem(placement: .confirmationAction) { Button("保存", action: save) }
         }
         .interactiveDismissDisabled(changed)
-        .alert("変更を保存せず戻りますか？", isPresented: $leave) {
-            Button("編集を続ける", role: .cancel) {}
-            Button("変更を破棄", role: .destructive) { dismiss() }
-        }
+        .giriDiscardChangesAlert(isPresented: $leave) { dismiss() }
     }
 
     private func save() {
@@ -178,6 +175,7 @@ struct GiriResultEntry: View {
     @State private var advanceQuestion = false
     @State private var nextDraft: GiriRoundDraftAction?
     @State private var resultSaved = false
+    @State private var editingStageID: String?
 
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
@@ -187,37 +185,8 @@ struct GiriResultEntry: View {
     var body: some View {
         Form {
             if let event {
-                if !result.stages.isEmpty {
-                    Section {
-                        AppCardSectionTitle(title: "段階・各回の結果", systemImage: "list.number", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
-                        Picker("記録する結果", selection: $selectedID) {
-                            ForEach(result.stages) { stage in
-                                Text(stage.name + (stage.roundId == nil ? "（段階全体）" : "")).tag(stage.id)
-                            }
-                        }.pickerStyle(.menu).tint(.primary)
-                        if let index = stageIndex {
-                            GiriStageResultFields(stage: $result.stages[index], team: result.format != .individual, multipleAnswers: submittedAnswerCount > 1)
-                            Button("この結果を削除", role: .destructive) {
-                                existing.remove(result.stages[index].id)
-                                result.stages.remove(at: index)
-                                selectedID = result.stages.first?.id ?? ""
-                            }
-                        }
-                    }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
-                }
-                Section {
-                    Button {
-                        var stage = ResultStage()
-                        stage.name = "予選\(result.stages.filter { $0.roundId == nil }.count + 1)回戦"
-                        result.stages.append(stage)
-                        existing.insert(stage.id)
-                        selectedID = stage.id
-                    } label: { Label("段階の結果を追加", systemImage: "plus.circle") }
-                }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
-                submittedAnswerSections
-                Section {
-                    DisclosureGroup("大会の最終結果", isExpanded: $showFinalResult) { finalFields(event) }
-                }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+                stageListSection(event)
+                finalSection(event)
                 standingSections
             } else {
                 Text("この会は削除されています。").foregroundStyle(.secondary)
@@ -226,7 +195,7 @@ struct GiriResultEntry: View {
         .appEditorFormStyle()
         .navigationTitle("結果を記録")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .navigationBarBackButtonHidden(changed)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -236,16 +205,24 @@ struct GiriResultEntry: View {
         }
         .onAppear { if !loaded { load() } }
         .interactiveDismissDisabled(changed)
+        .navigationDestination(item: $editingStageID) { id in
+            if let event {
+                GiriStageEditor(event: event, stage: stageBinding(id), answerNotes: $answerNotes,
+                                team: result.format != .individual,
+                                onDelete: {
+                                    existing.remove(id)
+                                    result.stages.removeAll { $0.id == id }
+                                    editingStageID = nil
+                                })
+            }
+        }
         .alert("以後の投稿・投票", isPresented: $votingOnlyQuestion) {
             Button("そのまま") { save(votingOnly: false) }
             Button("投票だけにする") { save(votingOnly: true) }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("以後の投稿を止め、必要な投票の日程と通知を残しますか？") }
-        .alert("変更を保存せず戻りますか？", isPresented: $leave) {
-            Button("編集を続ける", role: .cancel) {}
-            Button("変更を破棄", role: .destructive) { dismiss() }
-        }
-        .confirmationDialog("通過後の日程を追加しますか？", isPresented: $advanceQuestion, titleVisibility: .visible) {
+        .giriDiscardChangesAlert(isPresented: $leave) { dismiss() }
+        .alert("通過後の日程を追加しますか？", isPresented: $advanceQuestion) {
             Button("次の段階を追加") { nextDraft = .nextStage }
             Button("同じ段階の次回を追加") { nextDraft = .sameStage }
             Button("後で追加", role: .cancel) { dismiss() }
@@ -255,44 +232,129 @@ struct GiriResultEntry: View {
         }
     }
 
-    @ViewBuilder private func finalFields(_ event: GiriEvent) -> some View {
-            Picker("最終結果", selection: $result.outcome) {
-                ForEach([TournamentOutcome.unrecorded, .champion, .runnerUp, .placed, .eliminated, .other] + (result.outcome == .advanced ? [.advanced] : []), id: \.self) { Text($0.title).tag($0) }
-            }.pickerStyle(.menu).tint(.primary)
-            GiriIntegerField(title: "最終順位（任意）", value: $placement, suffix: "位")
+    /// 段階（予選・本戦…）を上から並べ、ネットの各回はその段階の下に出す。
+    private func stageListSection(_ event: GiriEvent) -> some View {
+        let wide = result.stages.filter { $0.roundId == nil }
+        let rounds = result.stages.filter { $0.roundId != nil }
+        return Section {
+            AppCardSectionTitle(title: "段階の結果", systemImage: "list.number", accentColor: AppSectionAccent.ticket,
+                                infoTitle: "段階の結果について",
+                                infoMessage: "予選・本戦などの段階ごとに、形式・審査方法と通過／敗退・順位を残します。何人中・通過枠は分かる時だけで大丈夫です。")
+                .listRowSeparator(.hidden)
+            if wide.isEmpty && rounds.isEmpty {
+                Text("段階がまだありません").font(.subheadline).foregroundStyle(.secondary)
+            }
+            ForEach(wide) { stage in
+                Button { editingStageID = stage.id } label: { stageRow(stage, nested: false) }
+                    .buttonStyle(.plain)
+                ForEach(rounds.filter { $0.stageId != nil && $0.stageId == stage.stageId }) { round in
+                    Button { editingStageID = round.id } label: { stageRow(round, nested: true) }
+                        .buttonStyle(.plain)
+                }
+            }
+            // 段階に結び付かない旧データの回
+            ForEach(rounds.filter { round in round.stageId == nil || !wide.contains { $0.stageId == round.stageId } }) { round in
+                Button { editingStageID = round.id } label: { stageRow(round, nested: true) }
+                    .buttonStyle(.plain)
+            }
+            Button {
+                var stage = ResultStage()
+                stage.name = wide.isEmpty ? "予選" : giriEditorNextStage(wide.last?.name ?? "")
+                result.stages.append(stage)
+                existing.insert(stage.id)
+                editingStageID = stage.id
+            } label: { Label("段階を追加", systemImage: "plus.circle") }
+            .tint(accentActionColor)
+        }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
+    private func stageRow(_ stage: ResultStage, nested: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(stage.name.isEmpty ? "段階名未設定" : stage.name)
+                    .font(nested ? .subheadline.weight(.semibold) : .body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                let format = [stage.group, stage.lineup, stage.judging].filter { !$0.isEmpty }
+                if !format.isEmpty {
+                    Text(format.joined(separator: "・")).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+            .padding(.leading, nested ? 16 : 0)
+            Spacer(minLength: 8)
+            Text(stageResultLabel(stage))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(stage.hasRecord ? AppSectionAccent.ticket : Color.secondary)
+                .multilineTextAlignment(.trailing)
+            Image(systemName: "chevron.right").font(.caption2.bold()).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+
+    private func stageResultLabel(_ stage: ResultStage) -> String {
+        let text = giriStageResultText(stage)
+        let name = stage.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty {
+            let trimmed = text.hasPrefix(name) ? String(text.dropFirst(name.count)).trimmingCharacters(in: .whitespaces) : text
+            return trimmed.isEmpty ? text : trimmed
+        }
+        if let value = stage.pointsPerVoter { return "1人あたり " + giriScoreText(value) }
+        return "未入力"
+    }
+
+    private func stageBinding(_ id: String) -> Binding<ResultStage> {
+        Binding(get: { result.stages.first { $0.id == id } ?? ResultStage(id: id) }, set: { value in
+            if let index = result.stages.firstIndex(where: { $0.id == id }) { result.stages[index] = value }
+        })
+    }
+
+    private var finalChoice: Binding<GiriFinalResultChoice> {
+        Binding(get: {
+            GiriFinalResultChoice.current(outcome: result.outcome == .advanced ? .unrecorded : result.outcome, placement: placement, bestOf: result.bestOf)
+        }, set: { choice in
+            result.outcome = choice.outcome
+            result.bestOf = choice.bestOf
+            switch choice {
+            case .third: placement = 3
+            case .placed: if placement == 3 { placement = nil }
+            default: placement = nil
+            }
+        })
+    }
+
+    /// 戦績に数える大会全体の結果。敗退は最後に敗退した段階の名前から表示する。
+    private func finalSection(_ event: GiriEvent) -> some View {
+        Section {
+            AppCardSectionTitle(title: "最終結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket,
+                                infoTitle: "最終結果について",
+                                infoMessage: "戦績では優勝・準優勝・3位・ベスト4を分けて数えます。敗退は「予選敗退」「2回戦敗退」のように段階の名前から表示します。")
+                .listRowSeparator(.hidden)
+            Picker(selection: finalChoice) {
+                ForEach(GiriFinalResultChoice.allCases) { Text($0.title).tag($0) }
+            } label: { GiriEditorLabel("最終結果") }
+            .pickerStyle(.menu).tint(.primary)
+            if finalChoice.wrappedValue == .eliminated {
+                HStack {
+                    GiriEditorLabel("表示")
+                    Spacer()
+                    Text(eliminationPreview).font(.body.weight(.semibold))
+                }
+            }
+            if finalChoice.wrappedValue == .placed {
+                GiriIntegerField(title: "順位（任意）", value: $placement, suffix: "位")
+            }
             if result.format != .individual {
                 TextField("自分のチーム名", text: $result.teamName)
                 GiriNamesField(title: "チームメンバー", names: $result.members)
             }
             TextField("結果のメモ", text: $result.memo, axis: .vertical).lineLimit(3...10)
+        }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
     }
 
-    @ViewBuilder private var submittedAnswerSections: some View {
-        ForEach(answerNotes.indices, id: \.self) { index in
-            if matchesSelectedRound(answerNotes[index]) && !answerNotes[index].isOthersAnswer {
-                Section {
-                    AppCardSectionTitle(title: "提出した回答の結果", systemImage: "text.bubble", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
-                    Text(answerNotes[index].prompt.isEmpty ? answerNotes[index].title : answerNotes[index].prompt).font(.headline)
-                    GiriAnswerResultFields(records: $answerNotes[index].answerRecords)
-                }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
-            }
-        }
-    }
-
-    private func matchesSelectedRound(_ note: ThoughtNote) -> Bool {
-        guard let index = stageIndex else { return true }
-        let selected = result.stages[index]
-        if let roundID = selected.roundId {
-            return note.roundId == roundID || (roundID == "legacy" && note.roundId == nil)
-        }
-        if let stageID = selected.stageId, let event {
-            let rounds = event.effectiveRounds.filter { $0.effectiveStageId == stageID }
-            return rounds.contains { $0.id == note.roundId || ($0.id == "legacy" && note.roundId == nil) }
-        }
-        return true
-    }
-    private var submittedAnswerCount: Int {
-        answerNotes.filter { matchesSelectedRound($0) && !$0.isOthersAnswer }.flatMap(\.answerRecords).filter(\.isSubmitted).count
+    private var eliminationPreview: String {
+        var copy = event ?? GiriEvent()
+        copy.tournamentResult = result
+        return copy.eliminationTitle
     }
 
     @ViewBuilder private var standingSections: some View {
@@ -349,6 +411,11 @@ struct GiriResultEntry: View {
             }
         }
         selectedID = result.stages.first(where: { $0.id == initialStageID })?.id ?? result.stages.first(where: { $0.roundId == initialRoundID && initialRoundID != nil })?.id ?? result.stages.first?.id ?? ""
+        // 詳細の「この回の結果」などから開いた時は、その段階・回の入力をそのまま開く。
+        if (initialRoundID != nil || initialStageID != nil) && !selectedID.isEmpty {
+            let target = selectedID
+            DispatchQueue.main.async { editingStageID = target }
+        }
         answerNotes = store.notes.filter { $0.eventId == eventID && $0.kind == .answers && !$0.isOthersAnswer }.map { note in
             var copy = note
             copy.answerRecords = note.effectiveAnswerRecords
@@ -452,35 +519,188 @@ struct GiriResultEntry: View {
     }
 }
 
-struct GiriStageResultFields: View {
+/// 段階（予選・本戦…）またはネットの1回の結果。LiveStair の入力行の形
+/// （左に小さな項目名、右に値）で、形式・審査方法・結果・ネットの集計を分ける。
+struct GiriStageEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let event: GiriEvent
     @Binding var stage: ResultStage
+    @Binding var answerNotes: [ThoughtNote]
     var team = false
-    var multipleAnswers = false
+    let onDelete: () -> Void
+    @State private var deleting = false
+
+    private var isStageWide: Bool { stage.roundId == nil }
+    private var isOnline: Bool { event.eventFormat.hasOnlineRounds && !event.effectiveRounds.isEmpty }
+    private var roundIDs: Set<String> {
+        if let roundID = stage.roundId { return [roundID] }
+        guard let stageID = stage.stageId else { return [] }
+        return Set(event.effectiveRounds.filter { $0.effectiveStageId == stageID }.map(\.id))
+    }
+    private var noteIndices: [Int] {
+        answerNotes.indices.filter { index in
+            let note = answerNotes[index]
+            guard note.eventId == event.id, note.kind == .answers else { return false }
+            if isOnline { return roundIDs.contains(note.roundId ?? "legacy") }
+            return note.resultStageId == stage.id
+        }
+    }
+
+    static let stageNames = ["予選", "予選1回戦", "予選2回戦", "本戦", "本戦1回戦", "本戦2回戦", "敗者復活戦", "準々決勝", "準決勝", "3位決定戦", "決勝"]
+    static let lineups = ["横並び3人", "横並び4人", "横並び5人", "横並び6人", "タイマン", "総当たり", "トーナメント"]
+    static let judgings = ["挙手（1人1票）", "挙手（1人2票）", "拍手", "加点審査", "印象審査", "超加点審査", "審査員の採点", "ネット投票"]
+
     var body: some View {
-        TextField("段階・回の名前", text: $stage.name)
-        Picker(stage.roundId == nil ? "段階全体の結果" : "この回の結果", selection: $stage.outcome) {
-                ForEach([TournamentOutcome.unrecorded, .champion, .runnerUp, .placed, .advanced, .eliminated, .other], id: \.self) { Text($0.title).tag($0) }
-            }.pickerStyle(.menu).tint(.primary)
-        GiriIntegerField(title: stage.roundId == nil ? "この段階の順位（任意）" : "この回の順位（任意）", value: $stage.placement, suffix: "位")
-        if team {
-            GiriIntegerField(title: "チーム順位（任意）", value: $stage.teamPlacement, suffix: "位")
+        Form {
+            Section {
+                AppCardSectionTitle(title: isStageWide ? "段階" : "この回", systemImage: "flag", accentColor: AppSectionAccent.artist)
+                    .listRowSeparator(.hidden)
+                presetRow("段階名", placeholder: "予選・決勝など", text: $stage.name, presets: Self.stageNames)
+                if isStageWide {
+                    textRow("組", placeholder: "Aブロックなど", text: $stage.group)
+                    presetRow("形式", placeholder: "横並び5人など", text: $stage.lineup, presets: Self.lineups)
+                    presetRow("審査方法", placeholder: "挙手・加点など", text: $stage.judging, presets: Self.judgings)
+                    GiriNamesField(title: "同じ組の人・対戦相手（任意）", names: $stage.opponents)
+                }
+            }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+
+            Section {
+                AppCardSectionTitle(title: "結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket,
+                                    infoTitle: "結果について",
+                                    infoMessage: "通過・敗退と順位だけでも記録できます。何人中・通過枠は分かる時だけ入れてください。")
+                    .listRowSeparator(.hidden)
+                Picker(selection: $stage.outcome) {
+                    ForEach([TournamentOutcome.unrecorded, .advanced, .eliminated, .champion, .runnerUp, .placed, .other], id: \.self) { Text($0.title).tag($0) }
+                } label: { GiriEditorLabel(isStageWide ? "通過・敗退" : "この回の結果") }
+                .pickerStyle(.menu).tint(.primary)
+                numberRow("順位", value: $stage.placement, suffix: "位")
+                numberRow("何人中", value: $stage.entrantCount, suffix: "人")
+                if isStageWide { numberRow("通過枠", value: $stage.advanceCount, suffix: "人") }
+                if team {
+                    numberRow("チーム順位", value: $stage.teamPlacement, suffix: "位")
+                    numberRow("個人順位", value: $stage.individualPlacement, suffix: "位")
+                }
+                if !isStageWide || !isOnline {
+                    scoreRows(points: $stage.points, voters: $stage.voterCount, perVoter: stage.pointsPerVoter)
+                }
+                TextField("メモ（対戦・手応えなど）", text: $stage.memo, axis: .vertical).lineLimit(2...8)
+            }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+
+            if isOnline && isStageWide { onlineTotalsSection }
+
+            if !noteIndices.isEmpty {
+                ForEach(noteIndices, id: \.self) { index in
+                    Section {
+                        AppCardSectionTitle(title: "提出した回答の結果", systemImage: "text.bubble", accentColor: AppSectionAccent.memo)
+                            .listRowSeparator(.hidden)
+                        Text(answerNotes[index].prompt.isEmpty ? answerNotes[index].title : answerNotes[index].prompt)
+                            .font(.subheadline.weight(.semibold)).lineLimit(4)
+                        GiriAnswerResultFields(records: $answerNotes[index].answerRecords)
+                    }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+                }
+            }
+
+            Section {
+                Button(role: .destructive) { deleting = true } label: {
+                    Label(isStageWide ? "この段階の記録を削除" : "この回の記録を削除", systemImage: "trash")
+                }
+            }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
         }
-        if team || multipleAnswers {
-            GiriIntegerField(title: multipleAnswers ? "複数回答の個人総合順位（任意）" : "個人順位（任意）", value: $stage.individualPlacement, suffix: "位")
+        .appEditorFormStyle()
+        .environment(\.defaultMinListRowHeight, 48)
+        .navigationTitle(stage.name.isEmpty ? "段階" : stage.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .giriNavigationBarStyle()
+        .giriDeleteAlert(isStageWide ? "段階の記録を削除しますか？" : "この回の記録を削除しますか？", isPresented: $deleting,
+                         message: "「\(stage.name)」の結果を削除します。お題と回答は残ります。保存すると確定します。") {
+            // 親の editingStageID を外すと、この画面は自動で閉じる（dismiss を重ねない）。
+            onDelete()
         }
-        GiriIntegerField(title: "投票人数（任意）", value: $stage.voterCount, suffix: "人")
+    }
+
+    /// ネット大喜利：競い方と通過ラインから、合計と残りのお題で必要な点を出す。
+    private var onlineTotalsSection: some View {
+        let summary = giriStageScoreSummary(event: event, stage: stage, notes: answerNotes)
+        return Section {
+            AppCardSectionTitle(title: "ネットの集計", systemImage: "chart.bar.xaxis", accentColor: AppSectionAccent.artist,
+                                infoTitle: "ネットの集計について",
+                                infoMessage: "提出した回答の「得点÷投票人数」（1人あたりの点）を合計します。通過ラインを入れると、残りのお題で必要な点を計算します。")
+                .listRowSeparator(.hidden)
+            Picker(selection: Binding(get: { stage.scoring ?? .total }, set: { stage.scoring = $0 })) {
+                ForEach(StageScoring.allCases) { Text($0.title).tag($0) }
+            } label: { GiriEditorLabel("競い方") }
+            .pickerStyle(.menu).tint(.primary)
+            HStack {
+                GiriEditorLabel("通過ライン")
+                Spacer(minLength: 8)
+                TextField("未入力", value: $stage.borderScore, format: .number)
+                    .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(maxWidth: 120)
+            }
+            if let summary {
+                valueRow("合計", giriScoreText(summary.total) + "（\(summary.scoredPrompts)題）")
+                if summary.remainingPrompts > 0 { valueRow("残りのお題", "\(summary.remainingPrompts)題") }
+                if let needed = summary.neededTotal {
+                    if needed <= 0 {
+                        valueRow("通過ラインまで", "到達")
+                    } else if let perPrompt = summary.neededPerPrompt {
+                        valueRow("通過ラインまで", "あと" + giriScoreText(needed) + "（1題あたり" + giriScoreText(perPrompt) + "）")
+                    } else {
+                        valueRow("通過ラインまで", "あと" + giriScoreText(needed))
+                    }
+                }
+            }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+    }
+
+    private func textRow(_ title: String, placeholder: String, text: Binding<String>) -> some View {
+        HStack(spacing: 12) {
+            GiriEditorLabel(title)
+            TextField(placeholder, text: text).multilineTextAlignment(.trailing)
+        }
+    }
+
+    private func presetRow(_ title: String, placeholder: String, text: Binding<String>, presets: [String]) -> some View {
+        HStack(spacing: 8) {
+            GiriEditorLabel(title)
+            TextField(placeholder, text: text).multilineTextAlignment(.trailing)
+            Menu {
+                ForEach(presets, id: \.self) { value in Button(value) { text.wrappedValue = value } }
+            } label: {
+                Image(systemName: "chevron.up.chevron.down").font(.caption.weight(.medium))
+            }
+            .tint(.primary)
+            .accessibilityLabel("\(title)の候補")
+        }
+    }
+
+    private func numberRow(_ title: String, value: Binding<Int?>, suffix: String) -> some View {
+        HStack(spacing: 8) {
+            GiriEditorLabel(title)
+            Spacer(minLength: 8)
+            TextField("未入力", value: value, format: .number)
+                .keyboardType(.numberPad).multilineTextAlignment(.trailing).frame(maxWidth: 100)
+            Text(suffix).foregroundStyle(.secondary)
+        }
+    }
+
+    private func valueRow(_ title: String, _ value: String) -> some View {
         HStack {
-            TextField("得点（任意）", value: $stage.points, format: .number).keyboardType(.decimalPad)
+            GiriEditorLabel(title)
+            Spacer(minLength: 8)
+            Text(value).font(.body.weight(.semibold)).multilineTextAlignment(.trailing)
+        }
+    }
+
+    @ViewBuilder private func scoreRows(points: Binding<Double?>, voters: Binding<Int?>, perVoter: Double?) -> some View {
+        HStack(spacing: 8) {
+            GiriEditorLabel("得点")
+            Spacer(minLength: 8)
+            TextField("未入力", value: points, format: .number)
+                .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(maxWidth: 100)
             Text("点").foregroundStyle(.secondary)
         }
-        Stepper("1人あたりの満点　\(stage.maxPointsPerVoter)点", value: $stage.maxPointsPerVoter, in: 1...100)
-        HStack {
-            GiriEditorLabel("得票率")
-            Spacer()
-            if let rate = stage.voteRate { Text(rate.formatted(.number.precision(.fractionLength(2))) + "%").font(.headline) }
-            else { Text("—").foregroundStyle(.secondary) }
-        }
-        TextField("対戦・回答などのメモ", text: $stage.memo, axis: .vertical).lineLimit(2...8)
+        numberRow("投票人数", value: voters, suffix: "人")
+        if let perVoter { valueRow("1人あたり", giriScoreText(perVoter)) }
     }
 }
 
@@ -555,7 +775,7 @@ struct GiriNextRoundEditor: View {
         .appEditorFormStyle()
         .navigationTitle(sameStage ? "次回を追加" : "次の段階を追加")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("キャンセル") { if changed { discardQuestion = true } else { dismiss() } }
@@ -571,10 +791,7 @@ struct GiriNextRoundEditor: View {
             loaded = true
         }
         .interactiveDismissDisabled(changed)
-        .alert("入力を保存せず閉じますか？", isPresented: $discardQuestion) {
-            Button("編集を続ける", role: .cancel) {}
-            Button("破棄して閉じる", role: .destructive) { dismiss() }
-        }
+        .giriDiscardChangesAlert(isPresented: $discardQuestion) { dismiss() }
     }
 
     private func save() {
@@ -647,7 +864,7 @@ struct GiriCycleResultEditor: View {
         .appEditorFormStyle()
         .navigationTitle("結果を記録")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .navigationBarBackButtonHidden(changed)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -657,10 +874,7 @@ struct GiriCycleResultEditor: View {
         }
         .onAppear(perform: load)
         .interactiveDismissDisabled(changed)
-        .alert("変更を保存せず戻りますか？", isPresented: $discardQuestion) {
-            Button("編集を続ける", role: .cancel) {}
-            Button("変更を破棄", role: .destructive) { dismiss() }
-        }
+        .giriDiscardChangesAlert(isPresented: $discardQuestion) { dismiss() }
     }
 
     private var resultSection: some View {

@@ -1938,3 +1938,147 @@ struct EventDateCalendarPickerView: View {
     }
 }
 
+
+// LiveStair CommonUI.swift RankNumberView（会場・プレイヤー詳細の上位表示）。
+struct RankNumberView: View {
+    let rank: Int
+    var width: CGFloat = 34
+
+    private var fontSize: CGFloat {
+        if rank < 10 {
+            return 19
+        } else if rank < 100 {
+            return 17
+        } else if rank < 1000 {
+            return 14
+        } else {
+            return 12
+        }
+    }
+
+    var body: some View {
+        Text(String(rank))
+            .font(.system(size: appFontSize(fontSize), weight: .bold))
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.55)
+            .allowsTightening(true)
+            .frame(width: width, alignment: .center)
+    }
+}
+
+// LiveStair の確認の形（ReleaseScheduleViews・LiveDetailView）。
+extension View {
+    /// 入力中に戻るときの確認：「変更を破棄しますか？」→ 破棄して戻る／続ける。
+    func giriDiscardChangesAlert(isPresented: Binding<Bool>, onDiscard: @escaping () -> Void) -> some View {
+        alert("変更を破棄しますか？", isPresented: isPresented) {
+            Button("破棄して戻る", role: .destructive, action: onDiscard)
+            Button("続ける", role: .cancel) {}
+        } message: {
+            Text("入力中の内容は保存されません。")
+        }
+    }
+
+    /// 削除の確認：「〇〇を削除しますか？」→ キャンセル／削除する。
+    func giriDeleteAlert(_ title: String, isPresented: Binding<Bool>, message: String, onDelete: @escaping () -> Void) -> some View {
+        alert(title, isPresented: isPresented) {
+            Button("キャンセル", role: .cancel) {}
+            Button("削除する", role: .destructive, action: onDelete)
+        } message: {
+            Text(message)
+        }
+    }
+}
+
+extension View {
+    /// LiveStair の各画面と同じナビゲーションバー（表示・appHeaderColor の背景）。
+    func giriNavigationBarStyle() -> some View {
+        toolbar(.visible, for: .navigationBar)
+            .toolbarBackground(appHeaderColor, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+    }
+}
+
+// LiveStair CommonUI.swift AppIndexSectionTitle（一覧のセクション見出しと件数）。
+struct AppIndexSectionTitle: View {
+    let title: String
+    let count: Int
+    let systemImage: String
+    let accentColor: Color
+    
+    @AppStorage("appearanceMode")
+    private var appearanceModeRawValue: String =
+    AppThemeMode.system.rawValue
+    
+    @Environment(\.colorScheme)
+    private var colorScheme
+    
+    private var isDarkAppearance: Bool {
+        resolvedAppAppearanceIsDark(
+            appearanceModeRawValue:
+                appearanceModeRawValue,
+            systemColorScheme:
+                colorScheme
+        )
+    }
+    
+    private var badgeOpacity: Double {
+        isDarkAppearance
+        ? 0.20
+        : 0.14
+    }
+    
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(
+                    .system(
+                        size: appFontSize(14),
+                        weight: .semibold
+                    )
+                )
+                .foregroundColor(accentColor)
+                .frame(width: 28, height: 28)
+                .background(
+                    accentColor.opacity(
+                        badgeOpacity
+                    )
+                )
+                .clipShape(
+                    RoundedRectangle(
+                        cornerRadius: 8,
+                        style: .continuous
+                    )
+                )
+            
+            Text(title)
+                .font(
+                    .headline.weight(.bold)
+                )
+                .foregroundColor(.primary)
+            
+            Spacer(minLength: 8)
+            
+            Text("\(count)件")
+                .font(
+                    .caption.weight(.semibold)
+                )
+                .foregroundColor(accentColor)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(
+                    accentColor.opacity(
+                        badgeOpacity
+                    )
+                )
+                .clipShape(Capsule())
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(
+            children: .ignore
+        )
+        .accessibilityLabel(
+            "\(title)、\(count)件"
+        )
+    }
+}

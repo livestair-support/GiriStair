@@ -9,6 +9,8 @@ struct GiriSeasonTotals: Equatable {
     var scoredAnswerCount: Int = 0
     var legacyRoundResultCount: Int = 0
     var averageVoteRate: Double? = nil
+    /// 1人あたりの点（得票÷投票人数）の算術平均。画面ではこちらを表示する。
+    var averagePointsPerVoter: Double? = nil
 
     var rateSampleCount: Int { scoredAnswerCount + legacyRoundResultCount }
 }
@@ -41,6 +43,7 @@ func giriSeasonTotals(
 
     var totals = GiriSeasonTotals()
     var rates: [Double] = []
+    var perVoter: [Double] = []
     for event in included {
         let eventNotes = notes.filter {
             $0.eventId == event.id && $0.kind == .answers && !$0.isOthersAnswer
@@ -51,13 +54,14 @@ func giriSeasonTotals(
         for note in eventNotes where seenNotes.insert(note.id).inserted {
             var seenAnswers = Set<String>()
             let submitted = note.effectiveAnswerRecords.filter {
-                $0.isSubmitted && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                $0.isOwn && $0.isSubmitted && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                 seenAnswers.insert($0.id).inserted
             }
             totals.submittedAnswerCount += submitted.count
             for answer in submitted {
                 guard let rate = seasonAnalyticsRate(answer.voteRate) else { continue }
                 rates.append(rate)
+                if let value = seasonAnalyticsRate(answer.pointsPerVoter) { perVoter.append(value) }
                 totals.scoredAnswerCount += 1
                 if let roundID = seasonAnalyticsRoundID(note.roundId, event: event) {
                     roundsWithAnswerRates.insert(roundID)
@@ -73,6 +77,7 @@ func giriSeasonTotals(
         guard !hasUnlinkedAnswerRate else { continue }
         let stages = event.tournamentResult?.stages ?? []
         var fallbackRates: [String: Double] = [:]
+        var fallbackPerVoter: [String: Double] = [:]
         // Exact round results win over a stage-wide legacy result for the same
         // round regardless of their position in the stored result array.
         for stage in stages where seasonAnalyticsID(stage.roundId) == nil {
@@ -80,15 +85,18 @@ func giriSeasonTotals(
                   let roundID = seasonAnalyticsStageRoundID(stage, event: event, stages: stages),
                   !roundsWithAnswerRates.contains(roundID) else { continue }
             fallbackRates[roundID] = rate
+            fallbackPerVoter[roundID] = seasonAnalyticsRate(stage.pointsPerVoter)
         }
         for stage in stages {
             guard let roundID = seasonAnalyticsID(stage.roundId),
                   let rate = seasonAnalyticsRate(stage.voteRate),
                   !roundsWithAnswerRates.contains(roundID) else { continue }
             fallbackRates[roundID] = rate
+            fallbackPerVoter[roundID] = seasonAnalyticsRate(stage.pointsPerVoter)
         }
         for key in fallbackRates.keys.sorted() {
             if let rate = fallbackRates[key] { rates.append(rate) }
+            if let value = fallbackPerVoter[key] { perVoter.append(value) }
         }
         totals.legacyRoundResultCount += fallbackRates.count
     }
@@ -100,6 +108,11 @@ func giriSeasonTotals(
             mean += (rate - mean) / Double(index + 1)
         }
         totals.averageVoteRate = mean
+    }
+    if !perVoter.isEmpty {
+        var mean = 0.0
+        for (index, value) in perVoter.enumerated() { mean += (value - mean) / Double(index + 1) }
+        totals.averagePointsPerVoter = mean
     }
     return totals
 }

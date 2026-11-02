@@ -50,6 +50,23 @@ struct DomainRegression {
         try check(encodedString.contains("13:00:00.123456Z"), "microsecond timestamp retained")
         let again = try GiriJSON.decode(encoded)
         try check(again == restored, "legacy document roundtrip")
+        // 参加費と使わない形式は任意項目。旧JSONは未入力・全形式表示のまま読む。
+        try check(restored.events[0].entryFee == nil && restored.preferences.hiddenFormats.isEmpty, "documents without fee or hidden formats keep their defaults")
+        var feeDocument = restored
+        feeDocument.events[0].entryFee = 1500
+        feeDocument.preferences.hiddenFormats = [.hybrid]
+        let feeRoundTrip = try GiriJSON.decode(GiriJSON.encode(feeDocument))
+        try check(feeRoundTrip.events[0].entryFee == 1500 && feeRoundTrip.preferences.hiddenFormats == [.hybrid], "entry fee and hidden formats survive backup and restore")
+        try check(feeRoundTrip.preferences.visibleFormatOrder == [.live, .onlineLong, .onlineShort], "hidden formats leave the tabs while keeping the saved order")
+        var allHidden = AppPreferences(); allHidden.hiddenFormats = EventFormat.allCases
+        try check(allHidden.visibleFormatOrder == EventFormat.allCases, "an all-hidden value never empties the format tabs")
+        var liveHidden = AppPreferences(); liveHidden.hiddenFormats = [.live]
+        try check(!liveHidden.formatChoices(including: nil).contains(.live) && liveHidden.formatChoices(including: .live).last == .live, "a record of a hidden format keeps its own format as a choice")
+        var freeEvent = GiriEvent(); freeEvent.entryFee = 0
+        try check((try? freeEvent.validate()) != nil, "a free event (0 yen) is valid")
+        try check(restored.events[0].hashtag.isEmpty, "documents without a hashtag keep it empty")
+        try check(giriNormalizedHashtag(" ＃大喜利 文化杯Ω ") == "大喜利文化杯Ω" && giriNormalizedHashtag("##吉永対策会") == "吉永対策会", "hashtags are stored without # and spaces")
+        try reject(Data(#"{"schemaVersion":1,"events":[{"id":"fee","title":"負","kind":"live","meetingType":"casual","createdAt":"2026-10-29T13:00:00Z","entryFee":-1}],"notes":[]}"#.utf8), "negative entry fee")
         let local = GiriDates.parse("2026-10-29T22:00:00.000")
         try check(local.map { Calendar.current.component(.hour, from: $0) == 22 } ?? false, "unzoned Dart time stays local")
         try check(GiriDates.parse("2026-02-30", calendarOnly: true) == nil, "invalid calendar day refused")
@@ -214,8 +231,11 @@ struct DomainRegression {
         let bridged = oldAnswer.effectiveAnswerRecords
         try check(bridged.map(\.text) == oldAnswer.answers && bridged.map(\.id) == oldAnswer.effectiveAnswerRecords.map(\.id), "legacy answer text receives stable editor identities without mutation")
         oldAnswer.answerRecords = [AnswerRecord(id: "submitted-a", text: "提出A", isSubmitted: true, placement: 2, points: 15, voterCount: 10, maxPointsPerVoter: 3), AnswerRecord(id: "submitted-b", text: "提出B", isSubmitted: true), AnswerRecord(id: "rejected", text: "没回答")]
-        oldAnswer.usesAnswerRecords = true; oldAnswer.isOthersAnswer = true; oldAnswer.answerer = "回答者"
-        try check(oldAnswer.submittedAnswers.count == 2 && oldAnswer.answerRecords[0].voteRate == 50, "multiple submitted answers keep independent rank and weighted vote rate")
+        oldAnswer.usesAnswerRecords = true
+        try check(oldAnswer.submittedAnswers.count == 2 && oldAnswer.answerRecords[0].voteRate == 50 && oldAnswer.answerRecords[0].pointsPerVoter == 1.5, "multiple submitted answers keep independent rank, weighted vote rate and points per voter")
+        oldAnswer.isOthersAnswer = true; oldAnswer.answerer = "回答者"
+        // 0.8：旧「他人の回答」メモは、その人の回答（ツボ）として読み、自分の提出には数えない。
+        try check(oldAnswer.submittedAnswers.isEmpty && oldAnswer.otherAnswerRecords.count == 3 && oldAnswer.otherAnswerRecords.allSatisfy { $0.answerer == "回答者" }, "a legacy other-person note is read as that person's answers, not one's submissions")
         let featureDirectory = temp.appendingPathComponent("features", isDirectory: true)
         let featureStore = GiriStore(directory: featureDirectory)
         try featureStore.saveNote(oldAnswer)
@@ -402,6 +422,15 @@ struct DomainRegression {
             try check(customOrder.effectiveFormatOrder == [.onlineLong, .hybrid, .live, .onlineShort], "format preference removes duplicates while retaining all four categories")
             try seasonStore.savePreferences(customOrder)
             try check(seasonStore.preferences.formatOrder == customOrder.effectiveFormatOrder, "saved format order is normalized")
+            var hideAll = seasonStore.preferences; hideAll.hiddenFormats = EventFormat.allCases
+            var refusedHideAll = false
+            do { try seasonStore.savePreferences(hideAll) } catch { refusedHideAll = true }
+            try check(refusedHideAll && seasonStore.preferences.hiddenFormats.isEmpty, "at least one format stays in use")
+            var hideSome = seasonStore.preferences; hideSome.hiddenFormats = [.hybrid, .onlineShort, .hybrid]
+            try seasonStore.savePreferences(hideSome)
+            try check(seasonStore.preferences.hiddenFormats == [.onlineShort, .hybrid], "hidden formats are stored once in a stable order")
+            hideSome.hiddenFormats = []
+            try seasonStore.savePreferences(hideSome)
             try check(EventFormat.hybrid.rawValue == "hybrid" && EventFormat.hybrid.title == "スプシ系", "the spreadsheet category keeps the legacy hybrid raw value")
             var categorized = ThoughtNote(title: "分類", kind: .answers); categorized.answerCategory = "long"
             try seasonStore.saveNote(categorized)
@@ -502,6 +531,85 @@ struct DomainRegression {
             var secondChartEvent = chartEvent; secondChartEvent.id = "second-chart"; secondChartEvent.eventFormat = .onlineLong
             let mixedChart = giriMonthlySeries(events: [chartEvent, secondChartEvent], year: 2026, calendar: chartCalendar, now: anchor)
             try check(mixedChart.maximum == 2 && mixedChart.values.filter { $0.count > 0 }.count == 2, "monthly chart keeps distinct format series and a stacked integer total")
+        }
+
+        // 0.8 results, prompts with several people's answers, and self aliases.
+        do {
+            // A pre-0.8 "other person's answer" note reads as that person's answers.
+            let legacyOther = try GiriJSON.decode(Data(#"""
+            {"schemaVersion":1,"events":[],"notes":[{"id":"o","title":"お題","kind":"answers","createdAt":"2026-10-29T13:00:00Z","updatedAt":"2026-10-29T13:00:00Z","prompt":"お題","answers":["面白い回答"],"isOthersAnswer":true,"answerer":"仲間"}]}
+            """#.utf8)).notes[0]
+            try check(legacyOther.otherAnswerRecords.map(\.answerer) == ["仲間"] && legacyOther.ownAnswerRecords.isEmpty && legacyOther.submittedAnswers.isEmpty, "legacy other-person notes become that person's answers without counting as submitted")
+            try check(legacyOther.referencedPeople == ["仲間"] && legacyOther.promptAuthor.isEmpty && legacyOther.format == nil && legacyOther.memo.isEmpty, "legacy notes keep empty author, format and memo")
+
+            var prompt = ThoughtNote(title: "お題", kind: .answers)
+            prompt.prompt = "お題"; prompt.promptAuthor = "作題者"; prompt.usesAnswerRecords = true
+            prompt.answerRecords = [AnswerRecord(id: "mine", text: "自分", isSubmitted: true, points: 187, voterCount: 159),
+                                    AnswerRecord(id: "draft", text: "ボツ"),
+                                    AnswerRecord(id: "theirs", text: "ツボ", isSubmitted: true, answerer: "仲間")]
+            try check(prompt.submittedAnswers.map(\.id) == ["mine"] && prompt.otherAnswerRecords.map(\.id) == ["theirs"], "only one's own marked answers count as submitted")
+            try check(abs((prompt.answerRecords[0].pointsPerVoter ?? 0) - 187.0 / 159.0) < 0.000001 && giriScoreText(187.0 / 159.0) == "1.18", "points per voter match the site's bracketed value")
+            try check(Set(prompt.referencedPeople) == ["作題者", "仲間"], "authors and answerers join the player directory")
+            let promptRoundTrip = try GiriJSON.decode(GiriJSON.encode(GiriDocument(notes: [prompt]))).notes[0]
+            try check(promptRoundTrip == prompt, "per-answer answerers and authors survive backup")
+
+            // Stage text, elimination title and the final result choices.
+            var tournament = GiriEvent(title: "大会")
+            tournament.meetingType = .tournament
+            var qualifier = ResultStage(); qualifier.name = "予選"; qualifier.outcome = .advanced; qualifier.placement = 1
+            var main = ResultStage(); main.name = "本戦1回戦"; main.outcome = .eliminated
+            var result = TournamentResult(); result.stages = [qualifier, main]; result.outcome = .eliminated
+            tournament.tournamentResult = result
+            try check(giriStageResultText(qualifier) == "予選1位通過" && tournament.eliminationTitle == "本戦1回戦敗退", "stage names make advancement and elimination labels")
+            try check(tournament.resultProgressSummary == "予選1位通過・本戦1回戦敗退", "the card summary follows the stages")
+            var ranked = qualifier; ranked.outcome = .eliminated; ranked.placement = 5; ranked.entrantCount = 12
+            try check(giriStageResultText(ranked) == "予選敗退（12人中5位）", "an eliminated rank keeps the entrant count")
+            var third = tournament; third.tournamentResult?.outcome = .placed; third.placement = 3
+            var best = tournament; best.tournamentResult?.outcome = .placed; best.tournamentResult?.bestOf = 4; best.placement = nil
+            try check(third.isThirdPlace && !third.isBest(4) && best.isBest(4) && !best.isThirdPlace, "third place and best four are counted separately")
+            try check(third.finalResultTitle == "3位" && best.finalResultTitle == "ベスト4", "final result titles distinguish third place and best four")
+            try check(GiriFinalResultChoice.current(outcome: .placed, placement: 3, bestOf: nil) == .third && GiriFinalResultChoice.current(outcome: .placed, placement: nil, bestOf: 8) == .best8, "stored outcomes map back to the final result choice")
+            try check(!giriIsOtherPlacement(third) && !giriIsOtherPlacement(best), "third and best four are not counted as other placements")
+            try reject(Data(#"{"schemaVersion":1,"events":[{"id":"e","title":"大会","kind":"live","meetingType":"tournament","createdAt":"2026-10-29T13:00:00Z","tournamentResult":{"stages":[{"id":"s","name":"予選","entrantCount":0}]}}],"notes":[]}"#.utf8), "zero entrants")
+
+            // Long-format stage totals and the score needed for the border.
+            var online = GiriEvent(title: "ネット大会")
+            online.eventFormat = .onlineLong; online.meetingType = .tournament
+            var first = EventRound(id: "r1"); first.stageId = "stage"
+            var second = EventRound(id: "r2"); second.stageId = "stage"
+            var third2 = EventRound(id: "r3"); third2.stageId = "stage"
+            online.rounds = [first, second, third2]
+            var stage = ResultStage(); stage.stageId = "stage"; stage.name = "予選"; stage.borderScore = 3.0
+            func scored(_ round: String, _ values: [(Double, Int)]) -> ThoughtNote {
+                var note = ThoughtNote(title: round, kind: .answers)
+                note.eventId = online.id; note.roundId = round; note.usesAnswerRecords = true
+                note.answerRecords = values.map { AnswerRecord(text: "回答", isSubmitted: true, points: $0.0, voterCount: $0.1) }
+                return note
+            }
+            let notes = [scored("r1", [(100, 100), (50, 100)]), scored("r2", [(80, 100)])]
+            let totalSummary = giriStageScoreSummary(event: online, stage: stage, notes: notes)
+            try check(totalSummary.map { abs($0.total - 2.3) < 0.000001 && $0.scoredPrompts == 2 && $0.remainingPrompts == 1 } == true, "total scoring adds every submitted answer")
+            try check(totalSummary.flatMap(\.neededPerPrompt).map { abs($0 - 0.7) < 0.000001 } == true, "the remaining prompt needs the border minus the total")
+            stage.scoring = .bestPerPrompt
+            let bestSummary = giriStageScoreSummary(event: online, stage: stage, notes: notes)
+            try check(bestSummary.map { abs($0.total - 1.8) < 0.000001 } == true, "best-per-prompt scoring keeps the higher answer of each prompt")
+
+            // Aliases are normalized and treated as oneself.
+            var aliasPreferences = AppPreferences(); aliasPreferences.selfName = "本名"; aliasPreferences.selfAliases = ["別名", "ベツメイ"]
+            try check(aliasPreferences.isSelf("べつめい") && aliasPreferences.isSelf("本名") && !aliasPreferences.isSelf("他人"), "aliases match by the player search key")
+            let aliasDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriAlias-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: aliasDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: aliasDirectory) }
+            let aliasStore = GiriStore(directory: aliasDirectory)
+            var savedAliases = aliasPreferences; savedAliases.selfAliases = [" 別名 ", "本名", "", "別名"]
+            try aliasStore.savePreferences(savedAliases)
+            try check(aliasStore.preferences.selfAliases == ["別名"], "aliases are trimmed and never duplicate the main name")
+            try aliasStore.saveNote(prompt)
+            var renamed = GiriPlayer(name: "仲間")
+            renamed = aliasStore.playerByName("仲間") ?? renamed
+            renamed.name = "新しい仲間"
+            try aliasStore.savePlayer(renamed)
+            try check(aliasStore.notes[0].answerRecords.first { $0.id == "theirs" }?.answerer == "新しい仲間", "renaming a player renames their recorded answers")
         }
 
         print("Native domain regressions passed: \(passed)")

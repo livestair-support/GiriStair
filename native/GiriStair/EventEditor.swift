@@ -4,6 +4,7 @@ import PhotosUI
 /// The same native Form / menu Picker / section modifiers as EventBasicEditor.
 struct GiriEventEditor: View {
     @EnvironmentObject private var store: GiriStore
+    @EnvironmentObject private var navigation: GiriNavigation
     @Environment(\.dismiss) private var dismiss
     let event: GiriEvent?
     let onSaved: (() -> Void)?
@@ -81,6 +82,8 @@ struct GiriEventEditor: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(event != nil && isDirty)
         .toolbar(event == nil ? .hidden : .visible, for: .navigationBar)
+        .toolbarBackground(appHeaderColor, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
             if event != nil {
                 ToolbarItem(placement: .topBarLeading) {
@@ -143,14 +146,15 @@ struct GiriEventEditor: View {
                 }
             }
         }
-        .alert("入力を空にしますか？", isPresented: $showDiscard) {
+        .alert("入力内容を空にしますか？", isPresented: $showDiscard) {
             Button("キャンセル", role: .cancel) {}
             Button("空にする", role: .destructive) { loaded = false; load() }
-        } message: { Text("保存済みの記録は変更されません。") }
-        .alert("変更を保存せず戻りますか？", isPresented: $showLeave) {
-            Button("編集を続ける", role: .cancel) {}
-            Button("変更を破棄", role: .destructive) { dismiss() }
+        } message: { Text("現在入力している内容を空にします。保存済みの記録には影響しません。") }
+        // LiveStair と同じく、登録タブを続けて2回押すと入力内容を空にする確認を出す。
+        .onChange(of: navigation.registrationClearToken) { _, _ in
+            if event == nil && isDirty { showDiscard = true }
         }
+        .giriDiscardChangesAlert(isPresented: $showLeave) { dismiss() }
     }
 
     private var saveHeaderButton: some View {
@@ -169,9 +173,16 @@ struct GiriEventEditor: View {
         Section {
             GiriEventCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live)
                 .listRowSeparator(.hidden)
-            Picker(selection: $draft.eventFormat) {
-                ForEach(EventFormat.allCases) { Text($0.title).tag($0) }
-            } label: { GiriEditorLabel("形式") }.pickerStyle(.menu).tint(.primary)
+            HStack(spacing: 4) {
+                GiriEditorLabel("形式")
+                AppInfoButton(title: "形式について",
+                              message: "使わない形式は、設定→デフォルト設定の「使用する形式・並び順」でチェックを外すと、ここと一覧・戦績のタブに出なくなります。登録済みの記録は消えません。",
+                              tintColor: AppSectionAccent.live)
+                Spacer(minLength: 8)
+                Picker("形式", selection: $draft.eventFormat) {
+                    ForEach(store.preferences.formatChoices(including: event?.eventFormat)) { Text($0.title).tag($0) }
+                }.labelsHidden().pickerStyle(.menu).tint(.primary)
+            }
             Picker(selection: $draft.meetingType) {
                 Text("通常").tag(MeetingType.casual)
                 Text("大会").tag(MeetingType.tournament)
@@ -187,11 +198,16 @@ struct GiriEventEditor: View {
                 .lineLimit(1...5)
             if !isSite {
                 GiriEditorPlayerField(title: "主催者", text: $draft.organizer, preferHosts: true)
+                GiriHashtagField(text: $draft.hashtag)
                 if draft.eventFormat.hasLiveTiming {
                     OptionalDateRow(title: "日付", selection: $draft.eventDate, components: .date)
                     GiriEventTimeRow(startsAt: clockBinding(start: true), endsAt: clockBinding(start: false))
                     if draft.eventFormat != .onlineShort {
                         GiriVenueSuggestionField(text: $draft.venue)
+                    }
+                    // 参加費は生大喜利だけ（スプシ系・ネットは参加費なし）。
+                    if draft.eventFormat == .live || draft.entryFee != nil {
+                        GiriEntryFeeField(value: $draft.entryFee)
                     }
                 }
                 if draft.eventFormat.hasOnlineRounds {
@@ -379,7 +395,13 @@ struct GiriEventEditor: View {
 
     private func load() {
         draft = event ?? GiriEvent()
-        if event == nil { draft.eventDate = Calendar.current.startOfDay(for: Date()) }
+        if event == nil {
+            draft.eventDate = Calendar.current.startOfDay(for: Date())
+            // 使わない形式を新規登録の初期値にしない（並び順の先頭を使う）。
+            if !store.preferences.isFormatVisible(draft.eventFormat), let first = store.preferences.visibleFormatOrder.first {
+                draft.eventFormat = first
+            }
+        }
         if draft.rounds.isEmpty { draft.rounds = draft.effectiveRounds }
         participants = draft.participants.isEmpty ? [""] : draft.participants + [""]
         if draft.teams.isEmpty, let old = draft.tournamentResult, old.format != .individual,
@@ -406,9 +428,10 @@ struct GiriEventEditor: View {
         let me = store.preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
         let host = draft.organizer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !me.isEmpty, !host.isEmpty else { return }
-        if giriEditorNameKey(me) == giriEditorNameKey(host) {
+        // 別名義で主催・参加している場合も自分として扱う。
+        if store.preferences.isSelf(host) {
             if selfWasAdded { participants.removeAll { giriEditorNameKey($0) == giriEditorNameKey(me) }; selfWasAdded = false }
-        } else if !participants.contains(where: { giriEditorNameKey($0) == giriEditorNameKey(me) }) {
+        } else if !participants.contains(where: { store.preferences.isSelf($0) }) {
             if let index = participants.firstIndex(where: { $0.isEmpty }) { participants[index] = me }
             else { participants.append(me) }
             selfWasAdded = true
@@ -491,6 +514,56 @@ struct GiriEventEditor: View {
             playLiveStairSaveFeedback()
             if event != nil { dismiss() } else { loaded = false; load(); onSaved?() }
         } catch { store.errorMessage = error.localizedDescription }
+    }
+}
+
+/// LiveStair EventBasicEditor.priceInputRow の「¥」と数字だけの入力を、
+/// 左に項目名を置く登録画面の行にしたもの。空欄は未入力（nil）、0円は無料として保存する。
+struct GiriEntryFeeField: View {
+    @Binding var value: Int?
+    @State private var text = ""
+    var body: some View {
+        HStack(spacing: 8) {
+            GiriEditorLabel("参加費")
+            Spacer(minLength: 8)
+            Text("¥").foregroundStyle(.secondary)
+            TextField("未入力", text: $text)
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: 140)
+                .accessibilityLabel("参加費（円）")
+        }
+        .onAppear { text = value.map(String.init) ?? "" }
+        .onChange(of: text) { _, newValue in
+            let digits = String(newValue.filter { $0.isASCII && $0.isWholeNumber }.prefix(7))
+            if digits != newValue { text = digits; return }
+            let number = digits.isEmpty ? nil : Int(digits)
+            if number != value { value = number }
+        }
+        .onChange(of: value) { _, newValue in
+            let current = newValue.map(String.init) ?? ""
+            if current != text { text = current }
+        }
+    }
+}
+
+/// 会が指定するツボ上げ・感想用のハッシュタグ。「#」は表示だけで、保存時に外す。
+struct GiriHashtagField: View {
+    @Binding var text: String
+    var body: some View {
+        HStack(spacing: 4) {
+            GiriEditorLabel("ハッシュタグ")
+            AppInfoButton(title: "ハッシュタグについて",
+                          message: "会がツボ上げや感想に指定するタグです。お題/回答から投稿を作るときに末尾へ付けます。",
+                          tintColor: AppSectionAccent.live)
+            Spacer(minLength: 8)
+            Text("#").foregroundStyle(.secondary)
+            TextField("未入力", text: $text)
+                .multilineTextAlignment(.trailing)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityLabel("ハッシュタグ")
+        }
     }
 }
 
