@@ -158,12 +158,11 @@ struct GiriListView: View {
         .navigationDestination(isPresented: Binding(get: { destinationID != nil }, set: { if !$0 { destinationID = nil } })) {
             if let id = destinationID { GiriEventDetail(eventID: id) }
         }
-        .confirmationDialog("この記録を削除しますか？", isPresented: Binding(get: { deletingEvent != nil }, set: { if !$0 { deletingEvent = nil } }), titleVisibility: .visible) {
-            Button("削除", role: .destructive) {
-                guard let event = deletingEvent else { return }
-                store.run { try store.deleteEvent(event.id); playLiveStairDeleteFeedback() }; deletingEvent = nil
-            }
-            Button("キャンセル", role: .cancel) { deletingEvent = nil }
+        .giriDeleteAlert("記録を削除しますか？", isPresented: Binding(get: { deletingEvent != nil }, set: { if !$0 { deletingEvent = nil } }),
+                         message: "「\(deletingEvent?.title ?? "")」を削除します。お題と回答のメモは残ります。") {
+            guard let event = deletingEvent else { return }
+            store.run { try store.deleteEvent(event.id); playLiveStairDeleteFeedback() }
+            deletingEvent = nil
         }
     }
     private func eventList(now: Date) -> some View {
@@ -390,12 +389,14 @@ struct GiriListView: View {
 struct GiriFormatPicker: View {
     @Binding var selection: EventFormat
     var formats: [EventFormat] = EventFormat.allCases
+    /// 一覧・戦績は "format-tabs"（UIテストで使う）。お題/回答は別のIDにする。
+    var identifier = "format-tabs"
     var body: some View {
         Picker("形式", selection: $selection) {
             ForEach(formats) { format in
                 Text(format.shortTitle).tag(format).accessibilityLabel(format.title)
             }
-        }.pickerStyle(.segmented).accessibilityIdentifier("format-tabs")
+        }.pickerStyle(.segmented).accessibilityIdentifier(identifier)
     }
 }
 
@@ -871,6 +872,9 @@ enum GiriEventPresentation {
         }
     }
     static func resultSummary(_ event: GiriEvent) -> String {
+        // 例：予選1位通過・本戦1回戦敗退／決勝 優勝
+        let progress = event.resultProgressSummary
+        if !progress.isEmpty { return progress }
         var parts: [String] = []
         if let result = event.tournamentResult, result.outcome != .unrecorded {
             parts.append(outcomeTitle(result.outcome))

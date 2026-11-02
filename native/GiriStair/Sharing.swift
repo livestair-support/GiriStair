@@ -80,7 +80,9 @@ struct GiriStatisticsView: View {
                 LabeledContent("大会参加", value: "\(tournaments.count)回")
                 LabeledContent("優勝", value: "\(tournaments.filter { $0.effectivePlacement == 1 }.count)回")
                 LabeledContent("準優勝", value: "\(tournaments.filter { $0.effectivePlacement == 2 }.count)回")
-                LabeledContent("入賞", value: "\(tournaments.filter { $0.effectivePlacement != 1 && $0.effectivePlacement != 2 && ($0.effectivePlacement == 3 || $0.tournamentResult?.outcome == .placed) }.count)回")
+                LabeledContent("3位", value: "\(tournaments.filter(\.isThirdPlace).count)回")
+                LabeledContent("ベスト4", value: "\(tournaments.filter { $0.isBest(4) }.count)回")
+                LabeledContent("ベスト8・その他の入賞", value: "\(tournaments.filter(giriIsOtherPlacement).count)回")
             }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
             Section {
                 AppCardSectionTitle(title: "参加費", systemImage: "yensign.circle", accentColor: AppSectionAccent.ticket,
@@ -93,7 +95,7 @@ struct GiriStatisticsView: View {
             }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
             ranking("会場別の参加回数", "mappin.and.ellipse", .venue, giriRanks(records.filter { $0.eventFormat.hasLiveTiming }.map(\.venue))) { entry in records.filter { $0.eventFormat.hasLiveTiming && $0.venue == entry.name } }
             ranking("主催者別の参加回数", "person.crop.circle", .memo, giriRanks(records.map(\.organizer))) { entry in records.filter { $0.organizer == entry.name } }
-            ranking("一緒に参加した人", "person.2", .artist, giriRanks(records.flatMap { Array(Set($0.participants.filter { $0 != store.preferences.selfName })) })) { entry in records.filter { $0.participants.contains(entry.name) } }
+            ranking("一緒に参加した人", "person.2", .artist, giriRanks(records.flatMap { Array(Set($0.participants.filter { !store.preferences.isSelf($0) })) })) { entry in records.filter { $0.participants.contains(entry.name) } }
             ranking("サイト別の参加回数", "globe", .artist, giriRanks(records.filter { $0.eventFormat.hasOnlineRounds }.map { giriSiteName($0, sites: store.onlineSites) })) { entry in records.filter { $0.eventFormat.hasOnlineRounds && giriSiteName($0, sites: store.onlineSites) == entry.name } }
         }.appIndexListStyle().toolbar(.visible, for: .navigationBar).navigationTitle("集計").navigationBarTitleDisplayMode(.inline)
     }
@@ -500,7 +502,7 @@ struct GiriSharingView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 12) {
                     if showOrganizers { paperRanking("主催者", giriRanks(records.map(\.organizer))) }
-                    if showParticipants { paperRanking("一緒に参加した人", giriRanks(records.flatMap { Array(Set($0.participants.filter { $0 != store.preferences.selfName })) })) }
+                    if showParticipants { paperRanking("一緒に参加した人", giriRanks(records.flatMap { Array(Set($0.participants.filter { !store.preferences.isSelf($0) })) })) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
         }

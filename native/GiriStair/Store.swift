@@ -81,7 +81,7 @@ final class GiriStore: ObservableObject {
 
     var playerDirectory: [GiriPlayer] {
         var profiles = Dictionary(players.map { (playerSearchKey($0.name), $0) }, uniquingKeysWith: { first, _ in first })
-        for name in [preferences.selfName] + events.flatMap(referencedNames) + notes.filter(\.isOthersAnswer).map(\.answerer) {
+        for name in [preferences.selfName] + preferences.selfAliases + events.flatMap(referencedNames) + notes.flatMap(\.referencedPeople) {
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             let key = playerSearchKey(trimmed)
             if !trimmed.isEmpty && profiles[key] == nil { profiles[key] = GiriPlayer(id: "history:\(key)", name: trimmed) }
@@ -105,7 +105,7 @@ final class GiriStore: ObservableObject {
     /// 記録のないプレイヤーだけを一覧から削除できるようにするために使う。
     var referencedPlayerKeys: Set<String> {
         var keys = Set(events.flatMap(referencedNames).map(playerSearchKey))
-        keys.formUnion(notes.filter(\.isOthersAnswer).map { playerSearchKey($0.answerer) })
+        keys.formUnion(notes.flatMap(\.referencedPeople).map(playerSearchKey))
         keys.remove("")
         return keys
     }
@@ -266,6 +266,9 @@ final class GiriStore: ObservableObject {
         var preferences = candidate
         preferences.selfName = preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
         preferences.formatOrder = preferences.effectiveFormatOrder
+        var seenAliases = Set([playerSearchKey(preferences.selfName)])
+        preferences.selfAliases = preferences.selfAliases.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seenAliases.insert(playerSearchKey($0)).inserted }
         let hidden = Set(preferences.hiddenFormats)
         preferences.hiddenFormats = EventFormat.allCases.filter { hidden.contains($0) }
         guard preferences.hiddenFormats.count < EventFormat.allCases.count else { throw GiriDataError.invalid("使用する形式を1つ以上選んでください。") }
@@ -293,7 +296,14 @@ final class GiriStore: ObservableObject {
             for standing in next.events[index].standings.indices { next.events[index].standings[standing].playerNames = next.events[index].standings[standing].playerNames.map(rename) }
             if var result = next.events[index].tournamentResult { result.members = result.members.map(rename); next.events[index].tournamentResult = result }
         }
-        for index in next.notes.indices where next.notes[index].isOthersAnswer { next.notes[index].answerer = rename(next.notes[index].answerer) }
+        for index in next.notes.indices {
+            if next.notes[index].isOthersAnswer { next.notes[index].answerer = rename(next.notes[index].answerer) }
+            next.notes[index].promptAuthor = rename(next.notes[index].promptAuthor)
+            for record in next.notes[index].answerRecords.indices where !next.notes[index].answerRecords[record].answerer.isEmpty {
+                next.notes[index].answerRecords[record].answerer = rename(next.notes[index].answerRecords[record].answerer)
+            }
+        }
+        next.preferences.selfAliases = next.preferences.selfAliases.map(rename)
         if playerSearchKey(next.preferences.selfName) == key { next.preferences.selfName = name }
     }
 

@@ -539,13 +539,13 @@ struct GiriPlayersView: View {
     }
     var body: some View {
         let used = store.referencedPlayerKeys
-        let selfKey = playerSearchKey(store.preferences.selfName)
+        let selfKeys = store.preferences.selfKeys
         List {
             Section {
                 AppCardSectionTitle(title: "大喜利プレイヤー", systemImage: "person.2", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
                 if players.isEmpty { CenteredEmptyMessage(systemImage: "person.2", title: "プレイヤーがいません") }
                 ForEach(players) { player in
-                    let deletable = !player.id.hasPrefix("history:") && playerSearchKey(player.name) != selfKey && !used.contains(playerSearchKey(player.name))
+                    let deletable = !player.id.hasPrefix("history:") && !selfKeys.contains(playerSearchKey(player.name)) && !used.contains(playerSearchKey(player.name))
                     NavigationLink { GiriPlayerDetail(playerID: player.id) } label: {
                         HStack(spacing: 12) {
                             GiriPlayerAvatar(name: player.name, size: 40)
@@ -654,7 +654,8 @@ struct GiriPlayerDetail: View {
         let key = playerSearchKey(player.name)
         let together = store.events.filter { $0.isActualParticipant && giriEventPeople($0).contains { playerSearchKey($0) == key } }
         let hosted = store.events.filter { $0.isActualParticipant && playerSearchKey($0.organizer) == key }
-        let favorites = store.notes.filter { $0.kind == .answers && $0.isOthersAnswer && playerSearchKey($0.answerer) == key }
+        let favorites = store.notes.flatMap(\.otherAnswerRecords).filter { playerSearchKey($0.answerer) == key }
+        let authored = store.notes.filter { playerSearchKey($0.promptAuthor) == key }
         return ScrollView {
             VStack(spacing: 14) {
                 GiriDetailCard(title: "基本情報", systemImage: "person.text.rectangle", accentColor: AppSectionAccent.artist,
@@ -678,6 +679,11 @@ struct GiriPlayerDetail: View {
                         GiriProfileShortcutButton(title: "好きな回答", systemImage: "text.bubble", accentColor: AppSectionAccent.live,
                                                   countText: "\(favorites.count)件") {
                             navigation.openThoughts(answerer: player.name)
+                        }
+                        Divider().overlay(appSeparatorColor)
+                        GiriProfileShortcutButton(title: "作ったお題", systemImage: "lightbulb", accentColor: AppSectionAccent.live,
+                                                  countText: "\(authored.count)件") {
+                            navigation.openThoughts(author: player.name)
                         }
                         Divider().overlay(appSeparatorColor)
                         GiriProfileShortcutRow(title: "主催した会", systemImage: "person.crop.circle", accentColor: AppSectionAccent.live,
@@ -791,7 +797,7 @@ struct GiriPlayerDetail: View {
     private func analyticsPage(_ player: GiriPlayer) -> some View {
         let now = Date()
         let key = playerSearchKey(player.name)
-        let selfKey = playerSearchKey(store.preferences.selfName)
+        let selfKeys = store.preferences.selfKeys
         let together = store.events.filter { $0.isActualParticipant && giriEventPeople($0).contains { playerSearchKey($0) == key } }
         let completed = together.filter { $0.isCountableParticipation(now: now) }
         let mine = store.events.filter { $0.isCountableParticipation(now: now) }
@@ -808,7 +814,7 @@ struct GiriPlayerDetail: View {
             event.standings.filter { standing in standing.playerNames.contains { playerSearchKey($0) == key } }.map { (event, $0) }
         }.sorted { $0.1.placement < $1.1.placement }
         let venues = giriRankItems(period.filter { $0.eventFormat.hasLiveTiming }.map { [$0.venue] })
-        let coPlayers = giriRankItems(period.map(giriEventPeople), excluding: [key, selfKey])
+        let coPlayers = giriRankItems(period.map(giriEventPeople), excluding: selfKeys.union([key]))
         let accent = AppSectionAccent.artist
         return ScrollView {
             VStack(spacing: 14) {
@@ -974,9 +980,7 @@ struct GiriPlayerEditor: View {
             }
         }
         .interactiveDismissDisabled(changed)
-        .confirmationDialog("変更を保存せずに戻りますか？", isPresented: $discard, titleVisibility: .visible) {
-            Button("保存せずに戻る", role: .destructive) { dismiss() }
-        }
+        .giriDiscardChangesAlert(isPresented: $discard) { dismiss() }
         .alert("名前を変更しますか？", isPresented: $renaming) {
             Button("キャンセル", role: .cancel) {}
             Button("変更する") { save() }
@@ -1271,14 +1275,14 @@ struct GiriVenueDetail: View {
 
     private func analyticsPage(_ venue: GiriVenue) -> some View {
         let now = Date()
-        let selfKey = playerSearchKey(store.preferences.selfName)
+        let selfKeys = store.preferences.selfKeys
         let all = store.events.filter { $0.isCountableParticipation(now: now) && matches($0, venue: venue) }
         let years = Array(Set(all.compactMap(giriAnalyticsDate).map { String(Calendar(identifier: .gregorian).component(.year, from: $0)) })).sorted(by: >)
         let period = all.filter { event in
             year == "all" || giriAnalyticsDate(event).map { String(Calendar(identifier: .gregorian).component(.year, from: $0)) } == year
         }
         let latest = all.filter { giriAnalyticsDate($0) != nil }.max { (giriAnalyticsDate($0) ?? .distantPast) < (giriAnalyticsDate($1) ?? .distantPast) }
-        let players = giriRankItems(period.map(giriEventPeople), excluding: [selfKey])
+        let players = giriRankItems(period.map(giriEventPeople), excluding: selfKeys)
         let accent = AppSectionAccent.artist
         return ScrollView {
             VStack(spacing: 14) {
@@ -1405,9 +1409,7 @@ struct GiriVenueEditor: View {
             }
         }
         .interactiveDismissDisabled(changed)
-        .confirmationDialog("変更を保存せずに戻りますか？", isPresented: $discard, titleVisibility: .visible) {
-            Button("保存せずに戻る", role: .destructive) { dismiss() }
-        }
+        .giriDiscardChangesAlert(isPresented: $discard) { dismiss() }
         .alert("会場名を変更しますか？", isPresented: $renaming) {
             Button("キャンセル", role: .cancel) {}
             Button("変更する") { save() }

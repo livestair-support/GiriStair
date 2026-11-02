@@ -1966,3 +1966,26 @@ struct RankNumberView: View {
             .frame(width: width, alignment: .center)
     }
 }
+
+// LiveStair の確認の形（ReleaseScheduleViews・LiveDetailView）。
+extension View {
+    /// 入力中に戻るときの確認：「変更を破棄しますか？」→ 破棄して戻る／続ける。
+    func giriDiscardChangesAlert(isPresented: Binding<Bool>, onDiscard: @escaping () -> Void) -> some View {
+        alert("変更を破棄しますか？", isPresented: isPresented) {
+            Button("破棄して戻る", role: .destructive, action: onDiscard)
+            Button("続ける", role: .cancel) {}
+        } message: {
+            Text("入力中の内容は保存されません。")
+        }
+    }
+
+    /// 削除の確認：「〇〇を削除しますか？」→ キャンセル／削除する。
+    func giriDeleteAlert(_ title: String, isPresented: Binding<Bool>, message: String, onDelete: @escaping () -> Void) -> some View {
+        alert(title, isPresented: isPresented) {
+            Button("キャンセル", role: .cancel) {}
+            Button("削除する", role: .destructive, action: onDelete)
+        } message: {
+            Text(message)
+        }
+    }
+}

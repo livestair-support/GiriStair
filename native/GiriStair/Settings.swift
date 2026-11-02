@@ -15,7 +15,7 @@ struct GiriSettingsView: View {
     var body: some View {
         List {
             settingSection("profile", "自分のプロフィール", "person.crop.circle", AppSectionAccent.artist) {
-                NavigationLink("自分の名前") { GiriSelfProfileEditor() }
+                NavigationLink("自分の名前・別名義") { GiriSelfProfileEditor() }
             }
             settingSection("share", "共有ページ", "square.and.arrow.up", AppSectionAccent.live) {
                 NavigationLink("Giri Summary") { GiriSharingView(initialList: false) }
@@ -84,14 +84,14 @@ struct GiriSettingsView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json], allowsMultipleSelection: false, onCompletion: importBackup)
-        .confirmationDialog("現在の記録をバックアップの内容に置き換えますか？", isPresented: $confirmRestore, titleVisibility: .visible) {
-            Button("復元", role: .destructive) {
+        .alert("バックアップから復元しますか？", isPresented: $confirmRestore) {
+            Button("キャンセル", role: .cancel) { restoreData = nil }
+            Button("復元する", role: .destructive) {
                 guard let data = restoreData else { return }
                 store.run { try store.restoreBackup(data) }
                 restoreData = nil
             }
-            Button("キャンセル", role: .cancel) { restoreData = nil }
-        }
+        } message: { Text("現在の記録をバックアップの内容に置き換えます。") }
         .sheet(isPresented: $sharing) {
             if let shareURL {
                 GiriShareSheet(items: [shareURL]) { completed in
@@ -209,26 +209,63 @@ struct GiriSelfProfileEditor: View {
     @EnvironmentObject private var store: GiriStore
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
+    @State private var aliases: [String] = []
+    @State private var loaded = false
+    @State private var discard = false
+    private var cleanAliases: [String] { aliases.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
+    private var changed: Bool {
+        loaded && (name.trimmingCharacters(in: .whitespacesAndNewlines) != store.preferences.selfName || cleanAliases != store.preferences.selfAliases)
+    }
     var body: some View {
         Form {
             Section {
                 AppCardSectionTitle(title: "自分のプロフィール", systemImage: "person.crop.circle", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
-                TextField("自分の名前", text: $name).textContentType(.nickname)
+                GiriProfileTextRow(title: "自分の名前", placeholder: "必須", text: $name).textContentType(.nickname)
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
-        }.appEditorFormStyle().toolbar(.visible, for: .navigationBar).navigationTitle("自分の名前").navigationBarTitleDisplayMode(.inline)
-            .onAppear { name = store.preferences.selfName }
-            .toolbar { ToolbarItem(placement: .confirmationAction) {
+            Section {
+                AppCardSectionTitle(title: "別名義", systemImage: "person.2.badge.gearshape", accentColor: AppSectionAccent.artist,
+                                    infoTitle: "別名義について",
+                                    infoMessage: "別の名前でも出ている場合に追加します。参加者や回答者にこの名前があると自分として扱います。")
+                    .listRowSeparator(.hidden)
+                ForEach(aliases.indices, id: \.self) { index in
+                    HStack(spacing: 8) {
+                        TextField("別名義", text: Binding(get: { aliases.indices.contains(index) ? aliases[index] : "" },
+                                                        set: { if aliases.indices.contains(index) { aliases[index] = $0 } }))
+                        Button(role: .destructive) { if aliases.indices.contains(index) { aliases.remove(at: index) } } label: {
+                            Image(systemName: "minus.circle")
+                        }.buttonStyle(.borderless).accessibilityLabel("別名義を外す")
+                    }
+                }
+                Button { aliases.append("") } label: { Label("別名義を追加", systemImage: "plus.circle") }.tint(accentActionColor)
+            }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+        }
+        .appEditorFormStyle().toolbar(.visible, for: .navigationBar).navigationTitle("自分の名前").navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(changed)
+        .onAppear {
+            guard !loaded else { return }
+            name = store.preferences.selfName
+            aliases = store.preferences.selfAliases
+            loaded = true
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                if changed { Button { discard = true } label: { Image(systemName: "chevron.left") }.accessibilityLabel("戻る") }
+            }
+            ToolbarItem(placement: .confirmationAction) {
                 Button("保存") {
                     store.run {
                         var preferences = store.preferences
                         preferences.selfName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        preferences.selfAliases = cleanAliases
                         preferences.onboardingCompleted = true
                         try store.savePreferences(preferences)
                         playLiveStairSaveFeedback()
                         dismiss()
                     }
                 }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            } }
+            }
+        }
+        .giriDiscardChangesAlert(isPresented: $discard) { dismiss() }
     }
 }
 

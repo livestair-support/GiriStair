@@ -30,9 +30,10 @@ struct GiriResultsView: View {
     private var completed: [GiriEvent] { tournaments.filter { $0.isCountableParticipation() } }
     private var champions: Int { completed.filter { $0.effectivePlacement == 1 }.count }
     private var runnersUp: Int { completed.filter { $0.effectivePlacement == 2 }.count }
-    private var placed: Int {
-        completed.filter { ($0.effectivePlacement ?? 0) > 2 || ($0.tournamentResult?.outcome == .placed && $0.effectivePlacement == nil) }.count
-    }
+    // 3位とベスト4は分けて数える（3位決定戦のある大会とない大会を混ぜない）。
+    private var thirds: Int { completed.filter(\.isThirdPlace).count }
+    private var bestFours: Int { completed.filter { $0.isBest(4) }.count }
+    private var otherPlaced: Int { completed.filter(giriIsOtherPlacement).count }
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { _ in
             VStack(spacing: 0) {
@@ -115,9 +116,19 @@ struct GiriResultsView: View {
                 Divider().overlay(appSeparatorColor)
                 metric("準優勝", runnersUp, image: "medal.fill", color: .secondary)
                 Divider().overlay(appSeparatorColor)
-                metric("入賞", placed, image: "rosette", color: AppSectionAccent.artist)
+                metric("3位", thirds, image: "3.circle.fill", color: AppSectionAccent.ticket)
+                Divider().overlay(appSeparatorColor)
+                metric("ベスト4", bestFours, image: "rosette", color: AppSectionAccent.artist)
             }.frame(height: 72)
             Divider().overlay(appSeparatorColor)
+            if otherPlaced > 0 {
+                HStack {
+                    Text("ベスト8・その他の入賞").font(.subheadline).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(otherPlaced)件").font(.body.weight(.medium))
+                }
+                Divider().overlay(appSeparatorColor)
+            }
             HStack {
                 Text("終了した大会").font(.subheadline).foregroundStyle(.secondary)
                 Spacer()

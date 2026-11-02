@@ -479,7 +479,7 @@ private struct GiriSiteSpecialPeriodEditor: View {
             ToolbarItem(placement: .confirmationAction) { Button("保存") { draft.round.name = draft.title.isEmpty ? draft.kind.title : draft.title; onSave(draft); dismiss() }.disabled(!validDates) }
         }
         .interactiveDismissDisabled(changed)
-        .confirmationDialog("入力を保存せず戻りますか？", isPresented: $discard, titleVisibility: .visible) { Button("保存せず戻る", role: .destructive) { dismiss() } }
+        .giriDiscardChangesAlert(isPresented: $discard) { dismiss() }
     }
     private var validDates: Bool {
         let r = draft.round

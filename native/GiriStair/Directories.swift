@@ -138,13 +138,14 @@ struct GiriSiteDetail: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { if let site { NavigationLink("編集") { GiriSiteEditor(site: site) } } }
             ToolbarItem(placement: .topBarTrailing) {
-                Menu { Button("サイトの登録を削除", systemImage: "trash", role: .destructive) { deleting = true } }
-                    label: { Image(systemName: "ellipsis") }.accessibilityLabel("サイトの操作")
+                Button(role: .destructive) { deleting = true } label: {
+                    Image(systemName: "trash").foregroundStyle(accentActionColor)
+                }.accessibilityLabel("サイトの登録を削除")
             }
         }
-        .confirmationDialog("サイトを削除しますか？過去の参加記録とメモは残ります。", isPresented: $deleting, titleVisibility: .visible) {
-            Button("削除", role: .destructive) { store.run { try store.deleteOnlineSite(siteID); playLiveStairDeleteFeedback(); dismiss() } }
-            Button("キャンセル", role: .cancel) {}
+        .giriDeleteAlert("サイトを削除しますか？", isPresented: $deleting,
+                         message: "「\(site?.name ?? "")」の登録を削除します。過去の参加記録とお題・回答は残ります。") {
+            store.run { try store.deleteOnlineSite(siteID); playLiveStairDeleteFeedback(); dismiss() }
         }
         .sheet(item: $resultEvent) { event in NavigationStack { GiriCycleResultEditor(eventID: event.id) } }
     }
@@ -261,9 +262,7 @@ struct GiriSiteEditor: View {
             ToolbarItem(placement: .topBarLeading) { if changed { Button { discard = true } label: { Image(systemName: "chevron.left") }.accessibilityLabel("戻る") } }
             ToolbarItem(placement: .confirmationAction) { Button("保存", action: save).disabled(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
         }
-        .confirmationDialog("変更を保存せず戻りますか？", isPresented: $discard, titleVisibility: .visible) {
-            Button("変更を破棄", role: .destructive) { dismiss() }
-        }
+        .giriDiscardChangesAlert(isPresented: $discard) { dismiss() }
     }
     private func save() {
         var value = draft

@@ -7,6 +7,8 @@ enum GiriThoughtDestination: Hashable, Identifiable {
     case round(eventID: String, roundID: String)
     /// プレイヤー詳細から開く、その人の回答（ツボ上げ・好きな回答）。
     case answerer(String)
+    /// プレイヤー詳細から開く、その人が作ったお題。
+    case author(String)
 
     var id: String {
         switch self {
@@ -15,6 +17,7 @@ enum GiriThoughtDestination: Hashable, Identifiable {
         case .note(let id): return "note:\(id)"
         case .round(let eventID, let roundID): return "round:\(eventID):\(roundID)"
         case .answerer(let name): return "answerer:\(name)"
+        case .author(let name): return "author:\(name)"
         }
     }
 }
@@ -44,6 +47,7 @@ final class GiriNavigation: ObservableObject {
     func openThoughts(eventID: String, roundID: String) { open(.round(eventID: eventID, roundID: roundID)) }
     func openThought(noteID: String) { open(.note(noteID)) }
     func openThoughts(answerer: String) { open(.answerer(answerer)) }
+    func openThoughts(author: String) { open(.author(author)) }
 
     private func open(_ destination: GiriThoughtDestination) {
         selectedTab = 3

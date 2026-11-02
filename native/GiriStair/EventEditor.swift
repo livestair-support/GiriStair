@@ -147,10 +147,7 @@ struct GiriEventEditor: View {
             Button("キャンセル", role: .cancel) {}
             Button("空にする", role: .destructive) { loaded = false; load() }
         } message: { Text("保存済みの記録は変更されません。") }
-        .alert("変更を保存せず戻りますか？", isPresented: $showLeave) {
-            Button("編集を続ける", role: .cancel) {}
-            Button("変更を破棄", role: .destructive) { dismiss() }
-        }
+        .giriDiscardChangesAlert(isPresented: $showLeave) { dismiss() }
     }
 
     private var saveHeaderButton: some View {
@@ -424,9 +421,10 @@ struct GiriEventEditor: View {
         let me = store.preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
         let host = draft.organizer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !me.isEmpty, !host.isEmpty else { return }
-        if giriEditorNameKey(me) == giriEditorNameKey(host) {
+        // 別名義で主催・参加している場合も自分として扱う。
+        if store.preferences.isSelf(host) {
             if selfWasAdded { participants.removeAll { giriEditorNameKey($0) == giriEditorNameKey(me) }; selfWasAdded = false }
-        } else if !participants.contains(where: { giriEditorNameKey($0) == giriEditorNameKey(me) }) {
+        } else if !participants.contains(where: { store.preferences.isSelf($0) }) {
             if let index = participants.firstIndex(where: { $0.isEmpty }) { participants[index] = me }
             else { participants.append(me) }
             selfWasAdded = true
