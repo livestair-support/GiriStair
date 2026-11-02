@@ -458,7 +458,7 @@ struct GiriProfileRecordsPage: View {
         }
         .scrollIndicators(.hidden)
         .background(appBackgroundColor)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -527,53 +527,115 @@ func giriEventPeople(_ event: GiriEvent) -> [String] {
     event.participants + event.teams.flatMap(\.members)
 }
 
-// MARK: - プレイヤー一覧
+// MARK: - 一覧（LiveStair IndexViews のヘッダーとセクション）
+
+/// LiveStair IndexViews の一覧ヘッダー：一覧表示・件数・折りたたみ・検索。
+struct GiriIndexHeader: View {
+    let accentColor: Color
+    let count: Int
+    @Binding var search: String
+    let placeholder: String
+    @Binding var isCollapsed: Bool
+    var body: some View {
+        AppIndexHeaderCard(accentColor: accentColor) {
+            HStack {
+                AppCardSectionTitle(title: "一覧表示", systemImage: "slider.horizontal.3", accentColor: accentColor)
+                Spacer(minLength: 8)
+                Text("\(count)件").font(.caption).foregroundStyle(.secondary)
+                AppHeaderCollapseButton(isCollapsed: $isCollapsed, tintColor: accentColor)
+            }
+            .padding(.bottom, isCollapsed ? 0 : 8)
+            if isCollapsed {
+                // 畳んだときは、検索している文字だけを出す
+                AppHeaderConditionSummary(conditions: [appSearchConditionText(search)].compactMap { $0 }, topPadding: 4)
+            } else {
+                Divider().overlay(appSeparatorColor)
+                AppSearchField(text: $search, placeholder: placeholder).padding(.bottom, 4)
+            }
+        }
+    }
+}
+
+struct GiriIndexSection<Item: Identifiable>: Identifiable {
+    let id: String
+    let title: String
+    let items: [Item]
+}
+
+/// LiveStair IndexViews の見出し（あ行〜わ行・A〜Z・数字・その他）。
+func giriKanaSectionTitle(_ reading: String) -> String {
+    let trimmed = reading.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let first = trimmed.first else { return "未設定" }
+    let value = String(first)
+    let half = value.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? value
+    if half.range(of: #"^[0-9]$"#, options: .regularExpression) != nil { return "数字" }
+    if half.range(of: #"^[A-Za-z]$"#, options: .regularExpression) != nil { return half.uppercased() }
+    let kana = value.applyingTransform(.hiraganaToKatakana, reverse: false) ?? value
+    if "アイウエオァィゥェォヴ".contains(kana) { return "あ行" }
+    if "カキクケコガギグゲゴ".contains(kana) { return "か行" }
+    if "サシスセソザジズゼゾ".contains(kana) { return "さ行" }
+    if "タチツテトダヂヅデドッ".contains(kana) { return "た行" }
+    if "ナニヌネノ".contains(kana) { return "な行" }
+    if "ハヒフヘホバビブベボパピプペポ".contains(kana) { return "は行" }
+    if "マミムメモ".contains(kana) { return "ま行" }
+    if "ヤユヨャュョ".contains(kana) { return "や行" }
+    if "ラリルレロ".contains(kana) { return "ら行" }
+    if "ワヲン".contains(kana) { return "わ行" }
+    return "その他"
+}
+
+func giriKanaSectionOrder(_ title: String) -> Int {
+    let kana = ["あ行", "か行", "さ行", "た行", "な行", "は行", "ま行", "や行", "ら行", "わ行"]
+    if let index = kana.firstIndex(of: title) { return index }
+    if title.count == 1, let scalar = title.unicodeScalars.first, (65...90).contains(scalar.value) { return 100 + Int(scalar.value - 65) }
+    switch title {
+    case "数字": return 200
+    case "その他": return 201
+    default: return 202
+    }
+}
 
 struct GiriPlayersView: View {
     @EnvironmentObject private var store: GiriStore
     @State private var query = ""
+    @State private var isHeaderCollapsed = false
     @State private var adding = false
     private var players: [GiriPlayer] {
         store.playerDirectory.filter { query.isEmpty || "\($0.name) \($0.furigana) \($0.region)".localizedStandardContains(query) }
             .sorted { ($0.furigana.isEmpty ? $0.name : $0.furigana).localizedStandardCompare($1.furigana.isEmpty ? $1.name : $1.furigana) == .orderedAscending }
     }
+    private var sections: [GiriIndexSection<GiriPlayer>] {
+        let groups = Dictionary(grouping: players) { giriKanaSectionTitle($0.furigana.isEmpty ? $0.name : $0.furigana) }
+        return groups.keys.sorted { giriKanaSectionOrder($0) < giriKanaSectionOrder($1) }
+            .map { GiriIndexSection(id: $0, title: $0, items: groups[$0] ?? []) }
+    }
     var body: some View {
         let used = store.referencedPlayerKeys
         let selfKeys = store.preferences.selfKeys
+        let values = sections
         List {
-            Section {
-                AppCardSectionTitle(title: "大喜利プレイヤー", systemImage: "person.2", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
-                if players.isEmpty { CenteredEmptyMessage(systemImage: "person.2", title: "プレイヤーがいません") }
-                ForEach(players) { player in
-                    let deletable = !player.id.hasPrefix("history:") && !selfKeys.contains(playerSearchKey(player.name)) && !used.contains(playerSearchKey(player.name))
-                    NavigationLink { GiriPlayerDetail(playerID: player.id) } label: {
-                        HStack(spacing: 12) {
-                            GiriPlayerAvatar(name: player.name, size: 40)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(player.name).font(.headline.weight(.semibold)).lineLimit(1)
-                                if !player.furigana.isEmpty { Text(player.furigana).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-                            }.frame(minHeight: 46, alignment: .center).layoutPriority(1)
-                            Spacer(minLength: 8)
-                        }.frame(minHeight: 48).padding(.vertical, 2)
+            if values.isEmpty {
+                Section {
+                    CenteredEmptyMessage(systemImage: "person.2", title: query.isEmpty ? "プレイヤーがいません" : "該当するプレイヤーがいません")
+                }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+            }
+            ForEach(values) { section in
+                Section {
+                    AppIndexSectionTitle(title: section.title, count: section.items.count, systemImage: "person.2.fill", accentColor: AppSectionAccent.artist)
+                        .listRowSeparator(.hidden)
+                    ForEach(section.items) { player in
+                        playerRow(player, deletable: !player.id.hasPrefix("history:") && !selfKeys.contains(playerSearchKey(player.name)) && !used.contains(playerSearchKey(player.name)))
                     }
-                    // LiveStair IndexViews と同じく、記録のないプレイヤーだけ削除できる。
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        if deletable {
-                            Button(role: .destructive) { delete(player) } label: { Label("削除", systemImage: "trash") }
-                        }
-                    }
-                    .contextMenu {
-                        if deletable {
-                            Button(role: .destructive) { delete(player) } label: { Label("プレイヤーを削除", systemImage: "trash") }
-                        }
-                    }
-                }
-            }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+            }
         }
         .appIndexListStyle()
-        .toolbar(.visible, for: .navigationBar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            GiriIndexHeader(accentColor: AppSectionAccent.artist, count: players.count, search: $query,
+                            placeholder: "名前・フリガナ・地域で検索", isCollapsed: $isHeaderCollapsed)
+        }
         .navigationTitle("大喜利プレイヤー一覧").navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $query, prompt: "名前・フリガナ・地域")
+        .giriNavigationBarStyle()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { adding = true } label: { Image(systemName: "plus") }.accessibilityLabel("プレイヤーを追加")
@@ -581,6 +643,31 @@ struct GiriPlayersView: View {
         }
         .sheet(isPresented: $adding) { NavigationStack { GiriPlayerEditor() } }
     }
+
+    private func playerRow(_ player: GiriPlayer, deletable: Bool) -> some View {
+        NavigationLink { GiriPlayerDetail(playerID: player.id) } label: {
+            HStack(spacing: 12) {
+                GiriPlayerAvatar(name: player.name, size: 40)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(player.name).font(.headline.weight(.semibold)).lineLimit(1)
+                    if !player.furigana.isEmpty { Text(player.furigana).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                }.frame(minHeight: 46, alignment: .center).layoutPriority(1)
+                Spacer(minLength: 8)
+            }.frame(minHeight: 48).padding(.vertical, 2)
+        }
+        // LiveStair IndexViews と同じく、記録のないプレイヤーだけ削除できる。
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if deletable {
+                Button(role: .destructive) { delete(player) } label: { Label("削除", systemImage: "trash") }
+            }
+        }
+        .contextMenu {
+            if deletable {
+                Button(role: .destructive) { delete(player) } label: { Label("プレイヤーを削除", systemImage: "trash") }
+            }
+        }
+    }
+
     private func delete(_ player: GiriPlayer) {
         store.run {
             try store.deletePlayer(player.id)
@@ -969,7 +1056,7 @@ struct GiriPlayerEditor: View {
             }
         }
         .appEditorFormStyle()
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -1019,44 +1106,47 @@ struct GiriPlayerEditor: View {
 struct GiriVenuesView: View {
     @EnvironmentObject private var store: GiriStore
     @State private var query = ""
+    @State private var isHeaderCollapsed = false
     @State private var adding = false
+    private var venues: [GiriVenue] {
+        store.venueDirectory.filter { query.isEmpty || "\($0.name) \($0.prefecture) \($0.mapAddress)".localizedStandardContains(query) }
+    }
+    /// LiveStair の会場一覧の「都道府県」順と同じく、都道府県ごとにまとめる。
+    private var sections: [GiriIndexSection<GiriVenue>] {
+        let groups = Dictionary(grouping: venues) { $0.prefecture.isEmpty ? "未設定" : $0.prefecture }
+        func order(_ title: String) -> Int {
+            if title == "未設定" { return 1000 }
+            return GiriVenueEditor.prefectures.firstIndex(of: title) ?? 500
+        }
+        return groups.keys.sorted { order($0) == order($1) ? $0 < $1 : order($0) < order($1) }
+            .map { GiriIndexSection(id: $0, title: $0, items: groups[$0] ?? []) }
+    }
     var body: some View {
         let used = store.referencedVenueKeys
+        let values = sections
         List {
-            Section {
-                AppCardSectionTitle(title: "会場", systemImage: "mappin.and.ellipse", accentColor: AppSectionAccent.venue).listRowSeparator(.hidden)
-                let venues = store.venueDirectory.filter { query.isEmpty || "\($0.name) \($0.prefecture)".localizedStandardContains(query) }
-                if venues.isEmpty { CenteredEmptyMessage(systemImage: "mappin.and.ellipse", title: "会場がありません") }
-                ForEach(venues) { venue in
-                    let deletable = !venue.id.hasPrefix("history:") && !used.ids.contains(venue.id) && !used.names.contains(playerSearchKey(venue.name))
-                    NavigationLink { GiriVenueDetail(venueID: venue.id) } label: {
-                        HStack(spacing: 12) {
-                            AppIndexItemBadge(systemImage: "mappin.and.ellipse", color: AppSectionAccent.venue)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(venue.name).font(.headline.weight(.semibold)).lineLimit(1)
-                                if !venue.prefecture.isEmpty { Text(venue.prefecture).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-                            }.layoutPriority(1)
-                            Spacer(minLength: 8)
-                        }.frame(minHeight: 48).padding(.vertical, 2)
+            if values.isEmpty {
+                Section {
+                    CenteredEmptyMessage(systemImage: "mappin.and.ellipse", title: query.isEmpty ? "会場がありません" : "該当する会場がありません")
+                }.appSectionCardStyle(accentColor: AppSectionAccent.venue)
+            }
+            ForEach(values) { section in
+                Section {
+                    AppIndexSectionTitle(title: section.title, count: section.items.count, systemImage: "mappin.and.ellipse", accentColor: AppSectionAccent.venue)
+                        .listRowSeparator(.hidden)
+                    ForEach(section.items) { venue in
+                        venueRow(venue, deletable: !venue.id.hasPrefix("history:") && !used.ids.contains(venue.id) && !used.names.contains(playerSearchKey(venue.name)))
                     }
-                    // LiveStair IndexViews と同じく、記録のない会場だけ削除できる。
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        if deletable {
-                            Button(role: .destructive) { delete(venue) } label: { Label("削除", systemImage: "trash") }
-                        }
-                    }
-                    .contextMenu {
-                        if deletable {
-                            Button(role: .destructive) { delete(venue) } label: { Label("会場を削除", systemImage: "trash") }
-                        }
-                    }
-                }
-            }.appSectionCardStyle(accentColor: AppSectionAccent.venue)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.venue)
+            }
         }
         .appIndexListStyle()
-        .searchable(text: $query, prompt: "会場名・都道府県")
-        .toolbar(.visible, for: .navigationBar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            GiriIndexHeader(accentColor: AppSectionAccent.venue, count: venues.count, search: $query,
+                            placeholder: "会場名・都道府県・住所で検索", isCollapsed: $isHeaderCollapsed)
+        }
         .navigationTitle("会場一覧").navigationBarTitleDisplayMode(.inline)
+        .giriNavigationBarStyle()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { adding = true } label: { Image(systemName: "plus") }.accessibilityLabel("会場を追加")
@@ -1064,6 +1154,31 @@ struct GiriVenuesView: View {
         }
         .sheet(isPresented: $adding) { NavigationStack { GiriVenueEditor() } }
     }
+
+    private func venueRow(_ venue: GiriVenue, deletable: Bool) -> some View {
+        NavigationLink { GiriVenueDetail(venueID: venue.id) } label: {
+            HStack(spacing: 12) {
+                AppIndexItemBadge(systemImage: "mappin.and.ellipse", color: AppSectionAccent.venue)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(venue.name).font(.headline.weight(.semibold)).lineLimit(1)
+                    if !venue.mapAddress.isEmpty { Text(venue.mapAddress).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                }.layoutPriority(1)
+                Spacer(minLength: 8)
+            }.frame(minHeight: 48).padding(.vertical, 2)
+        }
+        // LiveStair IndexViews と同じく、記録のない会場だけ削除できる。
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if deletable {
+                Button(role: .destructive) { delete(venue) } label: { Label("削除", systemImage: "trash") }
+            }
+        }
+        .contextMenu {
+            if deletable {
+                Button(role: .destructive) { delete(venue) } label: { Label("会場を削除", systemImage: "trash") }
+            }
+        }
+    }
+
     private func delete(_ venue: GiriVenue) {
         store.run {
             try store.deleteVenue(venue.id)
@@ -1398,7 +1513,7 @@ struct GiriVenueEditor: View {
             }
         }
         .appEditorFormStyle()
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -1464,7 +1579,7 @@ struct GiriMapSearchView: View {
             }.appSectionCardStyle(accentColor: AppSectionAccent.venue)
         }
         .appIndexListStyle()
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .navigationTitle("マップ検索").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if showsClose {

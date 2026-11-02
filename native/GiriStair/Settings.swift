@@ -4,7 +4,9 @@ import UIKit
 
 struct GiriSettingsView: View {
     @EnvironmentObject private var store: GiriStore
-    @State private var collapsed: Set<String> = ["notifications", "data"]
+    // LiveStair SettingsView と同じく、折りたたんだセクションは次に開いた時も保つ。
+    @AppStorage("giriSettingsCollapsedSections") private var collapsedRaw = "data,notifications"
+    private var collapsed: Set<String> { Set(collapsedRaw.split(separator: ",").map(String.init)) }
     @State private var importing = false
     @State private var restoreData: Data?
     @State private var confirmRestore = false
@@ -30,6 +32,7 @@ struct GiriSettingsView: View {
                 NavigationLink("ネット大喜利サイト一覧") { GiriSitesView() }
             }
             settingSection("defaults", "デフォルト設定", "slider.horizontal.3", AppSectionAccent.live) {
+                defaultSettingsGroupTitle("表示", systemImage: "eye")
                 NavigationLink("使用する形式・並び順") { GiriFormatOrderEditor() }
                 Picker("テーマ", selection: preference(\.theme)) {
                     Text("端末に合わせる").tag("system")
@@ -42,6 +45,7 @@ struct GiriSettingsView: View {
                     Text("表示").tag("show")
                     Text("非表示").tag("hide")
                 }.pickerStyle(.menu).tint(.primary)
+                defaultSettingsGroupTitle("ネット大喜利の日程", systemImage: "calendar")
                 Stepper("投稿期間　\(store.preferences.submissionDays)日", value: preference(\.submissionDays), in: 1...365)
                 Stepper("投票期間　\(store.preferences.votingDays)日", value: preference(\.votingDays), in: 1...365)
                 Picker("投稿開始の日", selection: preference(\.submissionStartDayOffset)) {
@@ -117,18 +121,39 @@ struct GiriSettingsView: View {
         }
     }
 
+    // LiveStair SettingsView.settingsSectionTitleRow：見出しの右に折りたたみのボタン。
     @ViewBuilder private func settingSection<Content: View>(_ id: String, _ title: String, _ icon: String, _ accent: Color, @ViewBuilder content: () -> Content) -> some View {
         Section {
-            Button {
-                withAnimation { if !collapsed.insert(id).inserted { collapsed.remove(id) } }
-            } label: {
-                HStack {
-                    AppCardSectionTitle(title: title, systemImage: icon, accentColor: accent)
-                    Image(systemName: collapsed.contains(id) ? "chevron.down.circle" : "chevron.up.circle").foregroundStyle(accent)
-                }.contentShape(Rectangle())
-            }.buttonStyle(.plain).listRowSeparator(.hidden)
+            HStack(spacing: 8) {
+                AppCardSectionTitle(title: title, systemImage: icon, accentColor: accent)
+                AppHeaderCollapseButton(isCollapsed: collapseBinding(id), tintColor: accent, subject: title)
+            }
+            .listRowSeparator(.hidden)
             if !collapsed.contains(id) { content() }
         }.appSectionCardStyle(accentColor: accent)
+    }
+
+    private func collapseBinding(_ id: String) -> Binding<Bool> {
+        Binding(get: { collapsed.contains(id) }, set: { isCollapsed in
+            var values = collapsed
+            if isCollapsed { values.insert(id) } else { values.remove(id) }
+            collapsedRaw = values.sorted().joined(separator: ",")
+        })
+    }
+
+    // LiveStair SettingsView.defaultSettingsGroupTitle
+    private func defaultSettingsGroupTitle(_ title: String, systemImage: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage).foregroundStyle(AppSectionAccent.live)
+            Text(title).foregroundStyle(.primary)
+            Spacer(minLength: 0)
+        }
+        .font(.subheadline.weight(.semibold))
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .listRowSeparator(.hidden)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
     private func preference<T>(_ key: WritableKeyPath<AppPreferences, T>) -> Binding<T> {
         Binding(get: { store.preferences[keyPath: key] }, set: { value in
@@ -239,7 +264,7 @@ struct GiriSelfProfileEditor: View {
                 Button { aliases.append("") } label: { Label("別名義を追加", systemImage: "plus.circle") }.tint(accentActionColor)
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
         }
-        .appEditorFormStyle().toolbar(.visible, for: .navigationBar).navigationTitle("自分の名前").navigationBarTitleDisplayMode(.inline)
+        .appEditorFormStyle().giriNavigationBarStyle().navigationTitle("自分の名前").navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(changed)
         .onAppear {
             guard !loaded else { return }
@@ -311,7 +336,7 @@ private struct GiriFormatOrderEditor: View {
         .environment(\.defaultMinListRowHeight, settingsMinimumListRowHeight)
         .appIndexListStyle()
         .environment(\.editMode, .constant(.active))
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .navigationTitle("使用する形式・並び順")
         .navigationBarTitleDisplayMode(.inline)
     }

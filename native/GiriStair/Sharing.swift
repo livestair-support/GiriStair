@@ -97,7 +97,7 @@ struct GiriStatisticsView: View {
             ranking("主催者別の参加回数", "person.crop.circle", .memo, giriRanks(records.map(\.organizer))) { entry in records.filter { $0.organizer == entry.name } }
             ranking("一緒に参加した人", "person.2", .artist, giriRanks(records.flatMap { Array(Set($0.participants.filter { !store.preferences.isSelf($0) })) })) { entry in records.filter { $0.participants.contains(entry.name) } }
             ranking("サイト別の参加回数", "globe", .artist, giriRanks(records.filter { $0.eventFormat.hasOnlineRounds }.map { giriSiteName($0, sites: store.onlineSites) })) { entry in records.filter { $0.eventFormat.hasOnlineRounds && giriSiteName($0, sites: store.onlineSites) == entry.name } }
-        }.appIndexListStyle().toolbar(.visible, for: .navigationBar).navigationTitle("集計").navigationBarTitleDisplayMode(.inline)
+        }.appIndexListStyle().giriNavigationBarStyle().navigationTitle("集計").navigationBarTitleDisplayMode(.inline)
     }
     private enum RankingAccent { case venue, memo, artist; var color: Color { switch self { case .venue: AppSectionAccent.venue; case .memo: AppSectionAccent.memo; case .artist: AppSectionAccent.artist } } }
     private func ranking(_ title: String, _ icon: String, _ accent: RankingAccent, _ entries: [GiriRankEntry], events: @escaping (GiriRankEntry) -> [GiriEvent]) -> some View {
@@ -121,7 +121,7 @@ private struct GiriStatisticsRecords: View {
                     NavigationLink { GiriEventDetail(eventID: event.id) } label: { VStack(alignment: .leading, spacing: 4) { if let date = giriAnalyticsDate(event) { Text(GiriDateText.day(date)).font(.caption).foregroundStyle(.secondary) }; Text(event.title) } }
                 }
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
-        }.appIndexListStyle().toolbar(.visible, for: .navigationBar).navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+        }.appIndexListStyle().giriNavigationBarStyle().navigationTitle(title).navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -397,7 +397,7 @@ struct GiriSharingView: View {
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
         }
         .appEditorFormStyle().navigationTitle(shareTitle + "表示設定").navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .task(id: photoItem) { await loadBackground(photoItem) }
         .task(id: background) { loadSavedBackground() }
     }

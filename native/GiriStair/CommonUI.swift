@@ -1989,3 +1989,96 @@ extension View {
         }
     }
 }
+
+extension View {
+    /// LiveStair の各画面と同じナビゲーションバー（表示・appHeaderColor の背景）。
+    func giriNavigationBarStyle() -> some View {
+        toolbar(.visible, for: .navigationBar)
+            .toolbarBackground(appHeaderColor, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+    }
+}
+
+// LiveStair CommonUI.swift AppIndexSectionTitle（一覧のセクション見出しと件数）。
+struct AppIndexSectionTitle: View {
+    let title: String
+    let count: Int
+    let systemImage: String
+    let accentColor: Color
+    
+    @AppStorage("appearanceMode")
+    private var appearanceModeRawValue: String =
+    AppThemeMode.system.rawValue
+    
+    @Environment(\.colorScheme)
+    private var colorScheme
+    
+    private var isDarkAppearance: Bool {
+        resolvedAppAppearanceIsDark(
+            appearanceModeRawValue:
+                appearanceModeRawValue,
+            systemColorScheme:
+                colorScheme
+        )
+    }
+    
+    private var badgeOpacity: Double {
+        isDarkAppearance
+        ? 0.20
+        : 0.14
+    }
+    
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(
+                    .system(
+                        size: appFontSize(14),
+                        weight: .semibold
+                    )
+                )
+                .foregroundColor(accentColor)
+                .frame(width: 28, height: 28)
+                .background(
+                    accentColor.opacity(
+                        badgeOpacity
+                    )
+                )
+                .clipShape(
+                    RoundedRectangle(
+                        cornerRadius: 8,
+                        style: .continuous
+                    )
+                )
+            
+            Text(title)
+                .font(
+                    .headline.weight(.bold)
+                )
+                .foregroundColor(.primary)
+            
+            Spacer(minLength: 8)
+            
+            Text("\(count)件")
+                .font(
+                    .caption.weight(.semibold)
+                )
+                .foregroundColor(accentColor)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(
+                    accentColor.opacity(
+                        badgeOpacity
+                    )
+                )
+                .clipShape(Capsule())
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(
+            children: .ignore
+        )
+        .accessibilityLabel(
+            "\(title)、\(count)件"
+        )
+    }
+}

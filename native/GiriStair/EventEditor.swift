@@ -4,6 +4,7 @@ import PhotosUI
 /// The same native Form / menu Picker / section modifiers as EventBasicEditor.
 struct GiriEventEditor: View {
     @EnvironmentObject private var store: GiriStore
+    @EnvironmentObject private var navigation: GiriNavigation
     @Environment(\.dismiss) private var dismiss
     let event: GiriEvent?
     let onSaved: (() -> Void)?
@@ -81,6 +82,8 @@ struct GiriEventEditor: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(event != nil && isDirty)
         .toolbar(event == nil ? .hidden : .visible, for: .navigationBar)
+        .toolbarBackground(appHeaderColor, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
             if event != nil {
                 ToolbarItem(placement: .topBarLeading) {
@@ -143,10 +146,14 @@ struct GiriEventEditor: View {
                 }
             }
         }
-        .alert("入力を空にしますか？", isPresented: $showDiscard) {
+        .alert("入力内容を空にしますか？", isPresented: $showDiscard) {
             Button("キャンセル", role: .cancel) {}
             Button("空にする", role: .destructive) { loaded = false; load() }
-        } message: { Text("保存済みの記録は変更されません。") }
+        } message: { Text("現在入力している内容を空にします。保存済みの記録には影響しません。") }
+        // LiveStair と同じく、登録タブを続けて2回押すと入力内容を空にする確認を出す。
+        .onChange(of: navigation.registrationClearToken) { _, _ in
+            if event == nil && isDirty { showDiscard = true }
+        }
         .giriDiscardChangesAlert(isPresented: $showLeave) { dismiss() }
     }
 

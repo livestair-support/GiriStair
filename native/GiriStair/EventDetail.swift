@@ -54,7 +54,7 @@ struct GiriEventDetail: View {
         }
         .navigationTitle("詳細")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .toolbar {
             if let event {
                 // LiveDetailView と同じ並び：ほかの操作 → 削除 → 編集
@@ -485,7 +485,7 @@ struct GiriLiveTimingEditor: View {
             }.appEventDetailCardStyle(accentColor: AppSectionAccent.live)
         }.appEditorFormStyle()
             .navigationTitle("日程を編集").navigationBarTitleDisplayMode(.inline)
-            .toolbar(.visible, for: .navigationBar)
+            .giriNavigationBarStyle()
             .navigationBarBackButtonHidden(dirty)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

@@ -371,7 +371,7 @@ struct GiriThoughtsForSite: View {
             }.padding(.bottom, 24)
         }.background(appBackgroundColor).scrollDismissesKeyboard(.interactively)
             .navigationTitle(site?.name ?? "サイトの回答")
-            .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
+            .navigationBarTitleDisplayMode(.inline).giriNavigationBarStyle()
     }
 }
 
@@ -436,7 +436,7 @@ struct GiriThoughtsForEvent: View {
         }
         .background(appBackgroundColor).scrollDismissesKeyboard(.interactively)
         .navigationTitle("お題/回答").navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .sheet(item: $creating) { request in
             NavigationStack {
                 GiriThoughtEditor(kind: request.kind, eventID: request.eventID, roundID: request.roundID,
@@ -542,7 +542,7 @@ struct GiriThoughtsForPerson: View {
         .background(appBackgroundColor).scrollDismissesKeyboard(.interactively)
         .navigationTitle(role == .author ? "\(name)の作ったお題" : "\(name)の回答")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
     }
 
     private func answerCard(_ note: ThoughtNote) -> some View {
@@ -624,7 +624,7 @@ struct GiriRoundWorkspace: View {
     var body: some View {
         Form { GiriRoundWorkspaceSections(eventID: eventID, roundID: roundID) }
             .appEditorFormStyle().navigationTitle("お題/回答")
-            .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
+            .navigationBarTitleDisplayMode(.inline).giriNavigationBarStyle()
     }
 }
 
@@ -722,7 +722,7 @@ private struct GiriThoughtNotePage: View {
         .appEditorFormStyle()
         .navigationTitle(note?.kind == .prompts ? "お題" : note?.kind == .free ? "メモ" : "お題/回答")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .toolbar {
             if let note {
                 // LiveDetailView と同じ並び：共有 → 削除 → 編集
@@ -1065,7 +1065,7 @@ struct GiriThoughtEditor: View {
         .appEditorFormStyle().scrollDismissesKeyboard(.interactively)
         .environment(\.defaultMinListRowHeight, 48)
         .navigationTitle(draft.kind == .prompts ? "お題を作る" : draft.kind == .answers ? (isLong ? "回答を考える" : "お題・回答を記録") : "メモ")
-        .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
+        .navigationBarTitleDisplayMode(.inline).giriNavigationBarStyle()
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("キャンセル") { if isDirty { discard = true } else { dismiss() } }.disabled(readingImage)

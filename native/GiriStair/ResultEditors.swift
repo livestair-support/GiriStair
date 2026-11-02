@@ -120,7 +120,7 @@ struct GiriRoundEditor: View {
         .appEditorFormStyle()
         .navigationTitle("日程を編集")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .navigationBarBackButtonHidden(changed)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -195,7 +195,7 @@ struct GiriResultEntry: View {
         .appEditorFormStyle()
         .navigationTitle("結果を記録")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .navigationBarBackButtonHidden(changed)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -610,7 +610,7 @@ struct GiriStageEditor: View {
         .environment(\.defaultMinListRowHeight, 48)
         .navigationTitle(stage.name.isEmpty ? "段階" : stage.name)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .giriDeleteAlert(isStageWide ? "段階の記録を削除しますか？" : "この回の記録を削除しますか？", isPresented: $deleting,
                          message: "「\(stage.name)」の結果を削除します。お題と回答は残ります。保存すると確定します。") {
             // 親の editingStageID を外すと、この画面は自動で閉じる（dismiss を重ねない）。
@@ -775,7 +775,7 @@ struct GiriNextRoundEditor: View {
         .appEditorFormStyle()
         .navigationTitle(sameStage ? "次回を追加" : "次の段階を追加")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("キャンセル") { if changed { discardQuestion = true } else { dismiss() } }
@@ -864,7 +864,7 @@ struct GiriCycleResultEditor: View {
         .appEditorFormStyle()
         .navigationTitle("結果を記録")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .giriNavigationBarStyle()
         .navigationBarBackButtonHidden(changed)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {

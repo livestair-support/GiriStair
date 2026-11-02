@@ -36,6 +36,8 @@ final class GiriNavigation: ObservableObject {
     @Published var selectedTab = 1
     @Published var thoughtDestination: GiriThoughtDestination?
     @Published var listRequest: GiriListRequest?
+    /// 登録タブを続けて2回押した回数（LiveStair の registrationClearRequestToken）。
+    @Published var registrationClearToken = 0
 
     func openList(players: [String] = [], venue: String? = nil) {
         listRequest = GiriListRequest(players: players, venue: venue)

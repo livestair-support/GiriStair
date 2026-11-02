@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The shipping iPhone entry point. No Flutter engine or emulated controls.
 @main
@@ -109,6 +110,12 @@ private struct GiriRootView: View {
             NavigationStack { GiriSettingsView() }
                 .tabItem { Label("設定", systemImage: "gearshape.fill") }.tag(4)
         }
+        .background {
+            TabBarDoubleTapObserver(targetTabIndex: 0) {
+                navigation.registrationClearToken += 1
+            }
+            .frame(width: 0, height: 0)
+        }
     }
 
     private func synchronizeTheme() {
@@ -167,5 +174,385 @@ struct BrandWordmark: View {
     var body: some View {
         Image("BrandWordmark").resizable().scaledToFit()
             .accessibilityLabel("GiriStair")
+    }
+}
+
+// LiveStair ContentView.swift TabBarDoubleTapObserver（登録タブを続けて2回押すと、入力内容を空にする確認を出す）。
+struct TabBarDoubleTapObserver:
+    UIViewControllerRepresentable {
+    
+    let targetTabIndex: Int
+    let onDoubleTap: () -> Void
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            targetTabIndex:
+                targetTabIndex,
+            onDoubleTap:
+                onDoubleTap
+        )
+    }
+    
+    func makeUIViewController(
+        context: Context
+    ) -> ObserverViewController {
+        let controller =
+        ObserverViewController()
+        
+        controller.coordinator =
+        context.coordinator
+        
+        return controller
+    }
+    
+    func updateUIViewController(
+        _ uiViewController:
+        ObserverViewController,
+        context: Context
+    ) {
+        context.coordinator
+            .targetTabIndex =
+        targetTabIndex
+        
+        context.coordinator
+            .onDoubleTap =
+        onDoubleTap
+        
+        uiViewController.coordinator =
+        context.coordinator
+        
+        uiViewController
+            .attachToTabBarController()
+    }
+    
+    static func dismantleUIViewController(
+        _ uiViewController:
+        ObserverViewController,
+        coordinator: Coordinator
+    ) {
+        coordinator.uninstall()
+    }
+    
+    final class ObserverViewController:
+        UIViewController {
+        
+        weak var coordinator:
+        Coordinator?
+        
+        override func loadView() {
+            let transparentView =
+            UIView(frame: .zero)
+            
+            transparentView.backgroundColor =
+                .clear
+            
+            transparentView.isUserInteractionEnabled =
+            false
+            
+            view = transparentView
+        }
+        
+        override func viewDidAppear(
+            _ animated: Bool
+        ) {
+            super.viewDidAppear(animated)
+            
+            attachToTabBarController()
+        }
+        
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            
+            attachToTabBarController()
+        }
+        
+        func attachToTabBarController() {
+            DispatchQueue.main.async {
+                [weak self] in
+                
+                guard
+                    let self,
+                    let coordinator
+                else {
+                    return
+                }
+                
+                coordinator.installIfNeeded(
+                    from: self
+                )
+            }
+        }
+    }
+    
+    final class Coordinator:
+        NSObject,
+        UIGestureRecognizerDelegate {
+        
+        var targetTabIndex: Int
+        var onDoubleTap: () -> Void
+        
+        private weak var installedTabBar:
+        UITabBar?
+        
+        private var tapRecognizer:
+        UITapGestureRecognizer?
+        
+        private var lastTargetTapTime:
+        TimeInterval?
+        
+        private let maximumDoubleTapInterval:
+        TimeInterval = 0.55
+        
+        init(
+            targetTabIndex: Int,
+            onDoubleTap:
+            @escaping () -> Void
+        ) {
+            self.targetTabIndex =
+            targetTabIndex
+            
+            self.onDoubleTap =
+            onDoubleTap
+        }
+        
+        func installIfNeeded(
+            from controller:
+            UIViewController
+        ) {
+            guard let tabBarController =
+                    findTabBarController(
+                        from: controller
+                    )
+            else {
+                return
+            }
+            
+            let tabBar =
+            tabBarController.tabBar
+            
+            if installedTabBar === tabBar,
+               tapRecognizer != nil {
+                return
+            }
+            
+            uninstall()
+            
+            let recognizer =
+            UITapGestureRecognizer(
+                target: self,
+                action:
+                    #selector(
+                        handleTabBarTap(
+                            _:
+                        )
+                    )
+            )
+            
+            recognizer.numberOfTapsRequired =
+            1
+            
+            recognizer.numberOfTouchesRequired =
+            1
+            
+            recognizer.cancelsTouchesInView =
+            false
+            
+            recognizer.delaysTouchesBegan =
+            false
+            
+            recognizer.delaysTouchesEnded =
+            false
+            
+            recognizer.delegate =
+            self
+            
+            tabBar.addGestureRecognizer(
+                recognizer
+            )
+            
+            installedTabBar =
+            tabBar
+            
+            tapRecognizer =
+            recognizer
+        }
+        
+        func uninstall() {
+            if let recognizer =
+                tapRecognizer {
+                
+                installedTabBar?
+                    .removeGestureRecognizer(
+                        recognizer
+                    )
+            }
+            
+            tapRecognizer =
+            nil
+            
+            installedTabBar =
+            nil
+            
+            lastTargetTapTime =
+            nil
+        }
+        
+        @objc
+        private func handleTabBarTap(
+            _ recognizer:
+            UITapGestureRecognizer
+        ) {
+            guard recognizer.state ==
+                .ended
+            else {
+                return
+            }
+            
+            DispatchQueue.main.async {
+                [weak self] in
+                
+                guard
+                    let self,
+                    let tabBar =
+                        self.installedTabBar,
+                    let items =
+                        tabBar.items,
+                    items.indices.contains(
+                        self.targetTabIndex
+                    )
+                else {
+                    return
+                }
+                
+                let targetItem =
+                items[
+                    self.targetTabIndex
+                ]
+                
+                guard tabBar.selectedItem ===
+                        targetItem
+                else {
+                    self.lastTargetTapTime =
+                    nil
+                    
+                    return
+                }
+                
+                let currentTime =
+                ProcessInfo
+                    .processInfo
+                    .systemUptime
+                
+                if let previousTime =
+                    self.lastTargetTapTime,
+                   currentTime -
+                    previousTime <=
+                    self.maximumDoubleTapInterval {
+                    
+                    self.lastTargetTapTime =
+                    nil
+                    
+                    self.onDoubleTap()
+                    
+                } else {
+                    self.lastTargetTapTime =
+                    currentTime
+                }
+            }
+        }
+        
+        func gestureRecognizer(
+            _ gestureRecognizer:
+            UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith
+            otherGestureRecognizer:
+            UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
+        
+        private func findTabBarController(
+            from controller:
+            UIViewController
+        ) -> UITabBarController? {
+            var current:
+            UIViewController? =
+            controller
+            
+            while let currentController =
+                    current {
+                
+                if let tabBarController =
+                    currentController
+                    as? UITabBarController {
+                    
+                    return tabBarController
+                }
+                
+                if let tabBarController =
+                    currentController
+                    .tabBarController {
+                    
+                    return tabBarController
+                }
+                
+                current =
+                currentController.parent
+            }
+            
+            guard let rootController =
+                    controller
+                .viewIfLoaded?
+                .window?
+                .rootViewController
+            else {
+                return nil
+            }
+            
+            return findTabBarControllerInHierarchy(
+                rootController
+            )
+        }
+        
+        private func findTabBarControllerInHierarchy(
+            _ controller:
+            UIViewController
+        ) -> UITabBarController? {
+            if let tabBarController =
+                controller
+                as? UITabBarController {
+                
+                return tabBarController
+            }
+            
+            for child in
+                    controller.children {
+                
+                if let found =
+                    findTabBarControllerInHierarchy(
+                        child
+                    ) {
+                    
+                    return found
+                }
+            }
+            
+            if let presentedController =
+                controller
+                .presentedViewController,
+               let found =
+                findTabBarControllerInHierarchy(
+                    presentedController
+                ) {
+                
+                return found
+            }
+            
+            return nil
+        }
+        
+        deinit {
+            uninstall()
+        }
     }
 }
