@@ -103,6 +103,8 @@ struct GiriEventEditor: View {
         }
         .interactiveDismissDisabled(isDirty)
         .onAppear { if !loaded { load() } }
+        // 編集中に別のタブから別の記録を開いても、この入力を黙って閉じない。
+        .onChange(of: isDirty) { _, dirty in if let event { navigation.markEditor(event.id, unsaved: dirty) } }
         .onChange(of: draft.organizer) { _, next in
             if next != lastOrganizer { lastOrganizer = next; syncSelf() }
         }
@@ -154,7 +156,10 @@ struct GiriEventEditor: View {
         .onChange(of: navigation.registrationClearToken) { _, _ in
             if event == nil && isDirty { showDiscard = true }
         }
-        .giriDiscardChangesAlert(isPresented: $showLeave) { dismiss() }
+        .giriDiscardChangesAlert(isPresented: $showLeave) {
+            if let event { navigation.markEditor(event.id, unsaved: false) }
+            dismiss()
+        }
     }
 
     private var saveHeaderButton: some View {
@@ -187,6 +192,21 @@ struct GiriEventEditor: View {
                 Text("通常").tag(MeetingType.casual)
                 Text("大会").tag(MeetingType.tournament)
             } label: { GiriEditorLabel("会の種類") }.pickerStyle(.menu).tint(.primary)
+            // 大会は生・ネットを問わず、ここで個人戦／チーム戦と人数を選ぶ（結果入力もこれに合わせる）。
+            if draft.meetingType == .tournament {
+                Picker(selection: $draft.tournamentFormat) {
+                    Text("個人戦").tag(TournamentFormat.individual)
+                    Text("チーム戦").tag(TournamentFormat.team)
+                    if draft.tournamentFormat == .pair { Text("タッグ戦").tag(TournamentFormat.pair) }
+                } label: { GiriEditorLabel("参加形式") }.pickerStyle(.menu).tint(.primary)
+                if draft.tournamentFormat != .individual {
+                    Picker(selection: Binding(get: { fixedTeamSize ?? 0 }, set: changeTeamSize)) {
+                        Text("制限なし").tag(0)
+                        ForEach(2...6, id: \.self) { Text("\($0)人").tag($0) }
+                        if let size = draft.teamSize, size > 6 { Text("\(size)人").tag(size) }
+                    } label: { GiriEditorLabel("チーム人数") }.pickerStyle(.menu).tint(.primary)
+                }
+            }
             if !isSite {
                 Picker(selection: participationChoice) {
                     Text("参加").tag("participating")
@@ -273,22 +293,8 @@ struct GiriEventEditor: View {
             .contentShape(Rectangle())
     }
 
+    /// 参加形式とチーム人数は基本情報で選ぶ。チーム戦の時だけ、自分のチームと他のチームを入れる。
     @ViewBuilder private var teamSections: some View {
-        Section {
-            GiriEventCardSectionTitle(title: "大会の形式", systemImage: "person.2", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
-            Picker("参加形式", selection: $draft.tournamentFormat) {
-                Text("個人戦").tag(TournamentFormat.individual)
-                Text("チーム戦").tag(TournamentFormat.team)
-                if draft.tournamentFormat == .pair { Text("タッグ戦").tag(TournamentFormat.pair) }
-            }.pickerStyle(.menu).tint(.primary)
-            if draft.tournamentFormat != .individual {
-                Picker("チーム人数", selection: Binding(get: { fixedTeamSize ?? 0 }, set: changeTeamSize)) {
-                    Text("制限なし").tag(0)
-                    ForEach(2...6, id: \.self) { Text("\($0)人").tag($0) }
-                    if let size = draft.teamSize, size > 6 { Text("\(size)人").tag(size) }
-                }.pickerStyle(.menu).tint(.primary)
-            }
-        }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
         if draft.tournamentFormat != .individual {
             ForEach(orderedTeamIndices, id: \.self) { index in
                 Section {
@@ -512,7 +518,7 @@ struct GiriEventEditor: View {
                 try store.saveEvent(candidate)
             }
             playLiveStairSaveFeedback()
-            if event != nil { dismiss() } else { loaded = false; load(); onSaved?() }
+            if let event { navigation.markEditor(event.id, unsaved: false); dismiss() } else { loaded = false; load(); onSaved?() }
         } catch { store.errorMessage = error.localizedDescription }
     }
 }

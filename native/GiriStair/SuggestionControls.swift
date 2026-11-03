@@ -75,6 +75,8 @@ struct GiriPlayerSuggestionField: View {
     var organizer = false
     var showsLabel = false
     var textAlignment: TextAlignment = .leading
+    /// この会で入力済みの名前（参加者・チームのメンバーなど）。先頭に出し、空欄でも選べる。
+    var priorityNames: [String] = []
     @State private var cachedNames: [String] = []
     @State private var cachedReadings: [String: [String]] = [:]
 
@@ -86,9 +88,11 @@ struct GiriPlayerSuggestionField: View {
             }
             GiriSuggestionTextField(placeholder: title, text: $text,
                 suggestions: cachedNames, textAlignment: textAlignment,
-                suggestionSearchTexts: cachedReadings)
+                suggestionSearchTexts: cachedReadings,
+                showsAllSuggestionsWhenEmpty: !priorityNames.isEmpty)
         }
         .onAppear(perform: rebuild)
+        .onChange(of: priorityNames) { _, _ in rebuild() }
         .onReceive(store.objectWillChange) { _ in
             // objectWillChange precedes the durable document assignment.
             DispatchQueue.main.async { rebuild() }
@@ -121,7 +125,30 @@ struct GiriPlayerSuggestionField: View {
                 return playerSearchKey(first.furigana.isEmpty ? first.name : first.furigana) < playerSearchKey(second.furigana.isEmpty ? second.name : second.furigana)
             }.map(\.name)
         }
+        if !priorityNames.isEmpty {
+            var seen = Set<String>()
+            let first = priorityNames.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+            cachedNames = first + cachedNames.filter { !seen.contains(playerSearchKey($0)) }
+        }
         cachedReadings = Dictionary(profiles.map { ($0.name, $0.furigana.isEmpty ? [] : [$0.furigana]) }, uniquingKeysWith: { first, _ in first })
+    }
+}
+
+/// チーム名の入力。左に項目名、右に入力（ライブ登録の会場名と同じ形）。
+/// この大会で登録したチームを先に出し、空欄のままでも選べる。
+struct GiriTeamNameField: View {
+    @Binding var text: String
+    let suggestions: [String]
+    var showsSuggestionsWhenEmpty = false
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("チーム名").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                .fixedSize().padding(.top, 2)
+            GiriSuggestionTextField(placeholder: "チーム名", text: $text,
+                suggestions: suggestions, textAlignment: .trailing,
+                showsAllSuggestionsWhenEmpty: showsSuggestionsWhenEmpty)
+        }
     }
 }
 

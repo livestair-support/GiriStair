@@ -717,6 +717,27 @@ struct DomainRegression {
             try check(try GiriJSON.decode(simpleStore.exportBackup()) == simpleStore.document, "skip, pause and season numbers roundtrip in schema one")
         }
 
+        // 0.10 tournaments: the registration's individual / team choice drives
+        // result entry, and names already entered for the event come first.
+        do {
+            var formatEvent = GiriEvent(title: "チーム大会")
+            formatEvent.meetingType = .tournament
+            try check(giriTournamentFormatText(formatEvent) == "個人戦", "a tournament defaults to individual entry")
+            formatEvent.tournamentFormat = .team
+            try check(giriTournamentFormatText(formatEvent) == "チーム戦", "a team tournament without a size says only team")
+            formatEvent.teamSize = 3
+            try check(giriTournamentFormatText(formatEvent) == "チーム戦（3人）", "the team size follows the registration")
+            formatEvent.tournamentFormat = .pair
+            try check(giriTournamentFormatText(formatEvent) == "タッグ戦（2人）", "legacy pair tournaments stay readable")
+            formatEvent.participants = ["やまだ", " 佐藤 ", ""]
+            var mine = GiriTeam(); mine.name = "自分たち"; mine.members = ["自分", "ヤマダ"]; mine.isMine = true
+            var rival = GiriTeam(); rival.name = "相手"; rival.members = ["鈴木", "佐藤"]
+            formatEvent.teams = [mine, rival]
+            var podium = TournamentStanding(); podium.playerNames = ["高橋", "鈴木"]
+            formatEvent.standings = [podium]
+            try check(formatEvent.enteredPlayerNames == ["やまだ", "佐藤", "自分", "鈴木", "高橋"], "entered names keep the event's order once each by reading")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

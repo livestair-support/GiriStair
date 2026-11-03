@@ -43,7 +43,6 @@ private struct GiriRootView: View {
     @EnvironmentObject private var navigation: GiriNavigation
     @Environment(\.scenePhase) private var scenePhase
     @State private var pendingResult: GiriEvent?
-    @State private var resultEditor: GiriEvent?
 
     var body: some View {
         Group {
@@ -73,11 +72,12 @@ private struct GiriRootView: View {
         }
         .alert("大会の結果を残しますか？", isPresented: Binding(get: { pendingResult != nil }, set: { if !$0 { pendingResult = nil } })) {
             Button("後で", role: .cancel) { pendingResult = nil }
-            Button("入力する") { resultEditor = pendingResult; pendingResult = nil }
+            Button("入力する") {
+                // 結果入力は戦績タブで開く。
+                if let event = pendingResult { navigation.openResultEntry(event.id) }
+                pendingResult = nil
+            }
         } message: { Text(pendingResult?.title ?? "") }
-        .sheet(item: $resultEditor) { event in
-            NavigationStack { GiriResultEntry(eventID: event.id) }
-        }
         .task {
             synchronizeTheme()
             if store.loaded { store.run { try store.ensureCurrentSiteCycles() } }
@@ -128,7 +128,7 @@ private struct GiriRootView: View {
     private func promptForResult() {
         guard store.loaded, store.preferences.onboardingCompleted,
               !store.preferences.hasShownInitialResultPrompt,
-              pendingResult == nil, resultEditor == nil else { return }
+              pendingResult == nil else { return }
         let now = Date()
         let candidate = store.events.filter { event in
             event.eventFormat == .live && event.meetingType == .tournament &&

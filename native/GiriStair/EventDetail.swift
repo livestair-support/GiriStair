@@ -10,7 +10,6 @@ struct GiriEventDetail: View {
     @State private var deleteQuestion = false
     @State private var showResultPrompt = false
     @State private var promptRoundID: String?
-    @State private var showResultEditor = false
     @State private var showCycleEditor = false
     @State private var nextDraft: GiriRoundDraftAction?
 
@@ -86,12 +85,9 @@ struct GiriEventDetail: View {
             Button("後で", role: .cancel) {}
             Button("入力する") {
                 if event?.meetingType == .casual && event?.onlineSiteId != nil { showCycleEditor = true }
-                else { showResultEditor = true }
+                else { navigation.openResultEntry(eventID, roundID: promptRoundID) }
             }
         } message: { Text(resultPromptMessage) }
-        .sheet(isPresented: $showResultEditor) {
-            NavigationStack { GiriResultEntry(eventID: eventID, initialRoundID: promptRoundID) }
-        }
         .sheet(isPresented: $showCycleEditor) { NavigationStack { GiriCycleResultEditor(eventID: eventID) } }
         .sheet(item: $nextDraft) { action in
             NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
@@ -103,6 +99,9 @@ struct GiriEventDetail: View {
             GiriEventCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live).listRowSeparator(.hidden)
             detailValue("形式", event.eventFormat.title)
             detailValue("会の種類", event.meetingType.title)
+            if event.meetingType == .tournament {
+                detailValue("参加形式", giriTournamentFormatText(event))
+            }
             if !event.isActualParticipant && event.status != .canceled {
                 Button {
                     guard var current = self.event else { return }
@@ -239,7 +238,9 @@ struct GiriEventDetail: View {
         Section {
             HStack {
                 GiriEventCardSectionTitle(title: "自分の結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket)
-                NavigationLink { GiriResultEntry(eventID: eventID) } label: { Text(event.hasRecordedResult ? "編集" : "記録").font(.subheadline) }
+                // 結果入力は戦績タブで開く（この詳細は一覧タブに残る）。
+                Button { navigation.openResultEntry(eventID) } label: { Text(event.hasRecordedResult ? "編集" : "記録").font(.subheadline) }
+                    .buttonStyle(.borderless)
                     .tint(accentActionColor)
             }.listRowSeparator(.hidden)
             if event.hasFinalResult {
@@ -251,7 +252,8 @@ struct GiriEventDetail: View {
             if let result = event.tournamentResult, !result.memo.isEmpty { Text(result.memo).textSelection(.enabled) }
             else if !event.resultText.isEmpty { Text(event.resultText).textSelection(.enabled) }
             ForEach(event.tournamentResult?.stages ?? []) { stage in
-                NavigationLink { GiriResultEntry(eventID: eventID, initialRoundID: stage.roundId, initialStageID: stage.id) } label: {
+                Button { navigation.openResultEntry(eventID, roundID: stage.roundId, stageID: stage.id) } label: {
+                    HStack(alignment: .center, spacing: 8) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(stage.name).font(.headline).foregroundStyle(.primary)
                         let format = [stage.group, stage.lineup, stage.judging].filter { !$0.isEmpty }
@@ -268,7 +270,11 @@ struct GiriEventDetail: View {
                         }
                         if !stage.memo.isEmpty { Text(stage.memo).font(.subheadline).foregroundStyle(.secondary) }
                     }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                    }.contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
         if !event.standings.isEmpty {
@@ -365,13 +371,15 @@ struct GiriEventDetail: View {
                 Label("この回のお題/回答を開く", systemImage: "lightbulb")
             }.tint(accentActionColor)
             if event.meetingType == .tournament {
-                NavigationLink { GiriResultEntry(eventID: eventID, initialRoundID: round.id) } label: {
+                Button { navigation.openResultEntry(eventID, roundID: round.id) } label: {
                     HStack {
-                        Text("この回の結果")
+                        Text("この回の結果").foregroundStyle(.primary)
                         Spacer()
                         Text(roundResult(event, round: round)).foregroundStyle(.secondary)
-                    }
+                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                    }.contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
     }

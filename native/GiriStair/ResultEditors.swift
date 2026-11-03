@@ -185,9 +185,10 @@ struct GiriResultEntry: View {
     var body: some View {
         Form {
             if let event {
+                eventSection(event)
                 stageListSection(event)
                 finalSection(event)
-                standingSections
+                standingSections(event)
             } else {
                 Text("この会は削除されています。").foregroundStyle(.secondary)
             }
@@ -204,11 +205,13 @@ struct GiriResultEntry: View {
             ToolbarItem(placement: .confirmationAction) { Button("保存", action: requestSave).disabled(event == nil) }
         }
         .onAppear { if !loaded { load() } }
+        .onChange(of: changed) { _, value in navigation.markResultEntry(eventID, unsaved: value) }
         .interactiveDismissDisabled(changed)
         .navigationDestination(item: $editingStageID) { id in
             if let event {
                 GiriStageEditor(event: event, stage: stageBinding(id), answerNotes: $answerNotes,
                                 team: result.format != .individual,
+                                namePriority: otherPlayerNames(event),
                                 onDelete: {
                                     existing.remove(id)
                                     result.stages.removeAll { $0.id == id }
@@ -221,7 +224,10 @@ struct GiriResultEntry: View {
             Button("投票だけにする") { save(votingOnly: true) }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("以後の投稿を止め、必要な投票の日程と通知を残しますか？") }
-        .giriDiscardChangesAlert(isPresented: $leave) { dismiss() }
+        .giriDiscardChangesAlert(isPresented: $leave) {
+            navigation.markResultEntry(eventID, unsaved: false)
+            dismiss()
+        }
         .alert("通過後の日程を追加しますか？", isPresented: $advanceQuestion) {
             Button("次の段階を追加") { nextDraft = .nextStage }
             Button("同じ段階の次回を追加") { nextDraft = .sameStage }
@@ -230,6 +236,38 @@ struct GiriResultEntry: View {
         .sheet(item: $nextDraft, onDismiss: { if resultSaved { dismiss() } }) { action in
             NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
         }
+    }
+
+    /// どの大会の結果かを示し、一覧タブの詳細へ移れるようにする（結果入力は戦績タブに残る）。
+    private func eventSection(_ event: GiriEvent) -> some View {
+        Section {
+            AppCardSectionTitle(title: "大会", systemImage: "flag.checkered", accentColor: AppSectionAccent.live)
+                .listRowSeparator(.hidden)
+            Button { navigation.openEventDetail(eventID) } label: {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(event.title).font(.headline).foregroundStyle(.primary).multilineTextAlignment(.leading)
+                        Text(eventSubtitle(event)).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Text("詳細").font(.subheadline.weight(.semibold)).foregroundStyle(accentActionColor)
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                }.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(event.title)の詳細を開く")
+        }.appSectionCardStyle(accentColor: AppSectionAccent.live)
+    }
+
+    private func eventSubtitle(_ event: GiriEvent) -> String {
+        var values = [event.eventFormat.title, giriTournamentFormatText(event)]
+        if let date = GiriEventPresentation.date(event) { values.append(GiriDateText.day(date)) }
+        return values.joined(separator: "・")
+    }
+
+    /// この大会で入力済みの名前（自分以外）。上位成績・対戦相手の候補に先に出す。
+    private func otherPlayerNames(_ event: GiriEvent) -> [String] {
+        event.enteredPlayerNames.filter { !store.preferences.isSelf($0) }
     }
 
     /// 段階（予選・本戦…）を上から並べ、ネットの各回はその段階の下に出す。
@@ -345,7 +383,8 @@ struct GiriResultEntry: View {
             }
             if result.format != .individual {
                 TextField("自分のチーム名", text: $result.teamName)
-                GiriNamesField(title: "チームメンバー", names: $result.members)
+                GiriNamesField(title: "チームメンバー", names: $result.members,
+                               priorityNames: event.teams.first(where: { $0.id == event.myTeamId || $0.isMine })?.members ?? [])
             }
             TextField("結果のメモ", text: $result.memo, axis: .vertical).lineLimit(3...10)
         }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
@@ -357,7 +396,10 @@ struct GiriResultEntry: View {
         return copy.eliminationTitle
     }
 
-    @ViewBuilder private var standingSections: some View {
+    /// 大会の上位成績。登録の参加形式に合わせ、個人戦はプレイヤー名、チーム戦はチーム名とメンバー。
+    /// 名前は、この大会で入力済みの参加者・チームから先に選べる。
+    @ViewBuilder private func standingSections(_ event: GiriEvent) -> some View {
+        let isTeam = result.format != .individual
         ForEach(standings.indices, id: \.self) { index in
             Section {
                 HStack {
@@ -365,8 +407,13 @@ struct GiriResultEntry: View {
                     Button(role: .destructive) { standings.remove(at: index) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
                 }.listRowSeparator(.hidden)
                 Stepper("\(standings[index].placement)位", value: $standings[index].placement, in: 1...9999)
-                TextField("チーム名（任意）", text: $standings[index].teamName)
-                GiriNamesField(title: "プレイヤー名", names: $standings[index].playerNames)
+                if isTeam || !standings[index].teamName.isEmpty {
+                    GiriTeamNameField(text: standingTeamBinding(index, event: event),
+                                      suggestions: teamNameSuggestions(event),
+                                      showsSuggestionsWhenEmpty: !event.teams.isEmpty)
+                }
+                GiriNamesField(title: isTeam ? "メンバー" : "プレイヤー名", names: $standings[index].playerNames,
+                               priorityNames: standingNamePriority(index, event: event))
                 TextField("メモ", text: $standings[index].memo, axis: .vertical).lineLimit(1...5)
             }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
         }
@@ -374,15 +421,51 @@ struct GiriResultEntry: View {
             Button {
                 var standing = TournamentStanding()
                 standing.placement = (standings.map(\.placement).max() ?? 0) + 1
+                // 個人戦は名前の欄を1つ開いておく（チーム戦はチーム名を選ぶとメンバーが入る）。
+                standing.playerNames = isTeam ? [] : [""]
                 standings.append(standing)
-            } label: { Label("優勝・準優勝などを追加", systemImage: "plus.circle") }
+            } label: { Label(isTeam ? "優勝・準優勝などのチームを追加" : "優勝・準優勝などを追加", systemImage: "plus.circle") }
         }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
+    /// この大会のチームを先に、ほかの大会で入れたチーム名を後に出す。
+    private func teamNameSuggestions(_ event: GiriEvent) -> [String] {
+        var seen = Set<String>()
+        let own = event.teams.map(\.name)
+        let others = store.events.filter { $0.id != event.id }.flatMap { $0.teams.map(\.name) + $0.standings.map(\.teamName) }
+        return (own + others).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    }
+
+    /// 登録したチームを選んだら、空のメンバー欄にそのチームのメンバーを入れる（入力済みの名前は消さない）。
+    private func standingTeamBinding(_ index: Int, event: GiriEvent) -> Binding<String> {
+        Binding(get: { standings.indices.contains(index) ? standings[index].teamName : "" }, set: { value in
+            guard standings.indices.contains(index) else { return }
+            standings[index].teamName = value
+            let key = playerSearchKey(value)
+            guard !key.isEmpty,
+                  standings[index].playerNames.allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+                  let team = event.teams.first(where: { playerSearchKey($0.name) == key }) else { return }
+            let members = team.members.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if !members.isEmpty { standings[index].playerNames = members }
+        })
+    }
+
+    /// 名前の候補：選んだチームのメンバー → この大会のほかの名前。ほかの順位に入れた名前は後回し。
+    private func standingNamePriority(_ index: Int, event: GiriEvent) -> [String] {
+        guard standings.indices.contains(index) else { return [] }
+        let teamKey = playerSearchKey(standings[index].teamName)
+        let teamMembers = teamKey.isEmpty ? [] : (event.teams.first { playerSearchKey($0.name) == teamKey }?.members ?? [])
+        let usedElsewhere = Set(standings.enumerated().filter { $0.offset != index }.flatMap { $0.element.playerNames }.map(playerSearchKey))
+        return teamMembers + event.enteredPlayerNames.filter { !usedElsewhere.contains(playerSearchKey($0)) }
     }
 
     private func load() {
         guard let event else { return }
         result = event.tournamentResult ?? TournamentResult()
-        if event.tournamentFormat != .individual || event.tournamentResult == nil {
+        // 登録の参加形式に合わせる。チーム名・メンバーが入った旧データだけはチームの入力を残す。
+        let legacyTeam = event.tournamentResult.map { $0.format != .individual && (!$0.members.isEmpty || !$0.teamName.isEmpty) } ?? false
+        if event.tournamentFormat != .individual || !legacyTeam {
             result.format = event.tournamentFormat
         }
         if result.memo.isEmpty { result.memo = event.resultText }
@@ -471,6 +554,7 @@ struct GiriResultEntry: View {
             }
             let notes = mergedAnswerResults()
             try store.saveResult(event: event, notes: notes)
+            navigation.markResultEntry(eventID, unsaved: false)
             playLiveStairSaveFeedback()
             resultSaved = true
             if shouldOfferNextRound(event) { advanceQuestion = true }
@@ -527,6 +611,8 @@ struct GiriStageEditor: View {
     @Binding var stage: ResultStage
     @Binding var answerNotes: [ThoughtNote]
     var team = false
+    /// この大会で入力済みの名前（自分以外）。対戦相手の候補に先に出す。
+    var namePriority: [String] = []
     let onDelete: () -> Void
     @State private var deleting = false
 
@@ -560,7 +646,7 @@ struct GiriStageEditor: View {
                     textRow("組", placeholder: "Aブロックなど", text: $stage.group)
                     presetRow("形式", placeholder: "横並び5人など", text: $stage.lineup, presets: Self.lineups)
                     presetRow("審査方法", placeholder: "挙手・加点など", text: $stage.judging, presets: Self.judgings)
-                    GiriNamesField(title: "同じ組の人・対戦相手（任意）", names: $stage.opponents)
+                    GiriNamesField(title: "同じ組の人・対戦相手（任意）", names: $stage.opponents, priorityNames: namePriority)
                 }
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
 
@@ -719,6 +805,8 @@ struct GiriIntegerField: View {
 struct GiriNamesField: View {
     let title: String
     @Binding var names: [String]
+    /// この会で入力済みの名前。先頭に候補として出す（同じ欄に入っている名前は除く）。
+    var priorityNames: [String] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -729,7 +817,7 @@ struct GiriNamesField: View {
                         names.indices.contains(index) ? names[index] : ""
                     }, set: { value in
                         if names.indices.contains(index) { names[index] = value }
-                    }))
+                    }), priorityNames: unusedPriorityNames)
                     Button(role: .destructive) {
                         if names.indices.contains(index) { names.remove(at: index) }
                     } label: { Image(systemName: "minus.circle") }
@@ -739,6 +827,11 @@ struct GiriNamesField: View {
             Button { names.append("") } label: { Label("名前を追加", systemImage: "plus.circle") }
                 .buttonStyle(.borderless).tint(accentActionColor)
         }
+    }
+
+    private var unusedPriorityNames: [String] {
+        let used = Set(names.map(playerSearchKey))
+        return priorityNames.filter { !used.contains(playerSearchKey($0)) }
     }
 }
 

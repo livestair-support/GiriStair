@@ -144,8 +144,10 @@ struct GiriListView: View {
                 didInitializeFormat = true
             }
             consumeListRequest()
+            consumeDetailRequest()
         }
         .onChange(of: navigation.listRequest) { _, _ in consumeListRequest() }
+        .onChange(of: navigation.detailRequest) { _, _ in consumeDetailRequest() }
         .onChange(of: store.preferences.visibleFormatOrder) { previous, next in
             if selectedFormat == previous.first || !next.contains(selectedFormat) {
                 selectedFormat = next.first ?? .live
@@ -363,6 +365,18 @@ struct GiriListView: View {
         .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+    /// 戦績タブの結果入力などから、この一覧タブで詳細を開く。編集中の内容は消さない。
+    private func consumeDetailRequest() {
+        guard let request = navigation.detailRequest else { return }
+        navigation.detailRequest = nil
+        guard destinationID != request.eventID else { return }
+        if let editing = navigation.unsavedEditorEventID, editing != request.eventID {
+            store.errorMessage = "編集中の内容があります。保存するか破棄してから、もう一度開いてください。"
+            return
+        }
+        closePlayerDropdown()
+        destinationID = request.eventID
     }
     /// プレイヤー・会場詳細のショートカット。並び順の左から、該当する記録がある形式を開く。
     private func consumeListRequest() {

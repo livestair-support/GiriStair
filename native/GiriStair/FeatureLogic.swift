@@ -425,3 +425,24 @@ func giriIsOtherPlacement(_ event: GiriEvent) -> Bool {
     guard rank != 1, rank != 2, !event.isThirdPlace, !event.isBest(4) else { return false }
     return (rank ?? 0) > 3 || event.tournamentResult?.outcome == .placed
 }
+
+/// 大会の参加形式（「個人戦」「チーム戦（3人）」）。登録の基本情報と同じ値を詳細・結果入力で使う。
+func giriTournamentFormatText(_ event: GiriEvent) -> String {
+    switch event.tournamentFormat {
+    case .individual: return "個人戦"
+    case .pair: return "タッグ戦（2人）"
+    case .team:
+        guard let size = event.teamSize else { return "チーム戦" }
+        return "チーム戦（\(size)人）"
+    }
+}
+
+extension GiriEvent {
+    /// この会で入力済みの名前（参加者・チームのメンバー・上位成績）。結果入力の候補に先に出す。
+    var enteredPlayerNames: [String] {
+        var seen = Set<String>()
+        return (participants + teams.flatMap(\.members) + standings.flatMap(\.playerNames))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    }
+}
