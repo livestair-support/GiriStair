@@ -89,7 +89,10 @@ struct GiriListView: View {
             return (ascending ?? !attended) ? ad < bd : ad > bd
         }
     }
-    private var visibleSites: [OnlineSite] {
+    private var visibleSites: [OnlineSite] { monitoredSites.filter { !$0.isPaused } }
+    /// しばらく休んでいるサイト。カードは出さず、一覧の下に件数と戻り道だけを出す。
+    private var pausedSites: [OnlineSite] { monitoredSites.filter(\.isPaused) }
+    private var monitoredSites: [OnlineSite] {
         guard selectedFormat == .onlineLong, !attended, meeting != "tournament", status == "all", year == "all", stage == "all" else { return [] }
         return store.onlineSites.filter { record in
             record.format == selectedFormat && (site == "all" || site == record.id) &&
@@ -176,6 +179,21 @@ struct GiriListView: View {
                     .listRowInsets(EdgeInsets(top: record.id == visibleSites.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
                     .listRowSeparator(.hidden).listRowBackground(Color.clear)
             }
+            if !pausedSites.isEmpty {
+                NavigationLink { GiriSitesView() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "pause.circle").foregroundStyle(.secondary)
+                        Text("休止中のサイト \(pausedSites.count)件").font(.subheadline).foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Text("再開").font(.subheadline.weight(.semibold)).foregroundStyle(accentActionColor)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .appTintedCard(accentColor: AppSectionAccent.memo)
+                }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets(top: 4, leading: 18, bottom: 6, trailing: 18))
+                .listRowSeparator(.hidden).listRowBackground(Color.clear)
+            }
             ForEach(eventCards) { event in
                 Button { destinationID = event.id } label: { GiriEventCard(event: event) }
                     .buttonStyle(.plain)
@@ -193,7 +211,7 @@ struct GiriListView: View {
         .listStyle(.plain).scrollContentBackground(.hidden)
         .contentMargins(.bottom, 104, for: .scrollContent).scrollIndicators(.hidden)
         .overlay {
-            if eventCards.isEmpty && visibleSites.isEmpty {
+            if eventCards.isEmpty && visibleSites.isEmpty && pausedSites.isEmpty {
                 CenteredEmptyMessage(systemImage: "calendar.badge.exclamationmark", title: searchableEvents.isEmpty ? "記録がありません" : "該当する記録がありません")
                     .allowsHitTesting(false)
             }

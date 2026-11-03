@@ -53,7 +53,7 @@ enum GiriNavigationTestSeed {
             try store.saveEvent(completed)
             }
             if !ProcessInfo.processInfo.arguments.contains("--uitest-without-sites") {
-            var site = OnlineSite(name: "大喜利天文台", recurrence: .weekly)
+            var site = OnlineSite(name: "週替わりのサイト", recurrence: .weekly)
             site.hasAffiliations = true
             site.affiliation = "一部"
             // Match the user's 0.6 configuration: the current absolute round

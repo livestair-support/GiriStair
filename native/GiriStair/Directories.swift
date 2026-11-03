@@ -50,7 +50,14 @@ struct GiriSitesView: View {
                             HStack(spacing: 12) {
                                 AppIndexItemBadge(systemImage: "globe", color: AppSectionAccent.artist)
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(site.name).font(.headline.weight(.semibold)).lineLimit(1)
+                                    HStack(spacing: 6) {
+                                        Text(site.name).font(.headline.weight(.semibold)).lineLimit(1)
+                                        if site.isPaused {
+                                            Text("休止中").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                                                .padding(.horizontal, 7).padding(.vertical, 3)
+                                                .background(Color.secondary.opacity(0.12)).clipShape(Capsule())
+                                        }
+                                    }
                                     let labels = [site.hasAffiliations ? siteLeague(site) : "", site.block].filter { !$0.isEmpty }
                                     if !labels.isEmpty { Text(labels.joined(separator: "・")).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
                                 }.layoutPriority(1)
@@ -83,8 +90,9 @@ struct GiriSiteDetail: View {
     @State private var timelineStart = Date()
 
     private var site: OnlineSite? { store.onlineSites.first { $0.id == siteID } }
+    // 参加した回と、見送りにした回（見送りは参加回数・成績に数えない）。
     private var history: [GiriEvent] {
-        store.events.filter { $0.onlineSiteId == siteID && $0.isActualParticipant }
+        store.events.filter { $0.onlineSiteId == siteID && ($0.isActualParticipant || $0.siteSkipped) }
             .sorted { ($0.participationStartDate ?? $0.createdAt) > ($1.participationStartDate ?? $1.createdAt) }
     }
     private var seasonGroups: [GiriSiteSeasonGroup] {
@@ -138,7 +146,23 @@ struct GiriSiteDetail: View {
         .navigationTitle("サイト詳細").navigationBarTitleDisplayMode(.inline)
         .giriNavigationBarStyle()
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            // LiveDetailView と同じ並び：ほかの操作 → 削除
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if let site {
+                    Menu {
+                        Button(site.isPaused ? "参加を再開する" : "しばらく休む", systemImage: site.isPaused ? "play.circle" : "pause.circle") {
+                            let resuming = site.isPaused
+                            store.run {
+                                try store.setSitePaused(siteID, paused: !resuming)
+                                if resuming { try store.ensureCurrentSiteCycles() }
+                                playLiveStairSaveFeedback()
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle").foregroundStyle(accentActionColor).frame(width: 32, height: 32)
+                    }
+                    .accessibilityLabel("ほかの操作")
+                }
                 Button(role: .destructive) { deleting = true } label: {
                     Image(systemName: "trash").foregroundStyle(accentActionColor)
                 }.accessibilityLabel("サイトの登録を削除")
@@ -154,6 +178,19 @@ struct GiriSiteDetail: View {
     private func statusPage(_ site: OnlineSite) -> some View {
         ScrollView {
             VStack(spacing: 14) {
+                if site.isPaused {
+                    GiriDetailCard(title: "休止中", systemImage: "pause.circle", accentColor: AppSectionAccent.memo, kind: .venue) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("一覧のカード・通知・新しい回の作成を止めています。").font(.subheadline).foregroundStyle(.secondary)
+                            Button("参加を再開する", systemImage: "play.circle") {
+                                store.run { try store.setSitePaused(siteID, paused: false); try store.ensureCurrentSiteCycles(); playLiveStairSaveFeedback() }
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .buttonStyle(.borderless)
+                            .tint(accentActionColor)
+                        }
+                    }
+                }
                 GiriDetailCard(title: "現在の状況", systemImage: "clock", accentColor: AppSectionAccent.artist, kind: .venue) {
                     TimelineView(.periodic(from: timelineStart, by: 60)) { context in
                         GiriSitePeriodActions(site: site, now: context.date)
@@ -298,7 +335,7 @@ struct GiriSiteDetail: View {
                 Text(event.siteCycleNumber.map { "第\($0)回" } ?? GiriDateText.day(event.participationStartDate ?? event.eventDate))
                     .font(.headline).foregroundStyle(.primary)
                 Spacer(minLength: 8)
-                Text(event.participationState().title).font(.caption).foregroundStyle(.secondary)
+                Text(event.siteSkipped ? "見送り" : event.participationState().title).font(.caption).foregroundStyle(.secondary)
             }
             if event.siteCycleNumber != nil { Text(GiriDateText.day(event.participationStartDate)).font(.caption).foregroundStyle(.secondary) }
             if !event.affiliation.isEmpty { Text(event.affiliation).font(.subheadline).foregroundStyle(.secondary) }
