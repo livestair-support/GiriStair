@@ -612,6 +612,111 @@ struct DomainRegression {
             try check(aliasStore.notes[0].answerRecords.first { $0.id == "theirs" }?.answerer == "新しい仲間", "renaming a player renames their recorded answers")
         }
 
+        // 0.9 simple recurring sites: one current deadline, a next-prompt choice,
+        // skip / pause states, automatic season numbering and light reminders.
+        do {
+            let anchor = GiriDates.parse("2026-11-01T13:00:00Z") ?? Date()
+            func day(_ offset: Int) -> Date { addCalendarDays(anchor, offset) }
+            var simple = OnlineSite(id: "simple-site", name: "週替わりのサイト", recurrence: .weekly)
+            simple.submissionDays = 7; simple.votingDays = 3
+            applySiteTiming(.afterVoting, to: &simple, intervalDays: 1)
+            try check(simple.cycleSettings?.pattern == .alternating && simple.cycleSettings?.intervalDays == 10 && SiteNextPromptTiming.current(simple) == .afterVoting, "a prompt after the vote waits for posting plus voting")
+            applySiteTiming(.interval, to: &simple, intervalDays: 14)
+            try check(simple.cycleSettings?.pattern == .overlapping && simple.cycleSettings?.intervalDays == 14 && SiteNextPromptTiming.current(simple) == .interval, "a fixed interval is stored as its own cadence")
+            applySiteTiming(.irregular, to: &simple, intervalDays: 7)
+            try check(simple.recurrence == .irregular && SiteNextPromptTiming.current(simple) == .irregular && simple.cycleSettings?.intervalDays == 14, "undecided timing keeps the weekly values for a later return")
+            applySiteTiming(.withVoting, to: &simple, intervalDays: 14)
+            try check(simple.recurrence == .weekly && simple.cycleSettings?.pattern == .overlapping && simple.cycleSettings?.intervalDays == 7 && SiteNextPromptTiming.current(simple) == .withVoting, "a prompt at the voting start overlaps on the posting length")
+            try check(siteAnchorStart(posting: true, deadline: day(5), submissionDays: 7, votingDays: 3) == day(-2) && siteAnchorStart(posting: false, deadline: day(5), submissionDays: 7, votingDays: 3) == day(-5), "the current posting or voting deadline determines the prompt start")
+            simple.cycleSettings?.anchorStart = siteAnchorStart(posting: true, deadline: day(5), submissionDays: 7, votingDays: 3)
+            let posting = siteCycleDescriptors(simple, around: day(0)).filter { $0.round.isSubmissionOpen(day(0)) }
+            try check(posting.count == 1 && posting[0].round.submissionEnd == day(5) && posting[0].round.votingStart == day(5) && posting[0].round.votingEnd == day(8), "the posting deadline is the voting start and the result follows the voting days")
+            let votingPhase = siteCycleDescriptors(simple, around: day(6)).filter { $0.isActive(day(6)) }
+            try check(votingPhase.contains { $0.round.isVotingOpen(day(6)) && $0.round.votingEnd == day(8) } && votingPhase.contains { $0.round.isSubmissionOpen(day(6)) && $0.round.submissionEnd == day(12) }, "the next prompt opens when the vote starts")
+            try check(siteNextSeasonNumber(SiteCycleSettings(seasonName: "第１２シーズン")) == 13 && siteNextSeasonNumber(SiteCycleSettings(seasonName: "第2シーズン", seasonNumber: 7)) == 8 && siteNextSeasonNumber(SiteCycleSettings()) == 1, "season numbers continue from the saved number or the old name")
+
+            let simpleDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriSimpleSites-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: simpleDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: simpleDirectory) }
+            let simpleStore = GiriStore(directory: simpleDirectory)
+            try simpleStore.saveOnlineSite(simple)
+            guard let storedSimple = simpleStore.onlineSiteById(simple.id),
+                  let skipDescriptor = siteCycleDescriptors(storedSimple, around: day(0)).first(where: { $0.round.isSubmissionOpen(day(0)) }) else { throw GiriDataError.invalid("Missing simple site fixture") }
+            let skipped = try simpleStore.setSiteCycleSkipped(simple.id, descriptor: skipDescriptor, event: nil, skipped: true)
+            try check(skipped?.siteSkipped == true && skipped?.isActualParticipant == false && simpleStore.events.contains { $0.id == skipped?.id && $0.siteSkipped }, "skipping keeps the prompt as a non-participation record")
+            let refreshedSkip = try simpleStore.createSiteCycle(simple.id, descriptor: skipDescriptor, join: false)
+            try check(refreshedSkip.siteSkipped && !refreshedSkip.isActualParticipant, "the automatic refresh keeps a skipped prompt skipped")
+            let rejoined = try simpleStore.createSiteCycle(simple.id, descriptor: skipDescriptor, join: true)
+            try check(rejoined.id == skipped?.id && rejoined.isActualParticipant && !rejoined.siteSkipped, "joining after skipping clears the skip on the same prompt")
+            let reskipped = try simpleStore.setSiteCycleSkipped(simple.id, descriptor: nil, event: rejoined, skipped: true)
+            let undone = try simpleStore.setSiteCycleSkipped(simple.id, descriptor: nil, event: reskipped, skipped: false)
+            try check(reskipped?.isParticipating == false && undone?.siteSkipped == false && undone?.isActualParticipant == false, "undoing a skip returns to undecided rather than joined")
+
+            try simpleStore.setSitePaused(simple.id, paused: true)
+            let pausedCount = simpleStore.events.filter { $0.onlineSiteId == simple.id }.count
+            try simpleStore.ensureCurrentSiteCycles(now: day(14))
+            try check(simpleStore.onlineSiteById(simple.id)?.isPaused == true && simpleStore.events.filter { $0.onlineSiteId == simple.id }.count == pausedCount, "a paused site creates no new prompts")
+            try simpleStore.setSitePaused(simple.id, paused: false)
+            try simpleStore.ensureCurrentSiteCycles(now: day(14))
+            try check(simpleStore.events.filter { $0.onlineSiteId == simple.id }.count > pausedCount && simpleStore.onlineSiteById(simple.id)?.cycleSettings == storedSimple.cycleSettings, "resuming creates the current prompts again without changing the schedule")
+
+            var seasonal = simple
+            seasonal.id = "simple-season"
+            seasonal.cycleSettings?.anchorStart = day(0); seasonal.cycleSettings?.anchorCycleNumber = 1
+            seasonal.cycleSettings?.seasonName = "第1シーズン"; seasonal.cycleSettings?.seasonNumber = 1
+            seasonal.cycleSettings?.seasonStart = day(0); seasonal.cycleSettings?.regularCycleCount = 3
+            seasonal.cycleSettings?.ruleRevisionID = nil
+            try simpleStore.saveOnlineSite(seasonal)
+            guard let firstSeason = simpleStore.onlineSiteById(seasonal.id) else { throw GiriDataError.invalid("Missing season site") }
+            try check(siteSeasonLastCycleEnd(firstSeason) == day(24) && !siteCycleDescriptors(firstSeason, around: day(23)).contains { ($0.cycleNumber ?? 0) > 3 }, "the last regular prompt's vote ends the season without a fourth prompt")
+            try simpleStore.startNextSiteSeason(seasonal.id, firstDeadline: day(35))
+            guard let nextSeason = simpleStore.onlineSiteById(seasonal.id), let nextSettings = nextSeason.cycleSettings else { throw GiriDataError.invalid("Missing next season") }
+            try check(nextSettings.seasonNumber == 2 && nextSettings.seasonName == "第2シーズン" && nextSettings.anchorCycleNumber == 1 && nextSettings.anchorStart == day(28) && nextSettings.regularCycleCount == 3 && nextSettings.seasonID != firstSeason.cycleSettings?.seasonID, "the next season starts from its first deadline with the next number and the same length")
+            let newPrompt = siteCycleDescriptors(nextSeason, around: day(29)).filter { $0.round.isSubmissionOpen(day(29)) }
+            try check(newPrompt.count == 1 && newPrompt[0].cycleNumber == 1 && newPrompt[0].seasonName == "第2シーズン" && newPrompt[0].round.submissionEnd == day(35), "the new season's first prompt uses the entered deadline")
+            try check(siteCycleDescriptors(nextSeason, around: day(22)).first { $0.cycleNumber == 3 }?.seasonName == "第1シーズン", "the previous season's last prompt keeps its season")
+
+            var irregularSite = OnlineSite(id: "simple-irregular", name: "不定期のサイト", recurrence: .irregular)
+            irregularSite.votingDays = 3
+            irregularSite.cycleSettings = SiteCycleSettings()
+            try simpleStore.saveOnlineSite(irregularSite)
+            let firstIrregular = siteIrregularPeriod(irregularSite, deadline: day(40), now: day(36))
+            try check(firstIrregular.kind == .regular && firstIrregular.title == "第1回" && firstIrregular.round.submissionStart == day(36) && firstIrregular.round.votingStart == day(40) && firstIrregular.round.votingEnd == day(43), "an undecided site's prompt needs only its posting deadline")
+            try simpleStore.addSiteIrregularCycle(irregularSite.id, deadline: day(40))
+            guard let storedIrregular = simpleStore.onlineSiteById(irregularSite.id) else { throw GiriDataError.invalid("Missing irregular site") }
+            let secondIrregular = siteIrregularPeriod(storedIrregular, deadline: day(50), now: day(45))
+            try check(storedIrregular.cycleSettings?.specialPeriods.count == 1 && secondIrregular.title == "第2回" && secondIrregular.round.submissionStart == day(40) && secondIrregular.round.votingEnd == day(53), "the next undecided prompt continues the number after the previous deadline")
+            try check(siteCycleDescriptors(storedIrregular, around: day(36)).filter { $0.kind == .regular }.count == 1, "an undecided site shows only the entered prompt")
+
+            var reminderPreferences = AppPreferences(notificationsEnabled: true); reminderPreferences.reminderMinutes = 30
+            let reminderSite = OnlineSite(id: "reminder-site", name: "週替わりのサイト", recurrence: .weekly)
+            var undecided = GiriEvent(title: "週替わりのサイト")
+            undecided.eventFormat = .onlineLong; undecided.onlineSiteId = reminderSite.id; undecided.isParticipating = false
+            var undecidedRound = EventRound(id: "next")
+            undecidedRound.submissionStart = day(1); undecidedRound.submissionEnd = day(8); undecidedRound.votingStart = day(8); undecidedRound.votingEnd = day(11)
+            undecided.rounds = [undecidedRound]
+            let undecidedReminders = planNativeReminders(events: [undecided], preferences: reminderPreferences, sites: [reminderSite], now: day(0))
+            try check(undecidedReminders.count == 2 && undecidedReminders.contains { $0.id.hasSuffix(":site-open:next") && $0.date == day(1) } && undecidedReminders.contains { $0.id.hasSuffix(":site-submission:next") && $0.date == day(8).addingTimeInterval(-1800) }, "an undecided prompt announces the new prompt and the posting deadline but not the vote")
+            try check(planNativeReminders(events: [undecided], preferences: reminderPreferences, now: day(0)).isEmpty, "undecided prompts of unknown sites are not announced")
+            var pausedReminderSite = reminderSite; pausedReminderSite.isPaused = true
+            try check(planNativeReminders(events: [undecided], preferences: reminderPreferences, sites: [pausedReminderSite], now: day(0)).isEmpty, "a paused site announces nothing")
+            var skippedReminder = undecided; skippedReminder.siteSkipped = true
+            try check(planNativeReminders(events: [skippedReminder], preferences: reminderPreferences, sites: [reminderSite], now: day(0)).isEmpty, "a skipped prompt announces nothing")
+            var joinedReminder = undecided; joinedReminder.isParticipating = true
+            let joinedReminders = planNativeReminders(events: [joinedReminder], preferences: reminderPreferences, sites: [reminderSite], now: day(0))
+            try check(joinedReminders.count == 2 && joinedReminders.contains { $0.id.hasSuffix(":submission") } && joinedReminders.contains { $0.id.hasSuffix(":voting") } && !joinedReminders.contains { $0.id.contains(":site-open:") }, "a joined prompt reminds both posting and voting deadlines")
+
+            var legacySiteJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(storedSimple)) as? [String: Any] ?? [:]
+            legacySiteJSON.removeValue(forKey: "isPaused")
+            if var legacySettings = legacySiteJSON["cycleSettings"] as? [String: Any] { legacySettings.removeValue(forKey: "seasonNumber"); legacySiteJSON["cycleSettings"] = legacySettings }
+            var legacyEventJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(undecided)) as? [String: Any] ?? [:]
+            legacyEventJSON.removeValue(forKey: "siteSkipped")
+            let legacySite = try JSONDecoder().decode(OnlineSite.self, from: JSONSerialization.data(withJSONObject: legacySiteJSON))
+            let legacyEvent = try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: legacyEventJSON))
+            try check(!legacySite.isPaused && legacySite.cycleSettings?.seasonNumber == nil && !legacyEvent.siteSkipped, "older sites and prompts decode as active, numbered by name and not skipped")
+            try check(try GiriJSON.decode(simpleStore.exportBackup()) == simpleStore.document, "skip, pause and season numbers roundtrip in schema one")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

@@ -61,6 +61,8 @@ struct SiteCycleSettings: Codable, Equatable {
     var trackSeasonTotals: Bool = false
     var ruleRevisionID: String? = nil
     var legacyInferredSeasonStart: Date? = nil
+    /// 「第○シーズン」の番号。シーズンの最後の回が終わったら、次の番号で始める。
+    var seasonNumber: Int? = nil
 
     var inferredSeasonStart: Date {
         // Compatibility alias for old call sites; never reconstruct unknown
@@ -73,7 +75,8 @@ struct SiteCycleSettings: Codable, Equatable {
     func validate() throws {
         guard (1...730).contains(intervalDays), (1...10000).contains(anchorCycleNumber),
               regularCycleCount.map({ (1...10000).contains($0) }) ?? true,
-              seasonLengthDays.map({ (1...3660).contains($0) }) ?? true else {
+              seasonLengthDays.map({ (1...3660).contains($0) }) ?? true,
+              seasonNumber.map({ (1...10000).contains($0) }) ?? true else {
             throw GiriDataError.invalid("周期・シーズンの回数と日数を確認してください。")
         }
         if let start = seasonStart, let end = seasonEndsAt, end < start {
@@ -98,7 +101,7 @@ struct SiteCycleSettings: Codable, Equatable {
 }
 
 extension SiteCycleSettings {
-    private enum CodingKeys: String, CodingKey { case pattern, anchorStart, intervalDays, anchorCycleNumber, seasonName, seasonStart, seasonLengthDays, regularCycleCount, leagues, specialPeriods, leagueChangesPerSeason, seasonID, seasonEndsAt, trackSeasonTotals, ruleRevisionID, legacyInferredSeasonStart }
+    private enum CodingKeys: String, CodingKey { case pattern, anchorStart, intervalDays, anchorCycleNumber, seasonName, seasonStart, seasonLengthDays, regularCycleCount, leagues, specialPeriods, leagueChangesPerSeason, seasonID, seasonEndsAt, trackSeasonTotals, ruleRevisionID, legacyInferredSeasonStart, seasonNumber }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         pattern = try c.decodeIfPresent(SiteCyclePattern.self, forKey: .pattern) ?? .alternating
@@ -117,6 +120,7 @@ extension SiteCycleSettings {
         trackSeasonTotals = try c.decodeIfPresent(Bool.self, forKey: .trackSeasonTotals) ?? false
         ruleRevisionID = try c.decodeIfPresent(String.self, forKey: .ruleRevisionID)
         legacyInferredSeasonStart = try c.giriDate(forKey: .legacyInferredSeasonStart, required: false, calendarOnly: false)
+        seasonNumber = try c.decodeIfPresent(Int.self, forKey: .seasonNumber)
         // 0.6 filled this date by counting backwards with today's rule. Clear
         // only that recognizable generated value, preserving explicit dates.
         if seasonID == nil && ruleRevisionID == nil && anchorCycleNumber > 1,
@@ -145,6 +149,7 @@ extension SiteCycleSettings {
         try c.encode(trackSeasonTotals, forKey: .trackSeasonTotals)
         try c.encode(ruleRevisionID, forKey: .ruleRevisionID)
         try c.encode(legacyInferredSeasonStart.map(GiriDates.timestamp), forKey: .legacyInferredSeasonStart)
+        try c.encode(seasonNumber, forKey: .seasonNumber)
     }
 }
 
@@ -313,4 +318,106 @@ func siteLeagueEffectiveDate(_ site: OnlineSite, after event: GiriEvent, now: Da
     if let explicit = event.nextLeagueEffectiveDate { return explicit }
     if site.cycleSettings?.leagueChangesPerSeason == true, let end = event.siteSeasonEnd ?? site.cycleSettings?.seasonEnd { return end }
     return event.participationEndDate ?? now
+}
+
+// MARK: - 0.9 通常サイトのかんたん設定
+
+/// 次のお題がいつ出るか。登録画面の選択肢で、保存は従来の recurrence / pattern / intervalDays。
+enum SiteNextPromptTiming: String, CaseIterable, Identifiable {
+    case withVoting, afterVoting, interval, irregular
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .withVoting: return "投票開始と同時"
+        case .afterVoting: return "投票が終わってから"
+        case .interval: return "決まった間隔"
+        case .irregular: return "決まっていない"
+        }
+    }
+    static func current(_ site: OnlineSite) -> SiteNextPromptTiming {
+        guard site.recurrence == .weekly else { return .irregular }
+        let settings = site.cycleSettings ?? SiteCycleSettings()
+        if settings.pattern == .alternating { return .afterVoting }
+        return settings.intervalDays == site.submissionDays ? .withVoting : .interval
+    }
+}
+
+/// 選んだ出方を、日程の計算に使う保存項目へ反映する。
+func applySiteTiming(_ timing: SiteNextPromptTiming, to site: inout OnlineSite, intervalDays: Int) {
+    var settings = site.cycleSettings ?? SiteCycleSettings()
+    switch timing {
+    case .withVoting:
+        site.recurrence = .weekly; settings.pattern = .overlapping; settings.intervalDays = site.submissionDays
+    case .afterVoting:
+        site.recurrence = .weekly; settings.pattern = .alternating; settings.intervalDays = site.submissionDays + site.votingDays
+    case .interval:
+        site.recurrence = .weekly; settings.pattern = .overlapping; settings.intervalDays = max(1, intervalDays)
+    case .irregular:
+        site.recurrence = .irregular
+    }
+    site.cycleSettings = settings
+}
+
+/// 今の状態（投稿中・投票中）とその締切から、この回の投稿開始を求める。
+/// 投稿締切＝投票開始、投票締切＝結果発表として扱う。
+func siteAnchorStart(posting: Bool, deadline: Date, submissionDays: Int, votingDays: Int, calendar: Calendar = .current) -> Date {
+    posting ? addCalendarDays(deadline, -submissionDays, calendar: calendar)
+        : addCalendarDays(deadline, -(submissionDays + votingDays), calendar: calendar)
+}
+
+/// シーズンの最後の通常回（「1シーズン○回」の最後）の投票締切。分からなければ nil。
+func siteSeasonLastCycleEnd(_ site: OnlineSite, calendar: Calendar = .current) -> Date? {
+    guard site.recurrence == .weekly, let settings = site.cycleSettings,
+          let last = settings.regularCycleCount, last >= settings.anchorCycleNumber else { return nil }
+    var round = EventRound()
+    round.submissionStart = addCalendarDays(settings.anchorStart, (last - settings.anchorCycleNumber) * settings.intervalDays, calendar: calendar)
+    round = completeRoundSchedule(round, submissionDays: site.submissionDays, votingDays: site.votingDays)
+    return round.votingEnd
+}
+
+/// 次のシーズンの番号。番号がない旧設定は「第12シーズン」のような名前から読む。
+func siteNextSeasonNumber(_ settings: SiteCycleSettings) -> Int {
+    if let number = settings.seasonNumber { return number + 1 }
+    let digits = settings.seasonName.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? settings.seasonName
+    if let range = digits.range(of: #"[0-9]+"#, options: .regularExpression), let number = Int(digits[range]) { return number + 1 }
+    return settings.seasonName.isEmpty ? 1 : 2
+}
+
+/// 次のシーズン：最初の回の投稿締切だけで、番号・名前・回数（1から）を進める。
+/// 「1シーズン○回」と投稿・投票の日数は前のシーズンを引き継ぐ。
+func siteNextSeasonSettings(_ site: OnlineSite, firstDeadline: Date, calendar: Calendar = .current) -> SiteCycleSettings {
+    var value = site.cycleSettings ?? SiteCycleSettings()
+    let number = siteNextSeasonNumber(value)
+    value.seasonNumber = number
+    value.seasonName = "第\(number)シーズン"
+    value.seasonID = UUID().uuidString
+    value.ruleRevisionID = UUID().uuidString
+    value.anchorStart = addCalendarDays(firstDeadline, -site.submissionDays, calendar: calendar)
+    value.anchorCycleNumber = 1
+    value.seasonStart = value.anchorStart
+    value.seasonEndsAt = nil
+    value.seasonLengthDays = nil
+    value.specialPeriods = []
+    return value
+}
+
+/// 締切が決まっていないサイトの次の回。投稿締切だけ分かれば作れる。
+func siteIrregularPeriod(_ site: OnlineSite, deadline: Date, votingEnd: Date? = nil, now: Date = Date(), calendar: Calendar = .current) -> SiteSpecialPeriod {
+    let settings = site.cycleSettings ?? SiteCycleSettings()
+    let regular = settings.specialPeriods.filter { $0.kind == .regular }
+    let number = (regular.map(\.round.promptNumber).max() ?? 0) + 1
+    let previousEnd = settings.specialPeriods.compactMap(\.round.submissionEnd).filter { $0 < deadline }.max()
+    var period = SiteSpecialPeriod()
+    period.kind = .regular
+    period.title = "第\(number)回"
+    period.seasonName = settings.seasonName
+    var round = EventRound()
+    round.name = period.title
+    round.promptNumber = number
+    round.submissionStart = previousEnd ?? min(now, deadline)
+    round.submissionEnd = deadline
+    round.votingStart = deadline
+    round.votingEnd = votingEnd ?? addCalendarDays(deadline, site.votingDays, calendar: calendar)
+    period.round = round
+    return period
 }

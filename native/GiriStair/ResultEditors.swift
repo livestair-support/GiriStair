@@ -838,6 +838,9 @@ struct GiriCycleResultEditor: View {
     @State private var originalQualification: SiteQualification = .none
     @State private var originalEffectiveDate: Date?
     @State private var discardQuestion = false
+    @State private var block = ""
+    @State private var originalBlock = ""
+    @State private var keepBlock = false
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
     private var site: OnlineSite? { store.onlineSites.first { $0.id == event?.onlineSiteId } }
@@ -852,7 +855,7 @@ struct GiriCycleResultEditor: View {
     private var changed: Bool {
         result != originalResult || placement != originalPlacement || affiliation != originalAffiliation ||
             nextAffiliation != originalNextAffiliation || movement != originalMovement ||
-            qualification != originalQualification || effectiveDate != originalEffectiveDate
+            qualification != originalQualification || effectiveDate != originalEffectiveDate || block != originalBlock || keepBlock
     }
 
     var body: some View {
@@ -860,6 +863,17 @@ struct GiriCycleResultEditor: View {
             resultSection
             if hasLeagues { leagueSection }
             qualificationSection
+            if let event, !event.hasCycleResult {
+                Section {
+                    Button("この回は結果を記録しない", systemImage: "xmark.circle") {
+                        store.run {
+                            try store.markResultPrompted(eventID: event.id, key: "cycle-result-skipped")
+                            dismiss()
+                        }
+                    }
+                    .tint(accentActionColor)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+            }
         }
         .appEditorFormStyle()
         .navigationTitle("結果を記録")
@@ -894,6 +908,13 @@ struct GiriCycleResultEditor: View {
                 }
             }
             GiriIntegerField(title: "順位（任意）", value: $placement, suffix: "位")
+            HStack(spacing: 12) {
+                GiriEditorLabel("ブロック")
+                TextField("任意", text: $block).multilineTextAlignment(.trailing)
+            }
+            if let site, block.trimmingCharacters(in: .whitespacesAndNewlines) != site.block {
+                Toggle("次の回からもこのブロック", isOn: $keepBlock).tint(AppSectionAccent.ticket)
+            }
             TextField("結果・メモ", text: $result, axis: .vertical).lineLimit(3...10)
         }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
     }
@@ -1011,6 +1032,8 @@ struct GiriCycleResultEditor: View {
         movement = event.leagueMovement
         qualification = event.siteQualification
         effectiveDate = event.nextLeagueEffectiveDate
+        block = event.block
+        originalBlock = block
         if hasLeagueChange { fillEffectiveDate() }
         manualNextLeague = !leagues.contains(nextAffiliation)
         originalResult = result
@@ -1049,7 +1072,13 @@ struct GiriCycleResultEditor: View {
                 event.nextLeagueEffectiveDate = hasLeagueChange ? effectiveDate : nil
                 next = hasLeagueChange ? nextLeague : nil
             } else { next = nil }
+            event.block = block.trimmingCharacters(in: .whitespacesAndNewlines)
             try store.saveCycleResult(event: event, nextAffiliation: next)
+            // ブロックが回ごとに変わるサイトは、次の回の初期値も変える。
+            if keepBlock, var updated = store.onlineSiteById(event.onlineSiteId) {
+                updated.block = event.block
+                try store.saveOnlineSite(updated)
+            }
             playLiveStairSaveFeedback()
             dismiss()
         } catch { store.errorMessage = error.localizedDescription }

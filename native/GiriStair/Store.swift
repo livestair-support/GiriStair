@@ -409,6 +409,7 @@ final class GiriStore: ObservableObject {
             if join && !event.isActualParticipant {
                 event.isParticipating = true
                 event.isInterested = false
+                event.siteSkipped = false
                 event.status = .planned
                 event.eventFormat = site.format
                 event.affiliation = site.hasAffiliations ? site.affiliation : ""
@@ -450,7 +451,7 @@ final class GiriStore: ObservableObject {
                 event.sitePeriodKind = descriptor.kind
             }
             if join {
-                event.isParticipating = true; event.isInterested = false; event.status = .planned
+                event.isParticipating = true; event.isInterested = false; event.siteSkipped = false; event.status = .planned
                 event.eventFormat = site.format
                 if event.siteSeasonID == nil && event.siteSeason == descriptor.seasonName {
                     event.siteSeasonID = descriptor.seasonID ?? site.cycleSettings?.seasonID
@@ -482,7 +483,7 @@ final class GiriStore: ObservableObject {
         return event
     }
     func ensureCurrentSiteCycles(now: Date = Date()) throws {
-        for site in onlineSites {
+        for site in onlineSites where !site.isPaused {
             if site.cycleSettings != nil {
                 for descriptor in siteCycleDescriptors(site, around: now) {
                     try createSiteCycle(site.id, descriptor: descriptor, join: false)
@@ -491,6 +492,42 @@ final class GiriStore: ObservableObject {
                 for offset in -1...1 { try createSiteCycle(site.id, weekOf: now, weekOffset: offset, join: false) }
             }
         }
+    }
+    /// 「今回は見送る」：その回を参加しない記録として残す（見送りは参加回数・通知・結果入力の対象外）。
+    /// 見送りを取り消すと、まだ決めていない状態に戻る。
+    @discardableResult
+    func setSiteCycleSkipped(_ siteID: String, descriptor: SiteCycleDescriptor?, event: GiriEvent?, skipped: Bool) throws -> GiriEvent? {
+        var target: GiriEvent
+        if let event { target = events.first { $0.id == event.id } ?? event }
+        else if let descriptor { target = try createSiteCycle(siteID, descriptor: descriptor, join: false) }
+        else { return nil }
+        target = events.first { $0.id == target.id } ?? target
+        guard target.siteSkipped != skipped || (skipped && target.isParticipating) else { return target }
+        target.siteSkipped = skipped
+        if skipped { target.isParticipating = false; target.isInterested = false }
+        try saveEvent(target)
+        return target
+    }
+    /// しばらく休む／再開する。サイトの日程やリーグの設定は変えない。
+    func setSitePaused(_ siteID: String, paused: Bool) throws {
+        guard var site = onlineSiteById(siteID), site.isPaused != paused else { return }
+        site.isPaused = paused
+        try site.validate()
+        try mutate { Self.upsert(site, into: &$0.onlineSites) }
+    }
+    /// 締切が決まっていないサイトに、次の回を投稿締切だけで追加する。
+    func addSiteIrregularCycle(_ siteID: String, deadline: Date, votingEnd: Date? = nil) throws {
+        guard var site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
+        var settings = site.cycleSettings ?? SiteCycleSettings()
+        settings.specialPeriods.append(siteIrregularPeriod(site, deadline: deadline, votingEnd: votingEnd))
+        site.cycleSettings = settings
+        try saveOnlineSite(site)
+    }
+    /// シーズンの最後の回が終わった後、次のシーズンを最初の回の投稿締切から始める。
+    func startNextSiteSeason(_ siteID: String, firstDeadline: Date) throws {
+        guard var site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
+        site.cycleSettings = siteNextSeasonSettings(site, firstDeadline: firstDeadline)
+        try saveOnlineSite(site)
     }
     func exportBackup() throws -> Data { guard loaded else { throw GiriDataError.notLoaded }; return try GiriJSON.encode(document) }
     func recordBackupExported() throws { try mutate { $0.lastBackupAt = Date() } }

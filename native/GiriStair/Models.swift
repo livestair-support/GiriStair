@@ -396,11 +396,13 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var entryFee: Int? = nil
     /// ツボ上げ・感想用に会が指定するハッシュタグ（「#」なしで保存）。旧データは空。
     var hashtag: String = ""
+    /// 通常サイトの回を「今回は見送る」にした（参加回数・通知・結果入力の対象外）。
+    var siteSkipped: Bool = false
 }
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -497,6 +499,7 @@ extension GiriEvent {
         nextLeagueEffectiveDate = try c.giriDate(forKey: .nextLeagueEffectiveDate, required: false, calendarOnly: false)
         entryFee = try c.decodeIfPresent(Int.self, forKey: .entryFee)
         hashtag = try c.decodeIfPresent(String.self, forKey: .hashtag) ?? ""
+        siteSkipped = try c.decodeIfPresent(Bool.self, forKey: .siteSkipped) ?? false
 
         try validate()
     }
@@ -589,6 +592,7 @@ extension GiriEvent {
         try c.encode(nextLeagueEffectiveDate.map(GiriDates.timestamp), forKey: .nextLeagueEffectiveDate)
         try c.encode(entryFee, forKey: .entryFee)
         try c.encode(hashtag, forKey: .hashtag)
+        try c.encode(siteSkipped, forKey: .siteSkipped)
 
     }
 }
@@ -884,11 +888,13 @@ struct OnlineSite: Codable, Equatable, Identifiable {
     var leagueChanges: [SiteLeagueChange] = []
     var leagueBaseline: String? = nil
     var ruleHistory: [SiteRuleRevision] = []
+    /// しばらく参加しないサイト。一覧のカードを隠し、通知と回の自動作成を止める。
+    var isPaused: Bool = false
 }
 
 extension OnlineSite {
     private enum CodingKeys: String, CodingKey {
-        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline, ruleHistory
+        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline, ruleHistory, isPaused
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -923,6 +929,7 @@ extension OnlineSite {
         leagueChanges = try c.decodeIfPresent([SiteLeagueChange].self, forKey: .leagueChanges) ?? []
         leagueBaseline = try c.decodeIfPresent(String.self, forKey: .leagueBaseline)
         ruleHistory = try c.decodeIfPresent([SiteRuleRevision].self, forKey: .ruleHistory) ?? []
+        isPaused = try c.decodeIfPresent(Bool.self, forKey: .isPaused) ?? false
 
         try validate()
     }
@@ -959,6 +966,7 @@ extension OnlineSite {
         try c.encode(leagueChanges, forKey: .leagueChanges)
         try c.encode(leagueBaseline, forKey: .leagueBaseline)
         try c.encode(ruleHistory, forKey: .ruleHistory)
+        try c.encode(isPaused, forKey: .isPaused)
 
     }
 }

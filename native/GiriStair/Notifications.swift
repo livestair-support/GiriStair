@@ -11,11 +11,26 @@ struct GiriNativeReminder: Identifiable {
 
 /// One planner for native iPhone reminders. A stage result never removes a
 /// later voting obligation; only submissionEnabled / votingRequired do that.
-func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, now: Date = Date(), limit: Int = 64) -> [GiriNativeReminder] {
+func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, sites: [OnlineSite] = [], now: Date = Date(), limit: Int = 64) -> [GiriNativeReminder] {
     guard preferences.notificationsEnabled, limit > 0 else { return [] }
     var reminders: [GiriNativeReminder] = []
     func append(_ event: GiriEvent, _ key: String, _ body: String, _ date: Date) {
         if date > now { reminders.append(GiriNativeReminder(id: event.id + ":" + key, eventID: event.id, title: event.title, body: body, date: date)) }
+    }
+    // 通常サイトでまだ参加を決めていない回：新しいお題と投稿締切だけを知らせる。
+    // 見送った回・休止中のサイト・興味あり／キャンセルは知らせない。
+    let activeSiteIDs = Set(sites.filter { !$0.isPaused }.map(\.id))
+    for event in events where !event.isActualParticipant && !event.siteSkipped && !event.isInterested && event.status != .canceled {
+        guard let siteID = event.onlineSiteId, activeSiteIDs.contains(siteID) else { continue }
+        let lead = TimeInterval(preferences.reminderMinutes * 60)
+        for round in event.effectiveRounds {
+            if let start = round.submissionStart {
+                append(event, "site-open:" + round.id, "新しいお題が出ました", start)
+            }
+            if round.submissionEnabled, let deadline = round.submissionEnd {
+                append(event, "site-submission:" + round.id, preferences.reminderMinutes == 0 ? "投稿の締切です（参加・見送りを選べます）" : "投稿締切の\(preferences.reminderMinutes)分前です（参加・見送りを選べます）", deadline.addingTimeInterval(-lead))
+            }
+        }
     }
     for event in events where event.isActualParticipant {
         let lead = TimeInterval(preferences.reminderMinutes * 60)
@@ -62,6 +77,7 @@ func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, now: 
         let currentGeneration = generation
         let events = store.events
         let preferences = store.preferences
+        let sites = store.onlineSites
         let previous = pending
         let task = Task { @MainActor in
             if let previous { await previous.value }
@@ -77,7 +93,7 @@ func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, now: 
                 return
             }
             do {
-                for reminder in planNativeReminders(events: events, preferences: preferences) {
+                for reminder in planNativeReminders(events: events, preferences: preferences, sites: sites) {
                     let content = UNMutableNotificationContent()
                     content.title = reminder.title
                     content.body = reminder.body
