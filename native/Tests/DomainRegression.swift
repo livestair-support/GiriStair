@@ -717,6 +717,214 @@ struct DomainRegression {
             try check(try GiriJSON.decode(simpleStore.exportBackup()) == simpleStore.document, "skip, pause and season numbers roundtrip in schema one")
         }
 
+        // 0.10 tournaments: the registration's individual / team choice drives
+        // result entry, and names already entered for the event come first.
+        do {
+            var formatEvent = GiriEvent(title: "チーム大会")
+            formatEvent.meetingType = .tournament
+            try check(giriTournamentFormatText(formatEvent) == "個人戦", "a tournament defaults to individual entry")
+            formatEvent.tournamentFormat = .team
+            try check(giriTournamentFormatText(formatEvent) == "チーム戦", "a team tournament without a size says only team")
+            formatEvent.teamSize = 3
+            try check(giriTournamentFormatText(formatEvent) == "チーム戦（3人）", "the team size follows the registration")
+            formatEvent.tournamentFormat = .pair
+            try check(giriTournamentFormatText(formatEvent) == "タッグ戦（2人）", "legacy pair tournaments stay readable")
+            formatEvent.participants = ["やまだ", " 佐藤 ", ""]
+            var mine = GiriTeam(); mine.name = "自分たち"; mine.members = ["自分", "ヤマダ"]; mine.isMine = true
+            var rival = GiriTeam(); rival.name = "相手"; rival.members = ["鈴木", "佐藤"]
+            formatEvent.teams = [mine, rival]
+            var podium = TournamentStanding(); podium.playerNames = ["高橋", "鈴木"]
+            formatEvent.standings = [podium]
+            try check(formatEvent.enteredPlayerNames == ["やまだ", "佐藤", "自分", "鈴木", "高橋"], "entered names keep the event's order once each by reading")
+        }
+
+        // 0.10 result summary: stage kinds by depth, finalists without exact
+        // ranks, rates, breakdowns, templates, head-to-head and brackets.
+        do {
+            let kinds: [(String, StageKind)] = [("予選", .qualifier), ("予選決勝", .qualifier), ("本戦1回戦", .main), ("2回戦", .main),
+                ("決勝トーナメント1回戦", .main), ("準々決勝", .quarterfinal), ("準決勝", .semifinal), ("決勝", .final),
+                ("グランドファイナル", .final), ("敗者復活戦", .other), ("3位決定戦", .other), ("", .other)]
+            for (name, kind) in kinds { try check(giriInferredStageKind(name) == kind, "stage name \(name) infers \(kind.title)") }
+            var chosen = ResultStage(); chosen.name = "ラストステージ"; chosen.kind = .final
+            try check(chosen.effectiveKind == .final, "an explicitly chosen kind wins over the name")
+
+            let base = GiriDates.parse("2026-06-01T10:00:00Z") ?? Date()
+            let summaryNow = addCalendarDays(base, 30)
+            func tournament(_ title: String, organizer: String = "", team: Bool = false, day: Int, _ build: (inout TournamentResult, inout GiriEvent) -> Void) -> GiriEvent {
+                var event = GiriEvent(title: title)
+                event.eventFormat = .live; event.meetingType = .tournament; event.organizer = organizer
+                event.eventDate = addCalendarDays(base, day)
+                if team { event.tournamentFormat = .team; event.teamSize = 3 }
+                var result = TournamentResult()
+                build(&result, &event)
+                event.tournamentResult = result
+                return event
+            }
+            func stage(_ name: String, _ outcome: TournamentOutcome, lineup: String = "", judging: String = "", opponents: [String] = [], placement: Int? = nil) -> ResultStage {
+                var value = ResultStage(); value.name = name; value.outcome = outcome; value.lineup = lineup; value.judging = judging; value.opponents = opponents; value.placement = placement
+                return value
+            }
+            // 横並び6人の決勝で6位：決勝進出（順位は添えるだけ）。
+            let sixth = tournament("第3回テスト杯", organizer: "主催A", day: 1) { result, event in
+                result.stages = [stage("予選", .advanced, lineup: "横並び5人", judging: "挙手（1人1票）", opponents: ["ライバル"]), stage("本戦", .advanced, lineup: "横並び5人", judging: "加点審査"), stage("決勝", .placed, lineup: "横並び6人", judging: "その他", placement: 6)]
+                result.outcome = .placed; result.finalist = true; result.finalEntrants = 6
+                event.placement = 6
+            }
+            try check(sixth.finalResultTitle == "決勝進出（6人中6位）" && sixth.reachedFinal && !giriIsOtherPlacement(sixth), "a sixth place in a six-player final reads as a finalist")
+            try check(GiriFinalResultChoice.current(outcome: .placed, placement: 6, bestOf: nil, finalist: true) == .finalist && GiriFinalResultChoice.current(outcome: .placed, placement: 6, bestOf: nil) == .placed, "finalist maps back to its own choice")
+            var thirdFinalist = sixth; thirdFinalist.placement = 3
+            try check(thirdFinalist.finalResultTitle == "3位" && thirdFinalist.isThirdPlace, "a finalist in third place still counts as third")
+            // トーナメント：準々決勝で敗退 → ベスト8 の候補。
+            let quarter = tournament("タイマン杯", organizer: "主催B", day: 2) { result, _ in
+                result.stages = [stage("1回戦", .advanced, lineup: "タイマン", judging: "拍手", opponents: ["ライバル"]), stage("準々決勝", .eliminated, lineup: "タイマン", judging: "拍手")]
+                result.outcome = .eliminated
+            }
+            try check(giriSuggestedFinalChoice(quarter.tournamentResult?.stages ?? []) == .best8 && quarter.furthestStageKind == .quarterfinal && !quarter.reachedFinal, "a quarterfinal loss suggests best eight")
+            var oneOnOneFinal = stage("決勝", .eliminated, lineup: "タイマン")
+            try check(giriSuggestedFinalChoice([oneOnOneFinal]) == .runnerUp, "losing a one-on-one final suggests runner-up")
+            oneOnOneFinal.lineup = "横並び6人"
+            try check(giriSuggestedFinalChoice([oneOnOneFinal]) == .finalist, "losing a group final suggests finalist")
+            // 予選敗退と、チーム戦の優勝。
+            let qualifierOut = tournament("第4回テスト杯", organizer: "主催A", day: 3) { result, _ in
+                result.stages = [stage("予選", .eliminated, lineup: "横並び5人", judging: "挙手（1人1票）")]
+                result.outcome = .eliminated
+            }
+            let teamWin = tournament("チーム杯", team: true, day: 4) { result, event in
+                result.outcome = .champion; event.placement = 1
+            }
+            try check(qualifierOut.qualifierPassed == false && qualifierOut.furthestStageKind == .qualifier, "a qualifier loss is counted as not passing")
+            try check(quarter.qualifierPassed == true && sixth.qualifierPassed == true && teamWin.qualifierPassed == true, "reaching later stages or winning means the first stage was passed")
+            let upcoming = tournament("未来の大会", day: 60) { result, _ in result.outcome = .unrecorded }
+            let summary = giriTournamentSummary([sixth, quarter, qualifierOut, teamWin, upcoming], now: summaryNow)
+            try check(summary.completed == 4 && summary.champions == 1 && summary.teamChampions == 1 && summary.individualChampions == 0 && summary.finalists == 2, "the summary counts finished tournaments, finalists and the team split")
+            try check(summary.qualifierKnown == 4 && summary.qualifierPassed == 3 && giriRateText(summary.qualifierPassed, summary.qualifierKnown) == "75%" && giriRateText(0, 0) == "—", "qualifier pass rate uses tournaments whose first stage is known")
+            try check(summary.furthest[.final] == 2 && summary.furthest[.quarterfinal] == 1 && summary.furthest[.qualifier] == 1, "furthest stage compares tournaments with different structures by depth")
+            let lineups = giriStagePassRates([sixth, quarter, qualifierOut], now: summaryNow) { $1.lineup }
+            try check(lineups.first { $0.label == "横並び5人" }.map { $0.passed == 2 && $0.total == 3 } == true && lineups.first { $0.label == "タイマン" }.map { $0.passed == 1 && $0.total == 2 } == true, "stage pass rates group by lineup")
+            let judgings = giriStagePassRates([sixth], now: summaryNow) { $1.judging }
+            try check(judgings.contains { $0.label == "その他" && $0.total == 1 }, "the other judging method is counted as its own row")
+            let organizers = giriOrganizerResults([sixth, quarter, qualifierOut, teamWin], now: summaryNow)
+            try check(organizers.first.map { $0.name == "主催A" && $0.entries == 2 && $0.finals == 1 && $0.champions == 0 } == true && organizers.count == 2, "organizer rows count entries, finals and titles")
+            // 前回の段階構成と対戦の記録。
+            try check(giriSeriesKey("第3回テスト杯") == giriSeriesKey("第４回 テスト杯") && giriSeriesKey("テスト杯 vol.2") == giriSeriesKey("テスト杯"), "series keys ignore edition numbers")
+            var nextEdition = GiriEvent(title: "第5回テスト杯"); nextEdition.eventFormat = .live; nextEdition.meetingType = .tournament
+            let source = giriStageTemplateSource(for: nextEdition, in: [sixth, quarter, qualifierOut])
+            try check(source?.id == qualifierOut.id, "the latest edition of the same series is the template")
+            let template = giriStageTemplate(from: sixth)
+            try check(template.map(\.name) == ["予選", "本戦", "決勝"] && template.allSatisfy { $0.outcome == .unrecorded && $0.placement == nil && $0.opponents.isEmpty } && template[0].judging == "挙手（1人1票）", "a template copies the structure without results")
+            let meetings = giriOpponentMeetings([sixth, quarter, upcoming], playerKey: playerSearchKey("らいばる"), now: summaryNow)
+            try check(meetings.count == 2 && meetings.filter { $0.stage.passed == true }.count == 2 && meetings.first?.event.id == quarter.id, "head-to-head counts meetings by reading, newest first")
+            // トーナメント表：左右の山、回戦名、隣の山の候補。
+            let lines = [GiriOCRLine(text: "1回戦", midX: 0.2, midY: 0.02), GiriOCRLine(text: "Aさん", midX: 0.1, midY: 0.1), GiriOCRLine(text: "Bさん", midX: 0.1, midY: 0.3),
+                         GiriOCRLine(text: "自分", midX: 0.1, midY: 0.5), GiriOCRLine(text: "Dさん", midX: 0.1, midY: 0.7),
+                         GiriOCRLine(text: "Eさん", midX: 0.9, midY: 0.1), GiriOCRLine(text: "Fさん", midX: 0.9, midY: 0.3),
+                         GiriOCRLine(text: "Gさん", midX: 0.9, midY: 0.5), GiriOCRLine(text: "Hさん", midX: 0.9, midY: 0.7),
+                         GiriOCRLine(text: "自分", midX: 0.3, midY: 0.6), GiriOCRLine(text: "3-1", midX: 0.3, midY: 0.55), GiriOCRLine(text: "決勝", midX: 0.5, midY: 0.02)]
+            let bracket = giriBracketOrder(lines)
+            try check(bracket == ["Aさん", "Bさん", "自分", "Dさん", "Eさん", "Fさん", "Gさん", "Hさん"], "a two-sided bracket reads left then right without labels, scores or repeated winners")
+            try check(giriBracketStageNames(8) == ["準々決勝", "準決勝", "決勝"] && giriBracketStageNames(6) == ["準々決勝", "準決勝", "決勝"] && giriBracketStageNames(16) == ["1回戦", "準々決勝", "準決勝", "決勝"], "bracket rounds are named from the final backwards")
+            let me: (String) -> Bool = { $0 == "自分" }
+            try check(giriBracketOpponents(bracket, round: 1, isSelf: me) == ["Dさん"] && giriBracketOpponents(bracket, round: 2, isSelf: me) == ["Aさん", "Bさん"] && giriBracketOpponents(bracket, round: 3, isSelf: me) == ["Eさん", "Fさん", "Gさん", "Hさん"], "each round's candidates are the neighbouring half")
+            try check(giriBracketOpponents(["自分", "Aさん", "Bさん"], round: 2, isSelf: me) == ["Bさん"] && giriBracketOpponents(["Aさん", "Bさん", "自分"], round: 1, isSelf: me).isEmpty, "a bye has no first-round opponent")
+            // 旧データと新しい版の値。
+            var legacyStage = try JSONSerialization.jsonObject(with: JSONEncoder().encode(chosen)) as? [String: Any] ?? [:]
+            legacyStage.removeValue(forKey: "kind")
+            try check(try JSONDecoder().decode(ResultStage.self, from: JSONSerialization.data(withJSONObject: legacyStage)).kind == nil, "older stages decode without a kind")
+            legacyStage["kind"] = "a-future-kind"
+            try check(try JSONDecoder().decode(ResultStage.self, from: JSONSerialization.data(withJSONObject: legacyStage)).kind == nil, "an unknown kind does not stop loading")
+            var legacyResult = try JSONSerialization.jsonObject(with: JSONEncoder().encode(sixth.tournamentResult ?? TournamentResult())) as? [String: Any] ?? [:]
+            for key in ["finalist", "finalEntrants"] { legacyResult.removeValue(forKey: key) }
+            let decodedResult = try JSONDecoder().decode(TournamentResult.self, from: JSONSerialization.data(withJSONObject: legacyResult))
+            try check(!decodedResult.finalist && decodedResult.finalEntrants == nil, "older results decode as not a finalist")
+            let finalistResult = sixth.tournamentResult ?? TournamentResult()
+            try check(try JSONDecoder().decode(TournamentResult.self, from: JSONEncoder().encode(finalistResult)) == finalistResult, "finalist and final size roundtrip")
+        }
+
+        // 0.10 live events: the basic info decides who plays. Team tournaments
+        // list teams, impromptu teams assign participants later, and hosts,
+        // MCs, judges, spectators and reserves are not counted as playing.
+        do {
+            var team = GiriEvent(title: "チーム大会")
+            team.eventFormat = .live; team.meetingType = .tournament; team.tournamentFormat = .team; team.teamSize = 2
+            team.impromptuTeams = true
+            team.participants = ["自分", "やまだ", "すずき", "たなか"]
+            var mine = GiriTeam(); mine.isMine = true; mine.members = ["自分", "ヤマダ"]
+            var other = GiriTeam(); other.members = ["すずき", ""]
+            team.teams = [mine, other]; team.myTeamId = mine.id
+            try check(team.unassignedParticipants == ["たなか"], "impromptu participants not yet in a team are listed by reading")
+            try check(team.everyone == ["自分", "やまだ", "すずき", "たなか"], "everyone merges participants and team members once each")
+            var teamOnly = team; teamOnly.participants = []; teamOnly.impromptuTeams = false
+            try check(teamOnly.everyone == ["自分", "ヤマダ", "すずき"] && teamOnly.unassignedParticipants.isEmpty, "a team tournament without participants still counts its members")
+
+            var hosted = GiriEvent(title: "主催の会")
+            hosted.eventFormat = .live; hosted.organizer = "大喜利団体"; hosted.organizerIsGroup = true
+            hosted.coOrganizers = ["きょうさい"]; hosted.mcs = ["しかい"]; hosted.judges = ["しんさ"]
+            try check(hosted.staffNames == ["きょうさい", "しかい", "しんさ"] && hosted.organizerText == "大喜利団体（団体）", "a group organizer is not a person among the staff")
+            try check(hosted.isHosted(byKey: playerSearchKey("キョウサイ")) && !hosted.isHosted(byKey: playerSearchKey("大喜利団体")) && hosted.isMCOrJudge(byKey: playerSearchKey("シンサ")), "co-hosts count as hosting, and MCs and judges separately")
+            try check(GiriSelfRole.choices(tournament: false) == [.player, .staff, .spectator] && GiriSelfRole.choices(tournament: true).contains(.reserve), "reserves exist only for tournaments")
+            try check(GiriSelfRole.staff.title(tournament: false) == "主催（出ない）" && GiriSelfRole.staff.shortTitle(tournament: true) == "運営", "the staff role reads as host for casual events and operations for tournaments")
+
+            let base = GiriDates.parse("2026-07-01T10:00:00Z") ?? Date()
+            var played = GiriEvent(title: "出た大会"); played.eventFormat = .live; played.meetingType = .tournament; played.eventDate = base
+            var playedResult = TournamentResult(); playedResult.outcome = .champion; played.tournamentResult = playedResult; played.placement = 1
+            var watched = played; watched.id = UUID().uuidString; watched.selfRole = .spectator
+            var reserve = played; reserve.id = UUID().uuidString; reserve.selfRole = .reserve
+            let roleSummary = giriTournamentSummary([played, watched, reserve], now: addCalendarDays(base, 3))
+            try check(roleSummary.completed == 1 && roleSummary.champions == 1 && played.countsForResults && !watched.countsForResults, "only tournaments where you played are counted as results")
+            try check(!watched.isSelfPlayer && watched.endedRoundsNeedingResult(now: addCalendarDays(base, 3)).isEmpty, "non-players are not asked for their results")
+
+            var legacyJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(hosted)) as? [String: Any] ?? [:]
+            for key in ["impromptuTeams", "knockout", "judging", "coOrganizers", "mcs", "judges", "organizerIsGroup", "selfRole"] { legacyJSON.removeValue(forKey: key) }
+            let legacy = try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
+            let legacyFlags = !legacy.impromptuTeams && !legacy.knockout && !legacy.organizerIsGroup
+            let legacyStaff = legacy.coOrganizers.isEmpty && legacy.mcs.isEmpty && legacy.judges.isEmpty
+            try check(legacyFlags && legacyStaff && legacy.judging.isEmpty, "older events decode without staff or tournament options")
+            try check(legacy.selfRole == .player, "older events decode as a player")
+            legacyJSON["selfRole"] = "a-future-role"
+            try check(try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: legacyJSON)).selfRole == .player, "an unknown role reads as a player")
+            var knockout = hosted; knockout.createdAt = base; knockout.knockout = true; knockout.judging = "拍手"; knockout.selfRole = .reserve; knockout.impromptuTeams = true
+            try check(try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(knockout)) == knockout, "roles, staff, format and judging roundtrip")
+        }
+
+        // 0.10 host groups are kept apart from players: a group directory with
+        // members and host history, renames, and converting an old organizer.
+        do {
+            let groupDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriGroups-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: groupDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: groupDirectory) }
+            let groupStore = GiriStore(directory: groupDirectory)
+            var byGroup = GiriEvent(title: "団体の会"); byGroup.eventFormat = .live; byGroup.organizer = "大喜利会"; byGroup.organizerIsGroup = true
+            byGroup.participants = ["参加者A"]
+            try groupStore.saveEvent(byGroup)
+            try check(groupStore.groupDirectory.map(\.name) == ["大喜利会"] && groupStore.groupDirectory[0].id.hasPrefix("history:"), "a group organizer appears in the group directory")
+            try check(!groupStore.playerDirectory.contains { $0.name == "大喜利会" } && groupStore.playerDirectory.contains { $0.name == "参加者A" }, "a group organizer stays out of the player list")
+            guard var group = groupStore.groupByName("大喜利会") else { throw GiriDataError.invalid("Missing group") }
+            group.members = ["メンバーB", " メンバーB ", ""]; group.furigana = "おおぎりかい"
+            try groupStore.saveGroup(group)
+            try check(groupStore.groups.count == 1 && groupStore.groups[0].members == ["メンバーB"] && !groupStore.groups[0].id.hasPrefix("history:"), "saving a group keeps one trimmed member list")
+            try check(groupStore.playerDirectory.contains { $0.name == "メンバーB" }, "group members are players")
+            var renamed = groupStore.groups[0]; renamed.name = "新しい大喜利会"
+            try groupStore.saveGroup(renamed)
+            try check(groupStore.events[0].organizer == "新しい大喜利会" && groupStore.eventsHosted(byGroup: "新しい大喜利会").count == 1, "renaming a group renames its hosted events")
+            if var member = groupStore.playerByName("メンバーB") { member.name = "メンバーC"; try groupStore.savePlayer(member) }
+            try check(groupStore.groups[0].members == ["メンバーC"] && groupStore.events[0].organizer == "新しい大喜利会", "renaming a player renames group members but not a group organizer")
+            var duplicate = GiriGroup(name: "新しい大喜利会")
+            var refused = false
+            do { try groupStore.saveGroup(duplicate) } catch { refused = true }
+            try check(refused, "group names stay unique")
+            duplicate.name = "別の団体"; try groupStore.saveGroup(duplicate)
+            // 以前プレイヤーとして主催者に入れた団体名を団体にする。
+            try groupStore.savePlayer(GiriPlayer(name: "古い団体", furigana: "ふるいだんたい"))
+            var oldStyle = GiriEvent(title: "昔の会"); oldStyle.eventFormat = .live; oldStyle.organizer = "古い団体"
+            try groupStore.saveEvent(oldStyle)
+            let converted = try groupStore.convertPlayerToGroup("古い団体")
+            try check(converted.furigana == "ふるいだんたい" && groupStore.events.first { $0.id == oldStyle.id }?.organizerIsGroup == true && !groupStore.players.contains { $0.name == "古い団体" } && groupStore.groupByName("古い団体") != nil, "an old organizer becomes a group and leaves the player list")
+            try check(try GiriJSON.decode(groupStore.exportBackup()) == groupStore.document, "groups roundtrip in schema one")
+            var legacyDocument = try JSONSerialization.jsonObject(with: groupStore.exportBackup()) as? [String: Any] ?? [:]
+            legacyDocument.removeValue(forKey: "groups")
+            try check(try GiriJSON.decode(JSONSerialization.data(withJSONObject: legacyDocument)).groups.isEmpty, "older backups without groups decode")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

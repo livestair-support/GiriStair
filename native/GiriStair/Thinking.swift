@@ -632,6 +632,7 @@ struct GiriRoundWorkspace: View {
 @MainActor
 struct GiriRoundWorkspaceSections: View {
     @EnvironmentObject private var store: GiriStore
+    @EnvironmentObject private var navigation: GiriNavigation
     let eventID: String
     let roundID: String
     @State private var editing: ThoughtNote?
@@ -691,7 +692,8 @@ struct GiriRoundWorkspaceSections: View {
                 GiriThoughtPeriodRow(title: "投稿", start: round.submissionStart, end: round.submissionEnd, enabled: round.submissionEnabled, accent: AppSectionAccent.artist)
                 GiriThoughtPeriodRow(title: "投票", start: round.votingStart, end: round.votingEnd, enabled: round.votingRequired, accent: AppSectionAccent.memo)
                 if event.meetingType == .tournament {
-                    NavigationLink { GiriResultEntry(eventID: eventID, initialRoundID: roundID) } label: { Label("この回の結果", systemImage: "trophy") }
+                    Button { navigation.openResultEntry(eventID, roundID: roundID) } label: { Label("この回の結果", systemImage: "trophy") }
+                        .tint(accentActionColor)
                 }
             } else {
                 Text("日程は削除されています。保存したお題と回答は残っています。").font(.subheadline).foregroundStyle(.secondary)

@@ -689,6 +689,8 @@ struct GiriPlayerDetail: View {
     @State private var photo: PhotosPickerItem?
     @State private var deletingIcon = false
     @State private var loadingIcon = false
+    @State private var convertingToGroup = false
+    @State private var convertedGroupID: String?
 
     private var player: GiriPlayer? { store.playerDirectory.first { $0.id == (resolvedID ?? playerID) } }
 
@@ -722,6 +724,10 @@ struct GiriPlayerDetail: View {
                     Button("キャンセル", role: .cancel) {}
                     Button("削除", role: .destructive) { removeIcon(player) }
                 } message: { Text("このプレイヤーのアイコンを削除します。") }
+                .alert("団体にしますか？", isPresented: $convertingToGroup) {
+                    Button("キャンセル", role: .cancel) {}
+                    Button("団体にする") { convertToGroup(player) }
+                } message: { Text("「\(player.name)」が主催した会を、団体の主催にします。参加者などとして使われていなければ、プレイヤー一覧から外れて主催団体一覧に入ります。") }
             } else {
                 CenteredEmptyMessage(systemImage: "person", title: "プレイヤーが見つかりません")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -729,6 +735,7 @@ struct GiriPlayerDetail: View {
         }
         .navigationTitle("プレイヤー詳細")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $convertedGroupID) { GiriGroupDetail(groupID: $0) }
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(appBackgroundColor, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
@@ -740,7 +747,7 @@ struct GiriPlayerDetail: View {
     private func basicPage(_ player: GiriPlayer) -> some View {
         let key = playerSearchKey(player.name)
         let together = store.events.filter { $0.isActualParticipant && giriEventPeople($0).contains { playerSearchKey($0) == key } }
-        let hosted = store.events.filter { $0.isActualParticipant && playerSearchKey($0.organizer) == key }
+        let hosted = store.events.filter { $0.isActualParticipant && $0.isHosted(byKey: key) }
         let favorites = store.notes.flatMap(\.otherAnswerRecords).filter { playerSearchKey($0.answerer) == key }
         let authored = store.notes.filter { playerSearchKey($0.promptAuthor) == key }
         return ScrollView {
@@ -776,8 +783,23 @@ struct GiriPlayerDetail: View {
                         GiriProfileShortcutRow(title: "主催した会", systemImage: "person.crop.circle", accentColor: AppSectionAccent.live,
                                                countText: "\(hosted.count)件") {
                             GiriProfileRecordsPage(title: "\(player.name)の主催") { event in
-                                playerSearchKey(event.organizer) == key
+                                event.isHosted(byKey: key)
                             }
+                        }
+                        // 所属している団体（主催団体一覧のメンバー）。
+                        let memberships = store.groupDirectory.filter { $0.members.contains { playerSearchKey($0) == key } }
+                        ForEach(memberships) { group in
+                            Divider().overlay(appSeparatorColor)
+                            GiriProfileShortcutRow(title: "所属：" + group.name, systemImage: "person.3", accentColor: AppSectionAccent.artist) {
+                                GiriGroupDetail(groupID: group.id)
+                            }
+                        }
+                        // 以前プレイヤーとして入れた団体名を、主催団体に移す。
+                        if !store.preferences.selfKeys.contains(key) && store.events.contains(where: { !$0.organizerIsGroup && playerSearchKey($0.organizer) == key }) {
+                            Divider().overlay(appSeparatorColor)
+                            Button { convertingToGroup = true } label: {
+                                GiriProfileShortcutLabel(title: "この名前を団体にする", systemImage: "person.3.sequence", accentColor: accentActionColor)
+                            }.buttonStyle(.plain)
                         }
                     }
                 }
@@ -869,6 +891,14 @@ struct GiriPlayerDetail: View {
         } catch { store.errorMessage = error.localizedDescription }
     }
 
+    private func convertToGroup(_ player: GiriPlayer) {
+        store.run {
+            let group = try store.convertPlayerToGroup(player.name)
+            convertedGroupID = store.groupByName(group.name)?.id
+            playLiveStairSaveFeedback()
+        }
+    }
+
     private func removeIcon(_ player: GiriPlayer) {
         var updated = player
         updated.iconDataBase64 = ""
@@ -893,13 +923,17 @@ struct GiriPlayerDetail: View {
             year == "all" || giriAnalyticsDate(event).map { String(Calendar(identifier: .gregorian).component(.year, from: $0)) } == year
         }
         let period = completed.filter(inYear)
-        let hosted = store.events.filter { $0.isCountableParticipation(now: now) && playerSearchKey($0.organizer) == key && inYear($0) }
+        // 主催は共催も含める。MC・審査員は別に数える。
+        let hosted = store.events.filter { $0.isCountableParticipation(now: now) && $0.isHosted(byKey: key) && inYear($0) }
+        let staffed = store.events.filter { $0.isCountableParticipation(now: now) && $0.isMCOrJudge(byKey: key) && inYear($0) }
         let ordered = completed.filter { giriAnalyticsDate($0) != nil }.sorted { (giriAnalyticsDate($0) ?? .distantPast) < (giriAnalyticsDate($1) ?? .distantPast) }
         let upcoming = together.filter { [.upcoming, .ongoing].contains($0.participationState(now: now)) }
             .sorted { (giriAnalyticsDate($0) ?? .distantFuture) < (giriAnalyticsDate($1) ?? .distantFuture) }
         let podiums = store.events.filter { $0.isCountableParticipation(now: now) && inYear($0) }.flatMap { event -> [(GiriEvent, TournamentStanding)] in
             event.standings.filter { standing in standing.playerNames.contains { playerSearchKey($0) == key } }.map { (event, $0) }
         }.sorted { $0.1.placement < $1.1.placement }
+        // 同じ組・対戦相手として記録した段階（自分の結果）。
+        let meetings = giriOpponentMeetings(store.events.filter(inYear), playerKey: key, now: now)
         let venues = giriRankItems(period.filter { $0.eventFormat.hasLiveTiming }.map { [$0.venue] })
         let coPlayers = giriRankItems(period.map(giriEventPeople), excluding: selfKeys.union([key]))
         let accent = AppSectionAccent.artist
@@ -917,9 +951,16 @@ struct GiriPlayerDetail: View {
                                         total: mine.filter(inYear).count, caption: "一緒に参加", accentColor: accent)
                     }
                     HStack {
-                        Text("主催した会").font(.subheadline).foregroundStyle(.secondary)
+                        Text("主催した会（共催を含む）").font(.subheadline).foregroundStyle(.secondary)
                         Spacer()
                         Text("\(hosted.count)回").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    }
+                    if !staffed.isEmpty {
+                        HStack {
+                            Text("MC・審査員").font(.subheadline).foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(staffed.count)回").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                        }
                     }
                     Divider().overlay(appSeparatorColor)
                     GiriProfileDateRow(title: "初めて一緒に参加した日", event: ordered.first)
@@ -952,6 +993,11 @@ struct GiriPlayerDetail: View {
                                 if index < podiums.count - 1 { Divider().overlay(appSeparatorColor) }
                             }
                         }
+                    }
+                }
+                if !selfKeys.contains(key) {
+                    GiriDetailCard(title: "対戦の記録", systemImage: "person.2.fill", accentColor: AppSectionAccent.ticket) {
+                        GiriOpponentRecordContent(meetings: meetings)
                     }
                 }
                 GiriRankingCard(title: "よく一緒になる会場", systemImage: "building.2", accentColor: AppSectionAccent.venue,
@@ -1598,3 +1644,48 @@ struct GiriMapSearchView: View {
         } catch { store.errorMessage = error.localizedDescription }
     }
 }
+
+/// プレイヤー詳細の「対戦の記録」：同じ組・対戦相手として記録した回数と、その時に自分が勝ち抜けた回数。
+private struct GiriOpponentRecordContent: View {
+    let meetings: [GiriMeeting]
+    var body: some View {
+        if meetings.isEmpty {
+            Text("同じ組・対戦相手として記録した段階はありません").font(.subheadline).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6)
+        } else {
+            VStack(spacing: 0) {
+                row("同じ組・対戦", "\(meetings.count)回")
+                Divider().overlay(appSeparatorColor)
+                row("自分が勝ち抜けた", "\(meetings.filter { $0.stage.passed == true }.count)回")
+                ForEach(Array(meetings.prefix(5))) { meeting in
+                    Divider().overlay(appSeparatorColor)
+                    NavigationLink { GiriEventDetail(eventID: meeting.event.id) } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(meeting.event.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
+                                Text(stageText(meeting.stage)).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right").font(.caption2.bold()).foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 10)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+    private func row(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            Spacer()
+            Text(value).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+        }.padding(.vertical, 8)
+    }
+    private func stageText(_ stage: ResultStage) -> String {
+        let result = giriStageResultText(stage)
+        return result.isEmpty ? stage.name : result
+    }
+}
+

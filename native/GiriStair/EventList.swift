@@ -144,8 +144,10 @@ struct GiriListView: View {
                 didInitializeFormat = true
             }
             consumeListRequest()
+            consumeDetailRequest()
         }
         .onChange(of: navigation.listRequest) { _, _ in consumeListRequest() }
+        .onChange(of: navigation.detailRequest) { _, _ in consumeDetailRequest() }
         .onChange(of: store.preferences.visibleFormatOrder) { previous, next in
             if selectedFormat == previous.first || !next.contains(selectedFormat) {
                 selectedFormat = next.first ?? .live
@@ -363,6 +365,18 @@ struct GiriListView: View {
         .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+    /// 戦績タブの結果入力などから、この一覧タブで詳細を開く。編集中の内容は消さない。
+    private func consumeDetailRequest() {
+        guard let request = navigation.detailRequest else { return }
+        navigation.detailRequest = nil
+        guard destinationID != request.eventID else { return }
+        if let editing = navigation.unsavedEditorEventID, editing != request.eventID {
+            store.errorMessage = "編集中の内容があります。保存するか破棄してから、もう一度開いてください。"
+            return
+        }
+        closePlayerDropdown()
+        destinationID = request.eventID
     }
     /// プレイヤー・会場詳細のショートカット。並び順の左から、該当する記録がある形式を開く。
     private func consumeListRequest() {
@@ -719,6 +733,10 @@ struct GiriEventCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 4) {
                     GiriListBadge(text: event.meetingType.title, color: accent)
+                    // 生大喜利で、プレイヤーとして出ない立場（主催・観覧・リザーバー）。
+                    if event.eventFormat == .live && event.selfRole != .player {
+                        GiriListBadge(text: event.selfRole.shortTitle(tournament: event.meetingType == .tournament), color: accent)
+                    }
                     if event.participationState() != .completed {
                         GiriListBadge(text: event.participationState().title, color: accent)
                     }
@@ -745,11 +763,12 @@ struct GiriEventCard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).layoutPriority(2)
             }
-            if !event.participants.isEmpty {
+            // チーム戦はチームのメンバーも出す（参加者ではなくチームとして入力するため）。
+            if !event.everyone.isEmpty {
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "person.2").font(.caption2.weight(.semibold))
                         .foregroundStyle(accent).frame(width: 15).padding(.top, 2)
-                    Text(event.participants.joined(separator: " / ")).font(.caption)
+                    Text(event.everyone.joined(separator: " / ")).font(.caption)
                         .foregroundStyle(.primary).lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)

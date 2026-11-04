@@ -21,6 +21,7 @@ final class GiriStore: ObservableObject {
     var notes: [ThoughtNote] { document.notes }
     var players: [GiriPlayer] { document.players }
     var venues: [GiriVenue] { document.venues }
+    var groups: [GiriGroup] { document.groups }
     var onlineSites: [OnlineSite] { document.onlineSites }
     var preferences: AppPreferences { document.preferences }
     var lastBackupAt: Date? { document.lastBackupAt }
@@ -76,12 +77,26 @@ final class GiriStore: ObservableObject {
     }
 
     private func referencedNames(_ event: GiriEvent) -> [String] {
-        [event.organizer] + event.participants + event.teams.flatMap(\.members) + (event.tournamentResult?.members ?? []) + event.standings.flatMap(\.playerNames)
+        // 団体の主催はプレイヤー一覧に入れない。（型チェックを軽くするため1つずつ足す）
+        var names: [String] = event.organizerIsGroup ? [] : [event.organizer]
+        names += event.coOrganizers
+        names += event.mcs
+        names += event.judges
+        names += event.participants
+        names += event.teams.flatMap(\.members)
+        names += event.tournamentResult?.members ?? []
+        names += event.standings.flatMap(\.playerNames)
+        return names
     }
 
     var playerDirectory: [GiriPlayer] {
         var profiles = Dictionary(players.map { (playerSearchKey($0.name), $0) }, uniquingKeysWith: { first, _ in first })
-        for name in [preferences.selfName] + preferences.selfAliases + events.flatMap(referencedNames) + notes.flatMap(\.referencedPeople) {
+        var sourceNames: [String] = [preferences.selfName]
+        sourceNames += preferences.selfAliases
+        sourceNames += events.flatMap(referencedNames)
+        sourceNames += notes.flatMap(\.referencedPeople)
+        sourceNames += groups.flatMap(\.members)
+        for name in sourceNames {
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             let key = playerSearchKey(trimmed)
             if !trimmed.isEmpty && profiles[key] == nil { profiles[key] = GiriPlayer(id: "history:\(key)", name: trimmed) }
@@ -106,6 +121,7 @@ final class GiriStore: ObservableObject {
     var referencedPlayerKeys: Set<String> {
         var keys = Set(events.flatMap(referencedNames).map(playerSearchKey))
         keys.formUnion(notes.flatMap(\.referencedPeople).map(playerSearchKey))
+        keys.formUnion(groups.flatMap(\.members).map(playerSearchKey))
         keys.remove("")
         return keys
     }
@@ -116,6 +132,25 @@ final class GiriStore: ObservableObject {
         return (Set(events.compactMap(\.venueId)), names)
     }
     func playerByName(_ name: String) -> GiriPlayer? { playerDirectory.first { playerSearchKey($0.name) == playerSearchKey(name) } }
+    /// 団体：保存した団体と、会で「団体」の主催者として入れた名前（プレイヤー一覧とは別）。
+    var groupDirectory: [GiriGroup] {
+        var values = Dictionary(groups.map { (playerSearchKey($0.name), $0) }, uniquingKeysWith: { first, _ in first })
+        for event in events where event.organizerIsGroup {
+            let name = event.organizer.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = playerSearchKey(name)
+            if !key.isEmpty && values[key] == nil { values[key] = GiriGroup(id: "history:\(key)", name: name) }
+        }
+        return values.values.sorted { ($0.furigana.isEmpty ? $0.name : $0.furigana).localizedStandardCompare($1.furigana.isEmpty ? $1.name : $1.furigana) == .orderedAscending }
+    }
+    func groupByName(_ name: String) -> GiriGroup? {
+        let key = playerSearchKey(name)
+        return key.isEmpty ? nil : groupDirectory.first { playerSearchKey($0.name) == key }
+    }
+    /// 団体が主催した会（団体として主催者に入れたもの）。
+    func eventsHosted(byGroup name: String) -> [GiriEvent] {
+        let key = playerSearchKey(name)
+        return events.filter { $0.organizerIsGroup && !key.isEmpty && playerSearchKey($0.organizer) == key }
+    }
     func venueById(_ id: String?) -> GiriVenue? { venueDirectory.first { $0.id == id } }
     func onlineSiteById(_ id: String?) -> OnlineSite? { onlineSites.first { $0.id == id } }
     func newId() -> String { UUID().uuidString }
@@ -123,7 +158,15 @@ final class GiriStore: ObservableObject {
     func suggestPlayers(_ query: String, organizer: Bool = false) -> [GiriPlayer] {
         var counts: [String: Int] = [:]
         for event in events where event.status != .canceled {
-            for name in organizer ? [event.organizer] : Array(Set(event.participants)) { counts[playerSearchKey(name), default: 0] += 1 }
+            // 主催の候補は共催も含め、参加者の候補はチームのメンバーも数える。
+            var names: [String]
+            if organizer {
+                names = event.organizerIsGroup ? [] : [event.organizer]
+                names += event.coOrganizers
+            } else {
+                names = event.everyone
+            }
+            for name in names { counts[playerSearchKey(name), default: 0] += 1 }
         }
         let key = playerSearchKey(query)
         return playerDirectory.filter { key.isEmpty || playerSearchKey($0.name).contains(key) || playerSearchKey($0.furigana).contains(key) }.sorted {
@@ -262,6 +305,54 @@ final class GiriStore: ObservableObject {
         }
     }
     func deletePlayer(_ id: String) throws { try mutate { $0.players.removeAll { $0.id == id } } }
+    func saveGroup(_ candidate: GiriGroup) throws {
+        var group = candidate
+        group.name = group.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        group.furigana = group.furigana.trimmingCharacters(in: .whitespacesAndNewlines)
+        group.url = group.url.trimmingCharacters(in: .whitespacesAndNewlines)
+        var seen = Set<String>()
+        group.members = group.members.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+        try group.validate()
+        let old = groupDirectory.first { $0.id == group.id }
+        guard !groupDirectory.contains(where: { $0.id != group.id && playerSearchKey($0.name) == playerSearchKey(group.name) }) else { throw GiriDataError.invalid("同じ名前の団体が登録されています。") }
+        if group.id.hasPrefix("history:") { group.id = newId() }
+        let saved = group
+        try mutate { next in
+            Self.upsert(saved, into: &next.groups)
+            // 団体名を変えたら、その団体が主催した会の主催者名も変える。
+            if let old, old.name != saved.name {
+                let key = playerSearchKey(old.name)
+                for index in next.events.indices where next.events[index].organizerIsGroup && playerSearchKey(next.events[index].organizer) == key {
+                    next.events[index].organizer = saved.name
+                }
+            }
+        }
+    }
+    func deleteGroup(_ id: String) throws { try mutate { $0.groups.removeAll { $0.id == id } } }
+    /// 主催者にプレイヤーとして入っていた名前を団体にする（その名前が主催した会を団体の主催にする）。
+    /// 参加者などで使われていない時だけ、保存済みのプレイヤーの記録を外す（フリガナ・メモは団体へ移す）。
+    @discardableResult
+    func convertPlayerToGroup(_ name: String) throws -> GiriGroup {
+        let key = playerSearchKey(name)
+        guard !key.isEmpty else { throw GiriDataError.invalid("名前がありません。") }
+        let player = players.first { playerSearchKey($0.name) == key }
+        var group = groups.first { playerSearchKey($0.name) == key } ?? GiriGroup(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
+        if group.furigana.isEmpty { group.furigana = player?.furigana ?? "" }
+        if group.memo.isEmpty { group.memo = player?.memo ?? "" }
+        let saved = group
+        try mutate { next in
+            for index in next.events.indices where !next.events[index].organizerIsGroup && playerSearchKey(next.events[index].organizer) == key {
+                next.events[index].organizerIsGroup = true
+            }
+            Self.upsert(saved, into: &next.groups)
+            let inEvents = next.events.contains { event in self.referencedNames(event).contains { playerSearchKey($0) == key } }
+            let inNotes = next.notes.contains { note in note.referencedPeople.contains { playerSearchKey($0) == key } }
+            let inGroups = next.groups.contains { group in group.members.contains { playerSearchKey($0) == key } }
+            if !inEvents && !inNotes && !inGroups { next.players.removeAll { playerSearchKey($0.name) == key } }
+        }
+        return saved
+    }
     func savePreferences(_ candidate: AppPreferences) throws {
         var preferences = candidate
         preferences.selfName = preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -290,12 +381,21 @@ final class GiriStore: ObservableObject {
         let key = playerSearchKey(old)
         func rename(_ value: String) -> String { playerSearchKey(value) == key ? name : value }
         for index in next.events.indices {
-            next.events[index].organizer = rename(next.events[index].organizer)
+            // 団体の主催者名はプレイヤーの名前変更で変えない。
+            if !next.events[index].organizerIsGroup { next.events[index].organizer = rename(next.events[index].organizer) }
+            next.events[index].coOrganizers = next.events[index].coOrganizers.map(rename)
+            next.events[index].mcs = next.events[index].mcs.map(rename)
+            next.events[index].judges = next.events[index].judges.map(rename)
             next.events[index].participants = next.events[index].participants.map(rename)
             for team in next.events[index].teams.indices { next.events[index].teams[team].members = next.events[index].teams[team].members.map(rename) }
             for standing in next.events[index].standings.indices { next.events[index].standings[standing].playerNames = next.events[index].standings[standing].playerNames.map(rename) }
-            if var result = next.events[index].tournamentResult { result.members = result.members.map(rename); next.events[index].tournamentResult = result }
+            if var result = next.events[index].tournamentResult {
+                result.members = result.members.map(rename)
+                for stage in result.stages.indices { result.stages[stage].opponents = result.stages[stage].opponents.map(rename) }
+                next.events[index].tournamentResult = result
+            }
         }
+        for index in next.groups.indices { next.groups[index].members = next.groups[index].members.map(rename) }
         for index in next.notes.indices {
             if next.notes[index].isOthersAnswer { next.notes[index].answerer = rename(next.notes[index].answerer) }
             next.notes[index].promptAuthor = rename(next.notes[index].promptAuthor)

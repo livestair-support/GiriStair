@@ -10,7 +10,6 @@ struct GiriEventDetail: View {
     @State private var deleteQuestion = false
     @State private var showResultPrompt = false
     @State private var promptRoundID: String?
-    @State private var showResultEditor = false
     @State private var showCycleEditor = false
     @State private var nextDraft: GiriRoundDraftAction?
 
@@ -21,7 +20,13 @@ struct GiriEventDetail: View {
             if let event {
                 Form {
                     basic(event)
-                    if !event.participants.isEmpty && !(event.eventFormat.isOnline && event.meetingType == .tournament) { participants(event) }
+                    if event.meetingType == .tournament && event.tournamentFormat != .individual {
+                        // チーム戦はチームとして表示し、チームに分けていない参加者（即席チーム）だけを出す。
+                        if !event.unassignedParticipants.isEmpty { participants(event.unassignedParticipants, title: "チーム未定の参加者", numbered: false) }
+                    } else if !event.participants.isEmpty && !(event.eventFormat.isOnline && event.meetingType == .tournament) {
+                        let bracket = event.knockout && event.meetingType == .tournament
+                        participants(event.participants, title: bracket ? "トーナメント表" : "参加者", numbered: bracket)
+                    }
                     teams(event)
                     thoughtsLink(event)
                     if event.eventFormat.hasOnlineRounds {
@@ -86,12 +91,9 @@ struct GiriEventDetail: View {
             Button("後で", role: .cancel) {}
             Button("入力する") {
                 if event?.meetingType == .casual && event?.onlineSiteId != nil { showCycleEditor = true }
-                else { showResultEditor = true }
+                else { navigation.openResultEntry(eventID, roundID: promptRoundID) }
             }
         } message: { Text(resultPromptMessage) }
-        .sheet(isPresented: $showResultEditor) {
-            NavigationStack { GiriResultEntry(eventID: eventID, initialRoundID: promptRoundID) }
-        }
         .sheet(isPresented: $showCycleEditor) { NavigationStack { GiriCycleResultEditor(eventID: eventID) } }
         .sheet(item: $nextDraft) { action in
             NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
@@ -103,6 +105,14 @@ struct GiriEventDetail: View {
             GiriEventCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live).listRowSeparator(.hidden)
             detailValue("形式", event.eventFormat.title)
             detailValue("会の種類", event.meetingType.title)
+            if event.meetingType == .tournament {
+                detailValue("参加形式", giriTournamentFormatText(event))
+                if event.eventFormat == .live && event.knockout { detailValue("対戦形式", "トーナメント（1対1）") }
+                if !event.judging.isEmpty { detailValue("審査方法", event.judging) }
+            }
+            if event.eventFormat == .live && event.selfRole != .player {
+                detailValue("自分の立場", event.selfRole.shortTitle(tournament: event.meetingType == .tournament))
+            }
             if !event.isActualParticipant && event.status != .canceled {
                 Button {
                     guard var current = self.event else { return }
@@ -136,13 +146,22 @@ struct GiriEventDetail: View {
                     detailValueText("#" + event.hashtag).textSelection(.enabled)
                 }
             }
-            if !event.organizer.isEmpty {
+            if !event.organizer.isEmpty && event.organizerIsGroup {
+                if let group = store.groupByName(event.organizer) {
+                    NavigationLink { GiriGroupDetail(groupID: group.id) } label: {
+                        HStack { Text("主催者").foregroundStyle(.secondary); Spacer(); detailValueText(event.organizerText) }
+                    }
+                } else { detailValue("主催者", event.organizerText) }
+            } else if !event.organizer.isEmpty {
                 if let player = store.playerByName(event.organizer) {
                     NavigationLink { GiriPlayerDetail(playerID: player.id) } label: {
                         HStack { Text("主催者").foregroundStyle(.secondary); Spacer(); detailValueText(event.organizer) }
                     }
                 } else { detailValue("主催者", event.organizer) }
             }
+            if !event.coOrganizers.isEmpty { detailValue("共催", event.coOrganizers.joined(separator: "・")) }
+            if !event.mcs.isEmpty { detailValue("MC", event.mcs.joined(separator: "・")) }
+            if !event.judges.isEmpty { detailValue("審査員", event.judges.joined(separator: "・")) }
             if event.eventFormat.hasLiveTiming {
                 if let day = event.eventDate ?? event.startsAt {
                     HStack {
@@ -188,13 +207,16 @@ struct GiriEventDetail: View {
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.live)
     }
 
-    private func participants(_ event: GiriEvent) -> some View {
+    private func participants(_ names: [String], title: String, numbered: Bool) -> some View {
         Section {
-            GiriEventCardSectionTitle(title: "参加者", systemImage: "person.2", accentColor: AppSectionAccent.artist)
-                .overlay(alignment: .trailing) { Text("\(event.participants.count)人").font(.subheadline).foregroundStyle(.secondary) }
+            GiriEventCardSectionTitle(title: title, systemImage: numbered ? "list.number" : "person.2", accentColor: AppSectionAccent.artist)
+                .overlay(alignment: .trailing) { Text("\(names.count)人").font(.subheadline).foregroundStyle(.secondary) }
                 .listRowSeparator(.hidden)
-            ForEach(Array(event.participants.enumerated()), id: \.offset) { _, name in
-                playerRow(name)
+            ForEach(Array(names.enumerated()), id: \.offset) { index, name in
+                HStack(spacing: 8) {
+                    if numbered { Text("\(index + 1)").font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 22, alignment: .trailing) }
+                    playerRow(name)
+                }
             }
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
     }
@@ -236,10 +258,17 @@ struct GiriEventDetail: View {
     }
 
     @ViewBuilder private func resultSections(_ event: GiriEvent) -> some View {
+        if event.isSelfPlayer { ownResultSection(event) }
+        standingsSection(event)
+    }
+
+    private func ownResultSection(_ event: GiriEvent) -> some View {
         Section {
             HStack {
                 GiriEventCardSectionTitle(title: "自分の結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket)
-                NavigationLink { GiriResultEntry(eventID: eventID) } label: { Text(event.hasRecordedResult ? "編集" : "記録").font(.subheadline) }
+                // 結果入力は戦績タブで開く（この詳細は一覧タブに残る）。
+                Button { navigation.openResultEntry(eventID) } label: { Text(event.hasRecordedResult ? "編集" : "記録").font(.subheadline) }
+                    .buttonStyle(.borderless)
                     .tint(accentActionColor)
             }.listRowSeparator(.hidden)
             if event.hasFinalResult {
@@ -251,7 +280,8 @@ struct GiriEventDetail: View {
             if let result = event.tournamentResult, !result.memo.isEmpty { Text(result.memo).textSelection(.enabled) }
             else if !event.resultText.isEmpty { Text(event.resultText).textSelection(.enabled) }
             ForEach(event.tournamentResult?.stages ?? []) { stage in
-                NavigationLink { GiriResultEntry(eventID: eventID, initialRoundID: stage.roundId, initialStageID: stage.id) } label: {
+                Button { navigation.openResultEntry(eventID, roundID: stage.roundId, stageID: stage.id) } label: {
+                    HStack(alignment: .center, spacing: 8) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(stage.name).font(.headline).foregroundStyle(.primary)
                         let format = [stage.group, stage.lineup, stage.judging].filter { !$0.isEmpty }
@@ -268,12 +298,30 @@ struct GiriEventDetail: View {
                         }
                         if !stage.memo.isEmpty { Text(stage.memo).font(.subheadline).foregroundStyle(.secondary) }
                     }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                    }.contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
-        if !event.standings.isEmpty {
+    }
+
+    /// 大会の上位成績。プレイヤーとして出ていない大会（主催・観覧など）は、ここから記録する。
+    @ViewBuilder private func standingsSection(_ event: GiriEvent) -> some View {
+        if !event.standings.isEmpty || !event.isSelfPlayer {
             Section {
-                GiriEventCardSectionTitle(title: "大会の上位成績", systemImage: "medal", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
+                HStack {
+                    GiriEventCardSectionTitle(title: "大会の上位成績", systemImage: "medal", accentColor: AppSectionAccent.ticket)
+                    if !event.isSelfPlayer {
+                        Button { navigation.openResultEntry(eventID) } label: { Text(event.standings.isEmpty ? "記録" : "編集").font(.subheadline) }
+                            .buttonStyle(.borderless)
+                            .tint(accentActionColor)
+                    }
+                }.listRowSeparator(.hidden)
+                if event.standings.isEmpty {
+                    Text("まだ記録がありません").font(.subheadline).foregroundStyle(.secondary)
+                }
                 ForEach(event.standings.sorted { $0.placement < $1.placement }) { standing in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
@@ -365,13 +413,15 @@ struct GiriEventDetail: View {
                 Label("この回のお題/回答を開く", systemImage: "lightbulb")
             }.tint(accentActionColor)
             if event.meetingType == .tournament {
-                NavigationLink { GiriResultEntry(eventID: eventID, initialRoundID: round.id) } label: {
+                Button { navigation.openResultEntry(eventID, roundID: round.id) } label: {
                     HStack {
-                        Text("この回の結果")
+                        Text("この回の結果").foregroundStyle(.primary)
                         Spacer()
                         Text(roundResult(event, round: round)).foregroundStyle(.secondary)
-                    }
+                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                    }.contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
     }
@@ -419,7 +469,7 @@ struct GiriEventDetail: View {
     }
 
     private func offerResultIfNeeded() {
-        guard let event, event.isActualParticipant else { return }
+        guard let event, event.isActualParticipant, event.isSelfPlayer else { return }
         guard event.meetingType == .tournament || event.onlineSiteId != nil else { return }
         let now = Date()
         if event.eventFormat.hasOnlineRounds && !event.effectiveRounds.isEmpty {

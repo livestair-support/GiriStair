@@ -259,7 +259,7 @@ func giriScoreText(_ value: Double) -> String { value.formatted(.number.precisio
 /// 大会の最終結果の選択肢。保存は従来の outcome（優勝・準優勝・入賞・敗退…）と
 /// 順位・ベスト○に分け、3位とベスト4を戦績で区別できるようにする。
 enum GiriFinalResultChoice: String, CaseIterable, Identifiable {
-    case unrecorded, champion, runnerUp, third, best4, best8, best16, placed, eliminated, other
+    case unrecorded, champion, runnerUp, third, finalist, best4, best8, best16, placed, eliminated, other
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -267,6 +267,7 @@ enum GiriFinalResultChoice: String, CaseIterable, Identifiable {
         case .champion: return "優勝"
         case .runnerUp: return "準優勝"
         case .third: return "3位"
+        case .finalist: return "決勝進出"
         case .best4: return "ベスト4"
         case .best8: return "ベスト8"
         case .best16: return "ベスト16"
@@ -283,7 +284,8 @@ enum GiriFinalResultChoice: String, CaseIterable, Identifiable {
         default: return nil
         }
     }
-    static func current(outcome: TournamentOutcome, placement: Int?, bestOf: Int?) -> GiriFinalResultChoice {
+    static func current(outcome: TournamentOutcome, placement: Int?, bestOf: Int?, finalist: Bool = false) -> GiriFinalResultChoice {
+        if finalist && outcome == .placed && bestOf == nil { return .finalist }
         switch outcome {
         case .unrecorded: return .unrecorded
         case .champion: return .champion
@@ -304,7 +306,7 @@ enum GiriFinalResultChoice: String, CaseIterable, Identifiable {
         case .unrecorded: return .unrecorded
         case .champion: return .champion
         case .runnerUp: return .runnerUp
-        case .third, .best4, .best8, .best16, .placed: return .placed
+        case .third, .finalist, .best4, .best8, .best16, .placed: return .placed
         case .eliminated: return .eliminated
         case .other: return .other
         }
@@ -346,6 +348,17 @@ extension GiriEvent {
         case .runnerUp: return "準優勝"
         case .placed:
             if let best = result.bestOf { return "ベスト\(best)" }
+            if result.finalist {
+                // 3位以上は順位で、それ以外は「決勝進出」（順位・人数は分かる時だけ添える）。
+                switch placement {
+                case 1?: return "優勝"
+                case 2?: return "準優勝"
+                case 3?: return "3位"
+                default:
+                    let detail = [result.finalEntrants.map { "\($0)人中" }, placement.map { "\($0)位" }].compactMap { $0 }.joined()
+                    return detail.isEmpty ? "決勝進出" : "決勝進出（\(detail)）"
+                }
+            }
             return placement.map { "\($0)位" } ?? "入賞"
         case .eliminated: return eliminationTitle
         case .advanced: return "通過"
@@ -371,7 +384,7 @@ extension EventRound {
 
 extension GiriEvent {
     func endedRoundsNeedingResult(now: Date = Date()) -> [EventRound] {
-        guard isActualParticipant, eventFormat.hasOnlineRounds else { return [] }
+        guard isActualParticipant, isSelfPlayer, eventFormat.hasOnlineRounds else { return [] }
         return effectiveRounds.filter { round in
             guard let end = round.votingEnd, end <= now else { return false }
             return !hasRecordedResult(for: round) && !promptedResultKeys.contains(round.resultPromptKey)
@@ -423,5 +436,392 @@ extension AppPreferences {
 func giriIsOtherPlacement(_ event: GiriEvent) -> Bool {
     let rank = event.effectivePlacement
     guard rank != 1, rank != 2, !event.isThirdPlace, !event.isBest(4) else { return false }
+    // 決勝進出は「決勝進出」として別に数える。
+    if event.tournamentResult?.finalist == true { return false }
     return (rank ?? 0) > 3 || event.tournamentResult?.outcome == .placed
 }
+
+/// 大会の参加形式（「個人戦」「チーム戦（3人）」）。登録の基本情報と同じ値を詳細・結果入力で使う。
+func giriTournamentFormatText(_ event: GiriEvent) -> String {
+    switch event.tournamentFormat {
+    case .individual: return "個人戦"
+    case .pair: return "タッグ戦（2人）"
+    case .team:
+        guard let size = event.teamSize else { return "チーム戦" }
+        return "チーム戦（\(size)人）"
+    }
+}
+
+extension GiriEvent {
+    /// この会で入力済みの名前（参加者・チームのメンバー・上位成績）。結果入力の候補に先に出す。
+    var enteredPlayerNames: [String] {
+        var seen = Set<String>()
+        return (participants + teams.flatMap(\.members) + standings.flatMap(\.playerNames))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    }
+}
+
+// MARK: - 0.10 段階の種類・結果のまとめ・トーナメント表
+
+/// 段階名から種類の初期値を決める（ユーザーが選んだ種類があればそちらを使う）。
+/// 「予選決勝」は予選、「決勝トーナメント」「決勝リーグ」は本戦として扱う。
+func giriInferredStageKind(_ name: String) -> StageKind {
+    let value = name.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+    guard !value.isEmpty else { return .other }
+    func has(_ words: [String]) -> Bool { words.contains { value.contains($0) } }
+    if has(["敗者復活", "3位決定", "３位決定", "三位決定", "エキシビション"]) { return .other }
+    if has(["予選"]) { return .qualifier }
+    if has(["準々決勝", "クォーターファイナル"]) { return .quarterfinal }
+    if has(["準決勝", "セミファイナル"]) { return .semifinal }
+    if has(["決勝トーナメント", "決勝リーグ", "決勝ラウンド"]) { return .main }
+    if has(["決勝", "ファイナル"]) { return .final }
+    if has(["本戦", "本選", "回戦", "ラウンド"]) { return .main }
+    return .other
+}
+
+extension ResultStage {
+    var effectiveKind: StageKind { kind ?? giriInferredStageKind(name) }
+    /// 段階を勝ち抜いたか（通過・優勝）。敗退・準優勝・入賞は勝ち抜いていない。未記録・その他は nil。
+    var passed: Bool? {
+        switch outcome {
+        case .advanced, .champion: return true
+        case .eliminated, .runnerUp, .placed: return false
+        case .unrecorded, .other: return nil
+        }
+    }
+    fileprivate var hasOutcomeRecord: Bool { outcome != .unrecorded || placement != nil }
+}
+
+extension GiriEvent {
+    /// 決勝に出たか：優勝・準優勝・決勝進出、または決勝の段階に結果がある。
+    var reachedFinal: Bool {
+        if let result = tournamentResult {
+            if result.finalist || result.outcome == .champion || result.outcome == .runnerUp { return true }
+            if stageResults.contains(where: { $0.effectiveKind == .final && $0.hasOutcomeRecord }) { return true }
+        }
+        return effectivePlacement == 1 || effectivePlacement == 2
+    }
+    /// どこまで進んだか（予選＜本戦＜準々決勝＜準決勝＜決勝）。記録から分からなければ nil。
+    /// 通過した段階は次の深さまで進んだとみなす（予選通過→本戦、準決勝通過→決勝）。
+    var furthestStageKind: StageKind? {
+        if reachedFinal { return .final }
+        var depth = -1
+        for stage in stageResults where stage.hasOutcomeRecord {
+            guard var reached = stage.effectiveKind.depth else { continue }
+            if stage.passed == true {
+                switch stage.effectiveKind {
+                case .qualifier, .quarterfinal, .semifinal: reached += 1
+                default: break
+                }
+            }
+            depth = max(depth, reached)
+        }
+        if let result = tournamentResult, result.outcome == .placed, let bestOf = result.bestOf {
+            if bestOf <= 4 { depth = max(depth, StageKind.semifinal.depth ?? 0) }
+            else if bestOf <= 8 { depth = max(depth, StageKind.quarterfinal.depth ?? 0) }
+        }
+        return StageKind.allCases.first { $0.depth == depth }
+    }
+    /// 予選（予選がない大会は最初の段階）を通過したか。分からなければ nil。
+    var qualifierPassed: Bool? {
+        let stages = stageResults
+        let qualifiers = stages.filter { $0.effectiveKind == .qualifier }
+        let target: [ResultStage]
+        if !qualifiers.isEmpty { target = qualifiers }
+        else if let first = stages.first, first.effectiveKind != .final { target = [first] }
+        else if stages.isEmpty, let result = tournamentResult, result.outcome == .placed || reachedFinal { return true }
+        else { return nil }
+        if target.contains(where: { $0.outcome == .eliminated }) { return false }
+        let targetIDs = Set(target.map(\.id))
+        if reachedFinal || stages.contains(where: { !targetIDs.contains($0.id) && $0.hasOutcomeRecord }) { return true }
+        if target.last?.passed == true { return true }
+        if let result = tournamentResult, result.outcome == .placed { return true }
+        return nil
+    }
+}
+
+/// 戦績のまとめ（終了した参加済みの大会）。3位とベスト4は分けて数え、決勝進出は優勝・準優勝を含む。
+struct GiriTournamentSummary: Equatable {
+    var completed = 0
+    var champions = 0
+    var runnersUp = 0
+    var thirds = 0
+    var bestFours = 0
+    var finalists = 0
+    var qualifierPassed = 0
+    var qualifierKnown = 0
+    var individualChampions = 0
+    var teamChampions = 0
+    var individualCount = 0
+    var teamCount = 0
+    var furthest: [StageKind: Int] = [:]
+}
+
+func giriTournamentSummary(_ events: [GiriEvent], now: Date = Date()) -> GiriTournamentSummary {
+    var value = GiriTournamentSummary()
+    for event in events where event.meetingType == .tournament && event.isSelfPlayer && event.isCountableParticipation(now: now) {
+        let team = event.tournamentFormat != .individual
+        value.completed += 1
+        if team { value.teamCount += 1 } else { value.individualCount += 1 }
+        if event.effectivePlacement == 1 {
+            value.champions += 1
+            if team { value.teamChampions += 1 } else { value.individualChampions += 1 }
+        }
+        if event.effectivePlacement == 2 { value.runnersUp += 1 }
+        if event.isThirdPlace { value.thirds += 1 }
+        if event.isBest(4) { value.bestFours += 1 }
+        if event.reachedFinal { value.finalists += 1 }
+        if let passed = event.qualifierPassed {
+            value.qualifierKnown += 1
+            if passed { value.qualifierPassed += 1 }
+        }
+        if let kind = event.furthestStageKind { value.furthest[kind, default: 0] += 1 }
+    }
+    return value
+}
+
+/// 率の行（例：横並び5人 3/5）。
+struct GiriRateRow: Identifiable, Equatable {
+    var label: String
+    var passed: Int
+    var total: Int
+    var id: String { label }
+}
+
+/// 割合の表示（例：60%）。分母が0なら「—」。
+func giriRateText(_ passed: Int, _ total: Int) -> String {
+    guard total > 0 else { return "—" }
+    return "\(Int((Double(passed) * 100 / Double(total)).rounded()))%"
+}
+
+/// 段階の形式・審査方法などごとの勝ち抜き率（通過・優勝 ÷ 結果を入れた段階）。
+/// key は大会と段階から分類名を返す（段階が空なら大会の審査方法・対戦形式を使うなど）。
+func giriStagePassRates(_ events: [GiriEvent], now: Date = Date(), by key: (GiriEvent, ResultStage) -> String) -> [GiriRateRow] {
+    var counts: [String: (label: String, passed: Int, total: Int)] = [:]
+    for event in events where event.meetingType == .tournament && event.isSelfPlayer && event.isCountableParticipation(now: now) {
+        for stage in event.stageResults {
+            guard let passed = stage.passed else { continue }
+            let label = key(event, stage).trimmingCharacters(in: .whitespacesAndNewlines)
+            let id = playerSearchKey(label)
+            guard !id.isEmpty else { continue }
+            var row = counts[id] ?? (label, 0, 0)
+            row.total += 1
+            if passed { row.passed += 1 }
+            counts[id] = row
+        }
+    }
+    return counts.values.map { GiriRateRow(label: $0.label, passed: $0.passed, total: $0.total) }
+        .sorted { $0.total == $1.total ? $0.label < $1.label : $0.total > $1.total }
+}
+
+/// 主催ごとの出場・決勝進出・優勝。
+struct GiriOrganizerRow: Identifiable, Equatable {
+    var name: String
+    var entries: Int
+    var finals: Int
+    var champions: Int
+    var id: String { name }
+}
+
+func giriOrganizerResults(_ events: [GiriEvent], now: Date = Date()) -> [GiriOrganizerRow] {
+    var rows: [String: GiriOrganizerRow] = [:]
+    for event in events where event.meetingType == .tournament && event.isSelfPlayer && event.isCountableParticipation(now: now) {
+        let name = event.organizer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = playerSearchKey(name)
+        guard !key.isEmpty else { continue }
+        var row = rows[key] ?? GiriOrganizerRow(name: name, entries: 0, finals: 0, champions: 0)
+        row.entries += 1
+        if event.reachedFinal { row.finals += 1 }
+        if event.effectivePlacement == 1 { row.champions += 1 }
+        rows[key] = row
+    }
+    return rows.values.sorted { $0.entries == $1.entries ? $0.name < $1.name : $0.entries > $1.entries }
+}
+
+/// 段階の記録から最終結果の候補を出す（決勝の負けは、タイマンなら準優勝・横並びなら決勝進出）。
+func giriSuggestedFinalChoice(_ stages: [ResultStage]) -> GiriFinalResultChoice? {
+    guard let last = stages.filter({ $0.roundId == nil }).last(where: { $0.outcome != .unrecorded }) else { return nil }
+    switch last.effectiveKind {
+    case .final:
+        switch last.outcome {
+        case .champion, .advanced: return .champion
+        case .runnerUp: return .runnerUp
+        case .eliminated, .placed:
+            if last.placement == 2 { return .runnerUp }
+            if last.placement == 3 { return .third }
+            let oneOnOne = last.lineup.contains("タイマン") || last.entrantCount == 2
+            return oneOnOne ? .runnerUp : .finalist
+        default: return nil
+        }
+    case .semifinal: return last.outcome == .eliminated ? .best4 : nil
+    case .quarterfinal: return last.outcome == .eliminated ? .best8 : nil
+    default: return nil
+    }
+}
+
+/// 「第3回〇〇杯」「〇〇杯 vol.2」などの回数を除いた大会名（前回の大会を探すため）。
+func giriSeriesKey(_ title: String) -> String {
+    var value = playerSearchKey(title)
+    value = value.replacingOccurrences(of: #"第?[0-9一二三四五六七八九十百]+回"#, with: "", options: .regularExpression)
+    value = value.replacingOccurrences(of: #"(?:vol|no|#)\.?\s*[0-9]+"#, with: "", options: [.regularExpression, .caseInsensitive])
+    value = value.replacingOccurrences(of: #"[0-9]+"#, with: "", options: .regularExpression)
+    return value.replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
+}
+
+/// 同じ主催者、または回数を除いて同じ名前の、段階を入れた直近の大会。
+func giriStageTemplateSource(for event: GiriEvent, in events: [GiriEvent]) -> GiriEvent? {
+    let organizer = playerSearchKey(event.organizer)
+    let series = giriSeriesKey(event.title)
+    return events.filter { other in
+        other.id != event.id && other.meetingType == .tournament && other.eventFormat == event.eventFormat && !other.stageResults.isEmpty &&
+            ((!organizer.isEmpty && playerSearchKey(other.organizer) == organizer) || (!series.isEmpty && giriSeriesKey(other.title) == series))
+    }.max { ($0.eventDate ?? $0.startsAt ?? $0.createdAt) < ($1.eventDate ?? $1.startsAt ?? $1.createdAt) }
+}
+
+/// 前回の段階構成（名前・種類・形式・審査方法・通過枠）。結果・順位・人数は引き継がない。
+func giriStageTemplate(from source: GiriEvent) -> [ResultStage] {
+    source.stageResults.map { old in
+        var stage = ResultStage()
+        stage.name = old.name
+        stage.kind = old.kind
+        stage.lineup = old.lineup
+        stage.judging = old.judging
+        stage.advanceCount = old.advanceCount
+        return stage
+    }
+}
+
+/// プレイヤーと同じ組・対戦になった段階（自分の記録）。新しい大会から。
+struct GiriMeeting: Identifiable {
+    var event: GiriEvent
+    var stage: ResultStage
+    var id: String { event.id + ":" + stage.id }
+}
+
+func giriOpponentMeetings(_ events: [GiriEvent], playerKey: String, now: Date = Date()) -> [GiriMeeting] {
+    guard !playerKey.isEmpty else { return [] }
+    return events.filter { $0.isCountableParticipation(now: now) }.flatMap { event in
+        (event.tournamentResult?.stages ?? []).filter { stage in stage.opponents.contains { playerSearchKey($0) == playerKey } }
+            .map { GiriMeeting(event: event, stage: $0) }
+    }.sorted { ($0.event.eventDate ?? $0.event.startsAt ?? $0.event.createdAt) > ($1.event.eventDate ?? $1.event.startsAt ?? $1.event.createdAt) }
+}
+
+/// 文字認識の1行（位置は 0〜1、midY は上が 0）。
+struct GiriOCRLine: Equatable {
+    var text: String
+    var midX: Double
+    var midY: Double
+}
+
+/// トーナメント表の名前らしくない行（回戦名・数字・得点など）を除く。
+func giriBracketCleanName(_ raw: String) -> String {
+    var name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    name = name.replacingOccurrences(of: #"^(?:[0-9０-９]+[.．)）:：]\s*|[(（][0-9０-９]+[)）]\s*)"#, with: "", options: .regularExpression)
+    name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty,
+          name.range(of: #"^[0-9０-９\s\-ー－:：.．()（）]+$"#, options: .regularExpression) == nil,
+          name.range(of: #"^(?:第?[0-9０-９一二三四五六七八九十]+回戦|準々決勝|準決勝|決勝|優勝|準優勝|[3３三]位決定戦|シード|不戦勝|bye|トーナメント表?|.?ブロック)$"#, options: [.regularExpression, .caseInsensitive]) == nil
+    else { return "" }
+    return name
+}
+
+/// 読み取ったトーナメント表を上から順の名前に並べる。左右に山がある表は左の山 → 右の山。
+/// 勝ち上がりで同じ名前がもう一度書かれていても、最初の位置だけを使う。
+func giriBracketOrder(_ lines: [GiriOCRLine]) -> [String] {
+    let cleaned = lines.compactMap { line -> GiriOCRLine? in
+        let text = giriBracketCleanName(line.text)
+        return text.isEmpty ? nil : GiriOCRLine(text: text, midX: line.midX, midY: line.midY)
+    }
+    let twoSided = cleaned.filter { $0.midX < 0.4 }.count >= 2 && cleaned.filter { $0.midX > 0.6 }.count >= 2
+    let sides = twoSided ? [cleaned.filter { $0.midX < 0.5 }, cleaned.filter { $0.midX >= 0.5 }] : [cleaned]
+    var seen = Set<String>()
+    return sides.flatMap { side in
+        side.sorted { abs($0.midY - $1.midY) < 0.005 ? $0.midX < $1.midX : $0.midY < $1.midY }
+    }.map(\.text).filter { seen.insert(playerSearchKey($0)).inserted }
+}
+
+/// トーナメントの回戦数（4人なら2、6人なら3）。
+func giriBracketRoundCount(_ count: Int) -> Int {
+    guard count >= 2 else { return 0 }
+    var rounds = 0
+    while (1 << rounds) < count && rounds < 16 { rounds += 1 }
+    return rounds
+}
+
+/// 回戦の名前（最後から決勝・準決勝・準々決勝、それより前は「1回戦」など）。
+func giriBracketStageNames(_ count: Int) -> [String] {
+    let rounds = giriBracketRoundCount(count)
+    return (0..<rounds).map { index in
+        switch rounds - index {
+        case 1: return "決勝"
+        case 2: return "準決勝"
+        case 3: return "準々決勝"
+        default: return "\(index + 1)回戦"
+        }
+    }
+}
+
+/// トーナメント表で、自分が round 回戦（1始まり）で当たる可能性のある相手（隣の山）。
+func giriBracketOpponents(_ bracket: [String], round: Int, isSelf: (String) -> Bool) -> [String] {
+    guard round >= 1, round <= giriBracketRoundCount(bracket.count), let position = bracket.firstIndex(where: isSelf) else { return [] }
+    let half = 1 << (round - 1)
+    let start = ((position / half) ^ 1) * half
+    guard start < bracket.count else { return [] }
+    return Array(bracket[start..<min(bracket.count, start + half)])
+}
+
+extension GiriEvent {
+    /// 参加者とチームのメンバー（読みで重複を除く）。チーム戦は参加者ではなくチームとして入力する。
+    var everyone: [String] {
+        var seen = Set<String>()
+        return (participants + teams.flatMap(\.members))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    }
+    /// まだどのチームにも入っていない参加者（即席チームのチーム分け前）。
+    var unassignedParticipants: [String] {
+        let assigned = Set(teams.flatMap(\.members).map(playerSearchKey))
+        var seen = Set<String>()
+        return participants.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !assigned.contains(playerSearchKey($0)) && seen.insert(playerSearchKey($0)).inserted }
+    }
+}
+
+extension GiriEvent {
+    /// 自分がプレイヤーとして出た（出る）会。戦績・結果の入力案内はこれだけを対象にする。
+    var isSelfPlayer: Bool { selfRole == .player }
+    /// 戦績に数える大会（参加して、プレイヤーとして出たもの）。
+    var countsForResults: Bool { meetingType == .tournament && isActualParticipant && isSelfPlayer }
+}
+
+extension GiriEvent {
+    /// 主催（個人）・共催・MC・審査員として名前がある人。
+    var staffNames: [String] {
+        var names: [String] = organizerIsGroup ? [] : [organizer]
+        names += coOrganizers
+        names += mcs
+        names += judges
+        return names
+    }
+    /// 主催者の表示（団体は「（団体）」を添える）。
+    var organizerText: String {
+        let name = organizer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return "" }
+        return organizerIsGroup ? name + "（団体）" : name
+    }
+}
+
+extension GiriEvent {
+    /// 主催（個人）または共催としてこの人の名前がある。
+    func isHosted(byKey key: String) -> Bool {
+        guard !key.isEmpty else { return false }
+        return (!organizerIsGroup && playerSearchKey(organizer) == key) || coOrganizers.contains { playerSearchKey($0) == key }
+    }
+    /// MC・審査員としてこの人の名前がある。
+    func isMCOrJudge(byKey key: String) -> Bool {
+        guard !key.isEmpty else { return false }
+        return (mcs + judges).contains { playerSearchKey($0) == key }
+    }
+}
+

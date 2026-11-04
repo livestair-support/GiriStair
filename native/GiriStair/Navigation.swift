@@ -30,6 +30,18 @@ struct GiriListRequest: Equatable {
     let id = UUID()
 }
 
+/// 大会の詳細は一覧タブ、結果入力は戦績タブで開く。タブを切り替えると両方を見られる。
+struct GiriDetailRequest: Equatable {
+    var eventID: String
+    let id = UUID()
+}
+struct GiriResultRequest: Hashable, Identifiable {
+    var eventID: String
+    var roundID: String? = nil
+    var stageID: String? = nil
+    let id = UUID()
+}
+
 /// Detail pages select the existing thought tab and route to the linked draft.
 @MainActor
 final class GiriNavigation: ObservableObject {
@@ -38,6 +50,30 @@ final class GiriNavigation: ObservableObject {
     @Published var listRequest: GiriListRequest?
     /// 登録タブを続けて2回押した回数（LiveStair の registrationClearRequestToken）。
     @Published var registrationClearToken = 0
+    @Published var detailRequest: GiriDetailRequest?
+    @Published var resultRequest: GiriResultRequest?
+    /// 保存していない入力がある結果入力・編集画面の記録。別の記録へ切り替えて入力を黙って消さない。
+    @Published var unsavedResultEventID: String?
+    @Published var unsavedEditorEventID: String?
+
+    /// 一覧タブで大会・会の詳細を開く。
+    func openEventDetail(_ eventID: String) {
+        detailRequest = GiriDetailRequest(eventID: eventID)
+        selectedTab = 1
+    }
+    /// 戦績タブで結果入力を開く（段階・回を指定すると、その入力をそのまま開く）。
+    func openResultEntry(_ eventID: String, roundID: String? = nil, stageID: String? = nil) {
+        resultRequest = GiriResultRequest(eventID: eventID, roundID: roundID, stageID: stageID)
+        selectedTab = 2
+    }
+    func markResultEntry(_ eventID: String, unsaved: Bool) {
+        if unsaved { unsavedResultEventID = eventID }
+        else if unsavedResultEventID == eventID { unsavedResultEventID = nil }
+    }
+    func markEditor(_ eventID: String, unsaved: Bool) {
+        if unsaved { unsavedEditorEventID = eventID }
+        else if unsavedEditorEventID == eventID { unsavedEditorEventID = nil }
+    }
 
     func openList(players: [String] = [], venue: String? = nil) {
         listRequest = GiriListRequest(players: players, venue: venue)

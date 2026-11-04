@@ -28,6 +28,7 @@ struct GiriSettingsView: View {
             }
             settingSection("directories", "一覧", "person.2", AppSectionAccent.artist) {
                 NavigationLink("大喜利プレイヤー一覧") { GiriPlayersView() }
+                NavigationLink("主催団体一覧") { GiriGroupsView() }
                 NavigationLink("会場一覧") { GiriVenuesView() }
                 NavigationLink("ネット大喜利サイト一覧") { GiriSitesView() }
             }
