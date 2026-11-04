@@ -141,11 +141,13 @@ struct EventRound: Codable, Equatable, Identifiable {
     var block: String = ""
     var submissionEnabled: Bool = true
     var votingRequired: Bool = true
+    /// 0.13：同じ段階で並列に出るお題の数（1回目に「全N回」を入れた時だけ）。ない時は並列の回なし。
+    var promptCount: Int? = nil
 }
 
 extension EventRound {
     private enum CodingKeys: String, CodingKey {
-        case id, name, submissionStart, submissionEnd, votingStart, votingEnd, stageId, promptNumber, block, submissionEnabled, votingRequired
+        case id, name, submissionStart, submissionEnd, votingStart, votingEnd, stageId, promptNumber, block, submissionEnabled, votingRequired, promptCount
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -171,6 +173,8 @@ extension EventRound {
         submissionEnabled = try c.decodeIfPresent(Bool.self, forKey: .submissionEnabled) ?? true
 
         votingRequired = try c.decodeIfPresent(Bool.self, forKey: .votingRequired) ?? true
+
+        promptCount = try c.decodeIfPresent(Int.self, forKey: .promptCount)
 
         try validate()
     }
@@ -198,6 +202,8 @@ extension EventRound {
         try c.encode(submissionEnabled, forKey: .submissionEnabled)
 
         try c.encode(votingRequired, forKey: .votingRequired)
+
+        try c.encode(promptCount, forKey: .promptCount)
 
     }
 }
@@ -740,12 +746,14 @@ struct ThoughtNote: Codable, Equatable, Identifiable {
     var resultStageId: String? = nil
     /// お題・回答についてのメモ（ウケた・スベったなど）。旧データの本文 body とは分ける。
     var memo: String = ""
+    /// 0.13：お題の種類（plain 通常・image 画像・fill 穴埋め）。空は以前の版（画像があれば画像お題）。
+    var promptStyle: String = ""
 }
 
 extension ThoughtNote {
     private enum CodingKeys: String, CodingKey {
         case id, title, kind, createdAt, updatedAt, body, eventId, roundId, prompt, answers, used, imageDataBase64, answerRecords, isOthersAnswer, answerer, usesAnswerRecords, answerCategory
-        case promptAuthor, promptRevised, format, resultStageId, memo
+        case promptAuthor, promptRevised, format, resultStageId, memo, promptStyle
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -784,6 +792,7 @@ extension ThoughtNote {
         format = try c.decodeIfPresent(EventFormat.self, forKey: .format)
         resultStageId = try c.decodeIfPresent(String.self, forKey: .resultStageId)
         memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
+        promptStyle = try c.decodeIfPresent(String.self, forKey: .promptStyle) ?? ""
 
         try validate()
     }
@@ -824,6 +833,7 @@ extension ThoughtNote {
         try c.encode(format, forKey: .format)
         try c.encode(resultStageId, forKey: .resultStageId)
         try c.encode(memo, forKey: .memo)
+        try c.encode(promptStyle, forKey: .promptStyle)
 
     }
 }

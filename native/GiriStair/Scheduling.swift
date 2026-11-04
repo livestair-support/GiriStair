@@ -58,7 +58,8 @@ func addNextRound(_ previous: EventRound?, id: String = UUID().uuidString, sameS
     round.name = tournament ? (sameStage ? previous?.name ?? nextStageName("") : nextStageName(previous?.name ?? "")) : "投稿・投票"
     round.stageId = sameStage ? previous?.effectiveStageId ?? id : id
     round.promptNumber = sameStage ? (previous?.promptNumber ?? 0) + 1 : 1
-    round.block = previous?.block ?? ""
+    // 大会の次の段階は別のブロックになるので引き継がない（同じ段階の並列の回と、通常サイトは引き継ぐ）。
+    round.block = (sameStage || !tournament) ? previous?.block ?? "" : ""
     round.submissionStart = previous?.votingEnd ?? previous?.submissionEnd ?? defaultStart
     guard let start = round.submissionStart else { return round }
     func inherit(_ from: Date?, _ to: Date?, onto base: Date, fallbackDays: Int) -> Date {

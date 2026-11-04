@@ -6,6 +6,8 @@ struct GiriRoundFields: View {
     @Binding var round: EventRound
     @Binding var automatic: Set<String>
     var tournament = true
+    /// 同じ段階の回の数（2以上なら並列のお題がある）。
+    var siblingCount = 1
     var onRename: ((String) -> Void)? = nil
 
     var body: some View {
@@ -20,21 +22,37 @@ struct GiriRoundFields: View {
                     }
                 } label: { Image(systemName: "chevron.up.chevron.down").font(.caption.weight(.medium)) }
                     .tint(.primary)
+                // 並列のお題がない段階は「--」。並列の時だけ1回目を選び、1回目で全何回かを入れる。
                 Menu {
-                    ForEach(1...max(20, round.promptNumber + 1), id: \.self) { number in
-                        Button("\(number)回目") { round.promptNumber = number }
+                    Button("--") { round.promptNumber = 1; round.promptCount = nil }
+                    ForEach(1...max(10, round.promptNumber + 1), id: \.self) { number in
+                        Button("\(number)回目") {
+                            round.promptNumber = number
+                            round.promptCount = number == 1 ? max(2, round.promptCount ?? 2) : nil
+                        }
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Text("\(round.promptNumber)回目")
+                        Text(numberLabel)
                         Image(systemName: "chevron.up.chevron.down").font(.caption)
                     }.font(.body.weight(.semibold)).fixedSize()
                 }.tint(.primary)
             }.onChange(of: round.name) { _, name in onRename?(name) }
+            if round.promptNumber == 1, let count = round.promptCount {
+                Picker(selection: Binding(get: { count }, set: { round.promptCount = $0 })) {
+                    ForEach(2...max(10, count), id: \.self) { Text("全\($0)回").tag($0) }
+                } label: { GiriEditorLabel("この段階のお題") }
+                .pickerStyle(.menu).tint(.primary)
+            }
         }
         TextField("ブロック", text: $round.block)
         GiriSchedulePeriodRow(title: "投稿", start: dateBinding("submissionStart"), end: dateBinding("submissionEnd"))
         GiriSchedulePeriodRow(title: "投票", start: dateBinding("votingStart"), end: dateBinding("votingEnd"))
+    }
+
+    private var numberLabel: String {
+        if round.promptNumber == 1 && round.promptCount == nil && siblingCount <= 1 { return "--" }
+        return "\(round.promptNumber)回目"
     }
 
     private func inheritedDate(from: Date?, to: Date?, base: Date?, fallbackDays: Int) -> Date? {
@@ -172,7 +190,6 @@ struct GiriResultEntry: View {
     @State private var answerNotes: [ThoughtNote] = []
     @State private var originalAnswerNotes: [ThoughtNote] = []
     @State private var showFinalResult = false
-    @State private var advanceQuestion = false
     @State private var nextDraft: GiriRoundDraftAction?
     @State private var resultSaved = false
     @State private var editingStageID: String?
@@ -236,11 +253,6 @@ struct GiriResultEntry: View {
             navigation.markResultEntry(eventID, unsaved: false)
             dismiss()
         }
-        .alert("通過後の日程を追加しますか？", isPresented: $advanceQuestion) {
-            Button("次の段階を追加") { nextDraft = .nextStage }
-            Button("同じ段階の次回を追加") { nextDraft = .sameStage }
-            Button("後で追加", role: .cancel) { dismiss() }
-        } message: { Text("直前の日程を引き継いだ入力欄を開きます。保存するまで予定は追加されません。") }
         .sheet(item: $nextDraft, onDismiss: { if resultSaved { dismiss() } }) { action in
             NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
         }
@@ -595,7 +607,7 @@ struct GiriResultEntry: View {
             }
             if !result.stages.contains(where: { $0.roundId == round.id }) {
                 var prompt = ResultStage()
-                prompt.name = "\(round.name) \(round.promptNumber)回目"
+                prompt.name = giriRoundNumberText(round, in: event.effectiveRounds).map { "\(round.name) \($0)" } ?? round.name
                 prompt.roundId = round.id
                 prompt.stageId = round.effectiveStageId
                 result.stages.append(prompt)
@@ -660,14 +672,37 @@ struct GiriResultEntry: View {
                 }
                 event.rounds = rounds
             }
+            syncRoundResultsToAnswers()
             let notes = mergedAnswerResults()
             try store.saveResult(event: event, notes: notes)
             navigation.markResultEntry(eventID, unsaved: false)
             playLiveStairSaveFeedback()
             resultSaved = true
-            if shouldOfferNextRound(event) { advanceQuestion = true }
+            // 通過したら、そのまま次の段階（1回目に全N回を入れた段階は次の回）の入力を開く。保存するまで追加しない。
+            if shouldOfferNextRound(event) { nextDraft = giriNextRoundIsParallel(event.effectiveRounds) ? .sameStage : .nextStage }
             else { dismiss() }
         } catch { store.errorMessage = error.localizedDescription }
+    }
+
+    /// この回の結果（順位・得点・投票人数）を、提出した回答が1つだけの時はその回答にも入れる（回答側が未入力の時だけ）。
+    private func syncRoundResultsToAnswers() {
+        for stage in result.stages where stage.roundId != nil && (stage.placement != nil || stage.points != nil || stage.voterCount != nil) {
+            var submitted: [(note: Int, record: Int)] = []
+            for noteIndex in answerNotes.indices where answerNotes[noteIndex].roundId == stage.roundId {
+                for recordIndex in answerNotes[noteIndex].answerRecords.indices {
+                    let record = answerNotes[noteIndex].answerRecords[recordIndex]
+                    if record.isOwn && record.isSubmitted { submitted.append((noteIndex, recordIndex)) }
+                }
+            }
+            guard submitted.count == 1, let target = submitted.first else { continue }
+            var record = answerNotes[target.note].answerRecords[target.record]
+            guard record.placement == nil && record.points == nil && record.voterCount == nil else { continue }
+            record.placement = stage.placement
+            record.points = stage.points
+            record.voterCount = stage.voterCount
+            record.maxPointsPerVoter = stage.maxPointsPerVoter
+            answerNotes[target.note].answerRecords[target.record] = record
+        }
     }
 
     private func mergedAnswerResults() -> [ThoughtNote] {

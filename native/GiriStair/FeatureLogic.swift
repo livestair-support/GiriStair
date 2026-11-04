@@ -129,14 +129,16 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
     var memo: String = ""
     /// 空は自分の回答。名前があれば、その人の回答（ツボ）。
     var answerer: String = ""
+    /// 0.13：回答案に付けた印（◎・〇・△・× や点数）。空は印なし。
+    var mark: String = ""
 
-    init(id: String = UUID().uuidString, text: String = "", isSubmitted: Bool = false, placement: Int? = nil, points: Double? = nil, voterCount: Int? = nil, maxPointsPerVoter: Int = 1, memo: String = "", answerer: String = "") {
+    init(id: String = UUID().uuidString, text: String = "", isSubmitted: Bool = false, placement: Int? = nil, points: Double? = nil, voterCount: Int? = nil, maxPointsPerVoter: Int = 1, memo: String = "", answerer: String = "", mark: String = "") {
         self.id = id; self.text = text; self.isSubmitted = isSubmitted
         self.placement = placement; self.points = points; self.voterCount = voterCount
-        self.maxPointsPerVoter = maxPointsPerVoter; self.memo = memo; self.answerer = answerer
+        self.maxPointsPerVoter = maxPointsPerVoter; self.memo = memo; self.answerer = answerer; self.mark = mark
     }
 
-    private enum CodingKeys: String, CodingKey { case id, text, isSubmitted, placement, points, voterCount, maxPointsPerVoter, memo, answerer }
+    private enum CodingKeys: String, CodingKey { case id, text, isSubmitted, placement, points, voterCount, maxPointsPerVoter, memo, answerer, mark }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
@@ -148,6 +150,7 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
         maxPointsPerVoter = try c.decodeIfPresent(Int.self, forKey: .maxPointsPerVoter) ?? 1
         memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
         answerer = try c.decodeIfPresent(String.self, forKey: .answerer) ?? ""
+        mark = try c.decodeIfPresent(String.self, forKey: .mark) ?? ""
         try validate()
     }
     var isOwn: Bool { answerer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -1184,6 +1187,23 @@ func giriParticipantCandidates(lines: [GiriOCRLine], known: [String]) -> [GiriPa
 
 // MARK: - イベントページの読み取り（生大喜利）
 
+/// 縦に分けて読み取った画面の行をまとめる：重なった部分で2回読んだ同じ行は1つにする。
+func giriMergeTileLines(_ lines: [GiriOCRLine]) -> [GiriOCRLine] {
+    let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.002 ? $0.midX < $1.midX : $0.midY < $1.midY }
+    var output: [GiriOCRLine] = []
+    for line in sorted {
+        let key = line.text.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+        guard !key.isEmpty else { continue }
+        let tolerance = max(0.004, max(line.height, 0.001) * 0.8)
+        let duplicate = output.contains { other in
+            abs(other.midY - line.midY) < tolerance && abs(other.midX - line.midX) < 0.05
+                && other.text.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression) == key
+        }
+        if !duplicate { output.append(line) }
+    }
+    return output
+}
+
 /// 時刻（日付なし）。会の日付と組み合わせて使う。
 struct GiriClock: Equatable {
     var hour: Int
@@ -1341,6 +1361,13 @@ func giriSplitVenueRoom(_ raw: String, venues: [String]) -> (venue: String, room
     return (text, "")
 }
 
+/// 説明文の始まり（「詳細」「概要」の見出し、【】《》で囲んだ見出し）。会の名前はこれより前で探す。
+func giriIsEventPageSectionStart(_ raw: String) -> Bool {
+    let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if ["詳細", "概要", "内容", "イベント詳細"].contains(text) { return true }
+    return text.range(of: #"^[【《［\[〈<]"#, options: .regularExpression) != nil
+}
+
 /// 項目名（「場所：」「《場所》」「【参加費】」）。値が同じ行にあれば返す。
 private func giriEventPageLabel(_ raw: String, names: String) -> (matched: Bool, value: String) {
     let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1363,7 +1390,9 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }
     var draft = GiriEventPageDraft()
     draft.recognizedText = sorted.map(\.text).joined(separator: "\n")
-    draft.participants = giriParticipantCandidates(lines: lines, known: known)
+    // イベントページの参加者は「参加者」などの見出しの下だけ（見出しがなければ説明文を名前にしない）。
+    let hasParticipantHeader = sorted.contains { giriParticipantHeader($0.text) != nil }
+    draft.participants = hasParticipantHeader ? giriParticipantCandidates(lines: lines, known: known) : []
     // 基本情報は参加者の欄より上だけから読む（下のコメント欄の時刻などを使わない）。
     let listTop = sorted.first { giriParticipantHeader($0.text) == .participants }?.midY ?? .infinity
     let info = sorted.filter { $0.midY < listTop }
@@ -1372,16 +1401,22 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     let dateIndex = info.firstIndex { giriEventPageDate($0.text, now: now, calendar: calendar) != nil }
     if let dateIndex { draft.date = giriEventPageDate(info[dateIndex].text, now: now, calendar: calendar) }
 
-    // 会の名前：日付のすぐ後の行のうち、いちばん大きい文字（タグ・ボタンは小さい）。
+    // 会の名前：日付のすぐ後の行（タグ・ボタンより大きい文字）。説明文の見出し（【】《》・「詳細」）より前だけを見る。
     let titleIndex: Int? = {
-        let window: [Int]
-        if let dateIndex { window = Array((dateIndex + 1)..<min(info.count, dateIndex + 6)) }
-        else { window = Array(0..<min(info.count, 8)) }
+        var window: [Int] = []
+        let first = dateIndex.map { $0 + 1 } ?? 0
+        for index in first..<min(info.count, first + 6) {
+            if giriIsEventPageSectionStart(info[index].text) { break }
+            window.append(index)
+        }
         let candidates = window.filter { index in
             let text = info[index].text
             return !giriIsEventPageNoise(text) && giriEventPageDate(text, now: now, calendar: calendar) == nil
                 && text.unicodeScalars.contains { !$0.isASCII } && giriParticipantHeader(text) == nil
         }
+        // 日付と同じくらいの大きさの最初の行。分からなければ一番大きい行。
+        if let dateIndex, info[dateIndex].height > 0,
+           let near = candidates.first(where: { info[$0].height >= info[dateIndex].height * 0.75 }) { return near }
         guard let tallest = candidates.map({ info[$0].height }).max() else { return nil }
         return candidates.first { info[$0].height >= tallest * 0.9 }
     }()
@@ -1410,7 +1445,8 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
         draft.organizer = giriMatchRegisteredName(host, known: organizers) ?? host
     } else if let titleIndex {
         // 項目名がない時は、会の名前のすぐ下の短い名前（ツイプラなどの主催者の表示）。
-        let following = info[(titleIndex + 1)...].prefix(3).first { line in
+        let nearby = info[(titleIndex + 1)...].prefix(3).prefix { !giriIsEventPageSectionStart($0.text) }
+        let following = nearby.first { line in
             let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return !giriIsEventPageNoise(text) && text.count <= 16 && giriEventPageDate(text, now: now, calendar: calendar) == nil
                 && !giriIsParticipantNoise(text) && text.range(of: #"[。、：:]"#, options: .regularExpression) == nil
@@ -1430,3 +1466,140 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     draft.end = times.compactMap(\.end).first ?? times.compactMap(\.rangeEnd).first ?? times.compactMap(\.teardown).first
     return draft
 }
+
+// MARK: - 長考の段階・回（0.13）
+
+/// 同じ段階に並列のお題がある（1回目で「全N回」を選んだ、または同じ段階に2回以上ある）。
+func giriRoundIsParallel(_ round: EventRound, in rounds: [EventRound]) -> Bool {
+    let siblings = rounds.filter { $0.effectiveStageId == round.effectiveStageId }
+    if siblings.count > 1 || round.promptNumber > 1 { return true }
+    return (siblings.compactMap(\.promptCount).max() ?? round.promptCount ?? 0) > 1
+}
+
+/// 「1回目」などの表示。並列のお題がない段階は出さない（「--」）。
+func giriRoundNumberText(_ round: EventRound, in rounds: [EventRound]) -> String? {
+    giriRoundIsParallel(round, in: rounds) ? "\(round.promptNumber)回目" : nil
+}
+
+/// 次に入れるのが同じ段階の次の回（並列）か。1回目で選んだ「全N回」に足りない時だけ並列、それ以外は次の段階。
+func giriNextRoundIsParallel(_ rounds: [EventRound]) -> Bool {
+    guard let last = rounds.last else { return false }
+    let siblings = rounds.filter { $0.effectiveStageId == last.effectiveStageId }
+    let total = siblings.compactMap(\.promptCount).max() ?? 0
+    return total > siblings.count
+}
+
+// MARK: - お題の種類・穴埋め・回答案のメモ（0.13）
+
+enum GiriPromptStyle: String, CaseIterable, Identifiable {
+    case plain, image, fill
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .plain: return "通常お題"
+        case .image: return "画像お題"
+        case .fill: return "穴埋めお題"
+        }
+    }
+}
+
+extension ThoughtNote {
+    /// お題の種類。以前の版の記録は画像があれば画像お題、なければ通常お題（穴埋めにはしない）。
+    var effectivePromptStyle: GiriPromptStyle {
+        if let style = GiriPromptStyle(rawValue: promptStyle) { return style }
+        return imageDataBase64.isEmpty ? .plain : .image
+    }
+}
+
+/// 穴埋めの部分（〇〇・△△・××・＿＿。個数は問わない）。
+let giriPromptBlankPattern = #"[〇○◯]{2,}|△{2,}|[×✕]{2,}|＿{2,}|_{2,}"#
+
+func giriPromptBlankCount(_ prompt: String) -> Int {
+    guard let regex = try? NSRegularExpression(pattern: giriPromptBlankPattern) else { return 0 }
+    return regex.numberOfMatches(in: prompt, range: NSRange(prompt.startIndex..., in: prompt))
+}
+
+/// 穴埋めのお題を回答で埋めた表示。お題の文と、回答で埋めた部分（isFill）に分ける。
+/// 2か所以上の時は、回答を「／」で分けて順に入れる（足りない所は〇〇のまま）。
+func giriFilledPromptSegments(prompt: String, answer: String) -> [(text: String, isFill: Bool)] {
+    guard let regex = try? NSRegularExpression(pattern: giriPromptBlankPattern) else { return [(answer, true)] }
+    let matches = regex.matches(in: prompt, range: NSRange(prompt.startIndex..., in: prompt))
+    guard !matches.isEmpty else { return [(answer, true)] }
+    let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+    let parts = matches.count > 1
+        ? trimmed.components(separatedBy: CharacterSet(charactersIn: "／/｜|")).map { $0.trimmingCharacters(in: .whitespaces) }
+        : [trimmed]
+    var segments: [(text: String, isFill: Bool)] = []
+    var cursor = prompt.startIndex
+    for (index, match) in matches.enumerated() {
+        guard let range = Range(match.range, in: prompt) else { continue }
+        if cursor < range.lowerBound { segments.append((String(prompt[cursor..<range.lowerBound]), false)) }
+        if index < parts.count && !parts[index].isEmpty { segments.append((parts[index], true)) }
+        else { segments.append((String(prompt[range]), false)) }
+        cursor = range.upperBound
+    }
+    if cursor < prompt.endIndex { segments.append((String(prompt[cursor...]), false)) }
+    return segments
+}
+
+/// 穴埋めの回答を、お題に入れた1つの文にする（共有・一覧の表示用）。
+func giriFilledPromptText(prompt: String, answer: String) -> String {
+    giriFilledPromptSegments(prompt: prompt, answer: answer).map { $0.text }.joined()
+}
+
+/// メモのように1行に1つ書いた回答案。先頭の「・」と、印（◎〇△×☆ や「3・」の点数）を分ける。
+struct GiriAnswerLine: Equatable {
+    var mark: String
+    var text: String
+}
+
+func giriAnswerLines(_ text: String) -> [GiriAnswerLine] {
+    text.components(separatedBy: .newlines).compactMap { raw in
+        var line = raw.trimmingCharacters(in: .whitespaces)
+        guard !line.isEmpty else { return nil }
+        var mark = ""
+        if let range = line.range(of: #"^([◎〇○◯△▲×✕☆★]|[0-9０-９]{1,2}(?=\s*[・･•:：]))"#, options: .regularExpression) {
+            mark = String(line[range])
+            line.removeSubrange(range)
+        }
+        line = line.replacingOccurrences(of: #"^\s*[・･•\-－]\s*"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        guard !line.isEmpty else { return nil }
+        let normalized: String
+        switch mark {
+        case "○", "◯": normalized = "〇"
+        case "✕": normalized = "×"
+        case "▲": normalized = "△"
+        default: normalized = giriHalfwidthDigits(mark)
+        }
+        return GiriAnswerLine(mark: normalized, text: line)
+    }
+}
+
+/// メモを書き直した時に、前の回答案（採用・結果）をできるだけ残す：同じ文の案、次に同じ位置の案を引き継ぐ。
+func giriReconcileAnswers(_ lines: [GiriAnswerLine], previous: [AnswerRecord]) -> [AnswerRecord] {
+    var unused = previous
+    var output: [AnswerRecord] = []
+    for (index, line) in lines.enumerated() {
+        if let match = unused.firstIndex(where: { $0.text == line.text }) {
+            var record = unused.remove(at: match)
+            record.mark = line.mark
+            output.append(record)
+        } else if previous.indices.contains(index), let match = unused.firstIndex(where: { $0.id == previous[index].id }),
+                  !lines.contains(where: { $0.text == previous[index].text }) {
+            var record = unused.remove(at: match)
+            record.text = line.text
+            record.mark = line.mark
+            output.append(record)
+        } else {
+            output.append(AnswerRecord(text: line.text, mark: line.mark))
+        }
+    }
+    return output
+}
+
+/// 回答案をメモの形に戻す（印があれば「△・」、なければ「・」）。
+func giriAnswerMemo(_ records: [AnswerRecord]) -> String {
+    records.map { $0.mark + "・" + $0.text }.joined(separator: "\n")
+}
+

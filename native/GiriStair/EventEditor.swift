@@ -713,20 +713,24 @@ struct GiriEventEditor: View {
             Section {
                 HStack {
                     GiriEventCardSectionTitle(title: draft.rounds[index].name, systemImage: "calendar", accentColor: AppSectionAccent.artist)
-                    Text("\(draft.rounds[index].promptNumber)回目").font(.subheadline).foregroundStyle(.secondary).fixedSize()
+                    if let number = giriRoundNumberText(draft.rounds[index], in: draft.rounds) {
+                        Text(number).font(.subheadline).foregroundStyle(.secondary).fixedSize()
+                    }
                     Menu {
                         if index > 0 { Button("上へ移動", systemImage: "arrow.up") { draft.rounds.swapAt(index, index - 1) } }
                         if index + 1 < draft.rounds.count { Button("下へ移動", systemImage: "arrow.down") { draft.rounds.swapAt(index, index + 1) } }
                         Button("削除", systemImage: "trash", role: .destructive) { draft.rounds.remove(at: index) }
                     } label: { Image(systemName: "ellipsis.circle") }.tint(accentActionColor)
                 }.listRowSeparator(.hidden)
-                GiriRoundFields(round: $draft.rounds[index], automatic: Binding(get: { automaticFields[draft.rounds[index].id] ?? [] }, set: { automaticFields[draft.rounds[index].id] = $0 }), tournament: draft.meetingType == .tournament)
+                GiriRoundFields(round: $draft.rounds[index], automatic: Binding(get: { automaticFields[draft.rounds[index].id] ?? [] }, set: { automaticFields[draft.rounds[index].id] = $0 }), tournament: draft.meetingType == .tournament,
+                                siblingCount: draft.rounds.filter { $0.effectiveStageId == draft.rounds[index].effectiveStageId }.count)
             }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
         }
         Section {
-            Button { addRound(sameStage: false) } label: { Label(draft.meetingType == .tournament ? "次の段階を追加" : "日程を追加", systemImage: "plus.circle") }
-            if draft.meetingType == .tournament && !draft.rounds.isEmpty {
-                Button { addRound(sameStage: true) } label: { Label("同じ段階の次回を追加", systemImage: "plus.square.on.square") }
+            // 大会は、1回目に「全N回」を入れた段階なら次の回、それ以外は次の段階を追加する。
+            let parallel = draft.meetingType == .tournament && giriNextRoundIsParallel(draft.rounds)
+            Button { addRound(sameStage: parallel) } label: {
+                Label(draft.meetingType != .tournament ? "日程を追加" : parallel ? "同じ段階の次の回を追加" : "次の段階を追加", systemImage: "plus.circle")
             }
         }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
     }

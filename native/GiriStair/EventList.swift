@@ -819,15 +819,14 @@ struct GiriEventCard: View {
         }
     }
     /// LiveStair の一覧カードの右の札：立場・参加状況を、状態ごとの色で出す。
+    /// 札は1つにまとめて、カードを縦に伸ばさない。
     private var statusBadges: [(text: String, color: Color)] {
-        var badges: [(text: String, color: Color)] = []
-        // 生大喜利で、プレイヤーとして出ない立場（主催・観覧・リザーバー）。
-        if event.eventFormat == .live && event.selfRole != .player {
-            badges.append((event.selfRole.shortTitle(tournament: event.meetingType == .tournament), GiriBadgeColors.role(event.selfRole)))
-        }
         let state = event.participationState()
-        if state != .completed { badges.append((state.title, GiriBadgeColors.state(state))) }
-        return badges
+        // 生大喜利で、プレイヤーとして出ない立場（主催・観覧・リザーバー）。参加予定・参加済は立場の札だけにする。
+        if event.eventFormat == .live && event.selfRole != .player && [.upcoming, .ongoing, .completed].contains(state) {
+            return [(event.selfRole.shortTitle(tournament: event.meetingType == .tournament), GiriBadgeColors.role(event.selfRole))]
+        }
+        return state == .completed ? [] : [(state.title, GiriBadgeColors.state(state))]
     }
     private func dateLabel(compact: Bool) -> some View {
         Text(GiriEventPresentation.day(date, compact: compact))
@@ -849,7 +848,9 @@ struct GiriEventCard: View {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Image(systemName: "person.crop.circle").font(.caption2.weight(.semibold))
                         .foregroundStyle(accent).frame(width: 15)
-                    Text("主催：" + organizerLine).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    // 会場と同じ大きさで出す。
+                    Text("主催：" + organizerLine).font(.system(size: appFontSize(15), weight: .medium))
+                        .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.85)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -1035,7 +1036,9 @@ enum GiriEventPresentation {
     }
     static func roundTitle(_ round: EventRound, event: GiriEvent) -> String {
         var parts = [event.meetingType == .tournament ? round.name : "投稿・投票"]
-        if event.meetingType == .tournament || round.promptNumber > 1 { parts.append("\(round.promptNumber)回目") }
+        if event.meetingType == .tournament {
+            if let number = giriRoundNumberText(round, in: event.effectiveRounds) { parts.append(number) }
+        } else if round.promptNumber > 1 { parts.append("\(round.promptNumber)回目") }
         if !round.block.isEmpty { parts.append(round.block) }
         return parts.joined(separator: "・")
     }
