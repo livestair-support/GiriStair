@@ -90,14 +90,14 @@ final class GiriStore: ObservableObject {
         return names
     }
 
-    /// 別名義をまとめて表示する人：別名義の照合キー → 本名義。
+    /// 別名義の照合キー → 本名義。別名義はいつも本名義にまとめる（0.12 の「まとめて表示」の設定は使わない）。
     var mergedAliasOwners: [String: String] {
         var owners: [String: String] = [:]
         let me = preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if preferences.mergesSelfAliases && !me.isEmpty {
+        if !me.isEmpty {
             for alias in preferences.selfAliases where playerSearchKey(alias) != playerSearchKey(me) { owners[playerSearchKey(alias)] = me }
         }
-        for player in players where player.mergesAliases {
+        for player in players {
             for alias in player.aliases where playerSearchKey(alias) != playerSearchKey(player.name) && owners[playerSearchKey(alias)] == nil {
                 owners[playerSearchKey(alias)] = player.name
             }
@@ -110,8 +110,8 @@ final class GiriStore: ObservableObject {
         let key = playerSearchKey(name)
         guard !key.isEmpty else { return [] }
         var keys: Set<String> = [key]
-        if preferences.mergesSelfAliases && key == playerSearchKey(preferences.selfName) { keys.formUnion(preferences.selfKeys) }
-        if let player = players.first(where: { playerSearchKey($0.name) == key }), player.mergesAliases {
+        if key == playerSearchKey(preferences.selfName) { keys.formUnion(preferences.selfKeys) }
+        if let player = players.first(where: { playerSearchKey($0.name) == key }) {
             keys.formUnion(player.aliases.map(playerSearchKey))
         }
         keys.remove("")
@@ -408,6 +408,29 @@ final class GiriStore: ObservableObject {
         }
     }
     func deleteGroup(_ id: String) throws { try mutate { $0.groups.removeAll { $0.id == id } } }
+    /// 団体にしたのが間違いだった時：団体の記録を外し、主催した会をプレイヤーの主催に戻す（フリガナ・メモはプレイヤーへ移す）。
+    @discardableResult
+    func convertGroupToPlayer(_ id: String) throws -> String {
+        guard let group = groupDirectory.first(where: { $0.id == id }) else { throw GiriDataError.invalid("団体が見つかりません。") }
+        let key = playerSearchKey(group.name)
+        guard !key.isEmpty else { throw GiriDataError.invalid("名前がありません。") }
+        try mutate { next in
+            next.groups.removeAll { $0.id == id || playerSearchKey($0.name) == key }
+            for index in next.events.indices where next.events[index].organizerIsGroup && playerSearchKey(next.events[index].organizer) == key {
+                next.events[index].organizerIsGroup = false
+            }
+            if let index = next.players.firstIndex(where: { playerSearchKey($0.name) == key }) {
+                if next.players[index].furigana.isEmpty { next.players[index].furigana = group.furigana }
+                if next.players[index].memo.isEmpty { next.players[index].memo = group.memo }
+            } else {
+                var player = GiriPlayer(name: group.name)
+                player.furigana = group.furigana
+                player.memo = group.memo
+                next.players.append(player)
+            }
+        }
+        return group.name
+    }
     /// 主催者にプレイヤーとして入っていた名前を団体にする（その名前が主催した会を団体の主催にする）。
     /// 参加者などで使われていない時だけ、保存済みのプレイヤーの記録を外す（フリガナ・メモは団体へ移す）。
     @discardableResult

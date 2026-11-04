@@ -87,9 +87,11 @@ struct GiriGroupsView: View {
 struct GiriGroupDetail: View {
     @EnvironmentObject private var store: GiriStore
     @EnvironmentObject private var navigation: GiriNavigation
+    @Environment(\.dismiss) private var dismiss
     let groupID: String
     @State private var resolvedID: String?
     @State private var editing = false
+    @State private var revertingToPlayer = false
 
     private var group: GiriGroup? { store.groupDirectory.first { $0.id == (resolvedID ?? groupID) } }
 
@@ -115,6 +117,16 @@ struct GiriGroupDetail: View {
                 .sheet(isPresented: $editing) {
                     NavigationStack { GiriGroupEditor(group: group) { resolvedID = $0.id } }
                 }
+                .alert("プレイヤーに戻しますか？", isPresented: $revertingToPlayer) {
+                    Button("キャンセル", role: .cancel) {}
+                    Button("プレイヤーに戻す") {
+                        store.run {
+                            try store.convertGroupToPlayer(group.id)
+                            playLiveStairSaveFeedback()
+                            dismiss()
+                        }
+                    }
+                } message: { Text("「\(group.name)」を主催団体一覧から外し、主催した会をプレイヤーの主催に戻します。") }
             } else {
                 CenteredEmptyMessage(systemImage: "person.3", title: "団体が見つかりません")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -149,6 +161,11 @@ struct GiriGroupDetail: View {
                                           countText: "\(hosted.count)件") {
                     navigation.openList(organizer: group.name)
                 }
+                // 団体にしたのが間違いだった時は、プレイヤーに戻す。
+                Divider().overlay(appSeparatorColor)
+                Button { revertingToPlayer = true } label: {
+                    GiriProfileShortcutLabel(title: "プレイヤーに戻す", systemImage: "arrow.uturn.backward.circle", accentColor: accentActionColor)
+                }.buttonStyle(.plain)
             }
         }
     }

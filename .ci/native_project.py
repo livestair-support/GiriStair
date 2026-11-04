@@ -9,7 +9,7 @@ import plistlib
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.13.0"
+VERSION = "0.13.1"
 MINIMUM_IOS = "18.1"
 
 

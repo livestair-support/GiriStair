@@ -226,6 +226,8 @@ struct GiriProfileShortcutLabel: View {
     let systemImage: String
     let accentColor: Color
     var countText: String = ""
+    /// 一覧の NavigationLink の中では、標準の「>」と重ならないように出さない。
+    var showsChevron = true
     var body: some View {
             HStack(spacing: 12) {
                 Image(systemName: systemImage)
@@ -241,7 +243,9 @@ struct GiriProfileShortcutLabel: View {
                 if !countText.isEmpty {
                     Text(countText).font(.subheadline).foregroundStyle(.secondary).lineLimit(1).fixedSize()
                 }
-                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.secondary)
+                if showsChevron {
+                    Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.secondary)
+                }
             }
             .padding(.vertical, 13)
             .contentShape(Rectangle())
@@ -620,7 +624,7 @@ struct GiriPlayersView: View {
             Section {
                 NavigationLink { GiriGroupsView() } label: {
                     GiriProfileShortcutLabel(title: "主催団体一覧", systemImage: "person.3", accentColor: AppSectionAccent.artist,
-                                             countText: "\(store.groupDirectory.count)団体")
+                                             countText: "\(store.groupDirectory.count)団体", showsChevron: false)
                 }
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
             if values.isEmpty {
@@ -639,6 +643,8 @@ struct GiriPlayersView: View {
             }
         }
         .appIndexListStyle()
+        // アイコンを出さない時は、名前だけの行を詰めて並べる。
+        .environment(\.defaultMinListRowHeight, store.showPlayerIcons ? settingsMinimumListRowHeight : 40)
         .safeAreaInset(edge: .top, spacing: 0) {
             GiriIndexHeader(accentColor: AppSectionAccent.artist, count: players.count, search: $query,
                             placeholder: "名前・フリガナ・地域で検索", isCollapsed: $isHeaderCollapsed)
@@ -668,15 +674,16 @@ struct GiriPlayersView: View {
     }
 
     private func playerRow(_ player: GiriPlayer, deletable: Bool) -> some View {
-        NavigationLink { GiriPlayerDetail(playerID: player.id) } label: {
+        let compact = !store.showPlayerIcons
+        return NavigationLink { GiriPlayerDetail(playerID: player.id) } label: {
             HStack(spacing: 12) {
                 GiriPlayerAvatar(name: player.name, size: 40)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(player.name).font(.headline.weight(.semibold)).lineLimit(1)
                     if !player.furigana.isEmpty { Text(player.furigana).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-                }.frame(minHeight: 46, alignment: .center).layoutPriority(1)
+                }.frame(minHeight: compact ? 0 : 46, alignment: .center).layoutPriority(1)
                 Spacer(minLength: 8)
-            }.frame(minHeight: 48).padding(.vertical, 2)
+            }.frame(minHeight: compact ? 32 : 48).padding(.vertical, compact ? 0 : 2)
         }
         // LiveStair IndexViews と同じく、記録のないプレイヤーだけ削除できる。
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -833,9 +840,7 @@ struct GiriPlayerDetail: View {
 
     /// 基本情報：名前・フリガナ・地域・別名義・所属団体・団体への変更。
     @ViewBuilder private func basicRows(_ player: GiriPlayer, key: String) -> some View {
-        let isMe = !store.preferences.selfName.isEmpty && key == playerSearchKey(store.preferences.selfName)
         let aliases = store.aliases(of: player.name)
-        let merges = isMe ? store.preferences.mergesSelfAliases : player.mergesAliases
         let memberships = store.groupDirectory.filter { $0.members.contains { playerSearchKey($0) == key } }
         VStack(spacing: 0) {
             GiriProfileInfoRow(title: "プレイヤー名", value: player.name)
@@ -845,10 +850,6 @@ struct GiriPlayerDetail: View {
             GiriProfileInfoRow(title: "地域", value: giriRegionText(region: player.region, prefecture: player.prefecture))
             Divider().overlay(appSeparatorColor)
             GiriProfileInfoRow(title: "別名義", value: aliases.joined(separator: "・"))
-            if !aliases.isEmpty {
-                Divider().overlay(appSeparatorColor)
-                GiriProfileInfoRow(title: "別名義の表示", value: merges ? "まとめて表示" : "それぞれ表示")
-            }
             // 別名義（それぞれ表示）の時は、本名義へ。
             if let owner = store.aliasOwner(of: player.name), let main = store.playerByName(owner), main.id != player.id {
                 Divider().overlay(appSeparatorColor)
@@ -1092,11 +1093,10 @@ struct GiriPlayerEditor: View {
         return !isNew && !me.isEmpty && playerSearchKey(original.name) == me
     }
     private var aliasesBinding: Binding<[String]> { isSelfPlayer ? $selfAliases : $draft.aliases }
-    private var mergesBinding: Binding<Bool> { isSelfPlayer ? $mergesSelfAliases : $draft.mergesAliases }
     private var selfAliasesChanged: Bool {
         guard isSelfPlayer && loadedSelf else { return false }
         let cleaned = selfAliases.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-        return cleaned != store.preferences.selfAliases || mergesSelfAliases != store.preferences.mergesSelfAliases
+        return cleaned != store.preferences.selfAliases
     }
     /// 地域（地方）。以前の版の自由入力の地域も選べるように残す。
     private var regionChoices: [String] {
@@ -1158,11 +1158,9 @@ struct GiriPlayerEditor: View {
                 Section {
                     AppCardSectionTitle(title: "別名義", systemImage: "person.2.badge.gearshape", accentColor: AppSectionAccent.artist,
                                         infoTitle: "別名義について",
-                                        infoMessage: "同じ人の別の名前です。まとめて表示すると、プレイヤー一覧と集計でこの人として数えます。")
+                                        infoMessage: "同じ人の別の名前です。プレイヤー一覧・集計・読み取りで、この人としてまとめます。")
                         .listRowSeparator(.hidden)
-                    GiriNamesField(title: "別名義", names: aliasesBinding)
-                    Toggle(isOn: mergesBinding) { GiriEditorLabel("まとめて表示") }
-                        .tint(AppSectionAccent.artist)
+                    GiriNamesField(title: "", names: aliasesBinding)
                 }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
             }
             if isNew {

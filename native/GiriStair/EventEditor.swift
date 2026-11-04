@@ -317,7 +317,8 @@ struct GiriEventEditor: View {
                 guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
                 let lines = try await GiriParticipantOCR.recognizeLines(data)
                 var page = giriEventPageDraft(lines: lines, known: known, venues: venues, organizers: organizers)
-                page.participants = giriMarkingAlreadyAdded(page.participants, existing: current)
+                page.participants = giriMarkingAlreadyAdded(giriResolvingAliases(page.participants, store: store),
+                                                            existing: giriResolvedNames(current, store: store))
                 guard page.hasBasicInfo || !page.participants.isEmpty else { throw GiriParticipantReadError.noText }
                 eventPageDraft = page
             } catch { store.errorMessage = error.localizedDescription }
