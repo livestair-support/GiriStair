@@ -672,10 +672,10 @@ func giriSeriesKey(_ title: String) -> String {
 /// 同じ主催者、または回数を除いて同じ名前の、段階を入れた直近の大会。
 func giriStageTemplateSource(for event: GiriEvent, in events: [GiriEvent]) -> GiriEvent? {
     let organizer = playerSearchKey(event.organizer)
-    let series = giriSeriesKey(event.title)
+    let series = event.seriesKey
     return events.filter { other in
         other.id != event.id && other.meetingType == .tournament && other.eventFormat == event.eventFormat && !other.stageResults.isEmpty &&
-            ((!organizer.isEmpty && playerSearchKey(other.organizer) == organizer) || (!series.isEmpty && giriSeriesKey(other.title) == series))
+            ((!organizer.isEmpty && playerSearchKey(other.organizer) == organizer) || (!series.isEmpty && other.seriesKey == series))
     }.max { ($0.eventDate ?? $0.startsAt ?? $0.createdAt) < ($1.eventDate ?? $1.startsAt ?? $1.createdAt) }
 }
 
@@ -825,3 +825,242 @@ extension GiriEvent {
     }
 }
 
+/// シリーズの表示名：会の名前から「#5」「第5回」「vol.2」と末尾の数字を除いたもの。
+func giriSeriesTitle(_ title: String) -> String {
+    var value = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    for pattern in [#"[#＃]\s*[0-9０-９]+"#, #"第\s*[0-9０-９一二三四五六七八九十百]+\s*回"#, #"(?i)vol\.?\s*[0-9０-９]+"#, #"\s*[0-9０-９]+\s*$"#] {
+        value = value.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+    }
+    return value.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+extension GiriEvent {
+    /// シリーズの表示名。シリーズ名が空なら会の名前から作る。
+    var seriesTitle: String {
+        let explicit = series.trimmingCharacters(in: .whitespacesAndNewlines)
+        return explicit.isEmpty ? giriSeriesTitle(title) : explicit
+    }
+    /// 同じシリーズかどうかの照合キー（表記揺れ・回数を除く）。
+    var seriesKey: String {
+        let explicit = series.trimmingCharacters(in: .whitespacesAndNewlines)
+        return giriSeriesKey(explicit.isEmpty ? title : explicit)
+    }
+}
+
+/// 同じシリーズの会（生大喜利）。古い順。
+func giriSeriesEvents(of event: GiriEvent, in events: [GiriEvent]) -> [GiriEvent] {
+    let key = event.seriesKey
+    guard !key.isEmpty else { return [] }
+    return events.filter { $0.eventFormat == event.eventFormat && $0.seriesKey == key }
+        .sorted { ($0.eventDate ?? $0.startsAt ?? $0.createdAt) < ($1.eventDate ?? $1.startsAt ?? $1.createdAt) }
+}
+
+/// 登録のシリーズ名の候補。名前が同じ・含む関係のシリーズを先に、ほかは新しい順。
+func giriSeriesSuggestions(for title: String, in events: [GiriEvent]) -> [String] {
+    let key = giriSeriesKey(title)
+    var seen = Set<String>()
+    var related: [String] = []
+    var others: [String] = []
+    for event in events.filter({ $0.eventFormat == .live }).sorted(by: { $0.createdAt > $1.createdAt }) {
+        let name = event.seriesTitle
+        let seriesKey = event.seriesKey
+        guard !name.isEmpty, !seriesKey.isEmpty, seen.insert(seriesKey).inserted else { continue }
+        let isRelated = !key.isEmpty && (seriesKey == key || (min(seriesKey.count, key.count) >= 3 && (key.contains(seriesKey) || seriesKey.contains(key))))
+        if isRelated { related.append(name) } else { others.append(name) }
+    }
+    return related + others
+}
+
+
+// MARK: - 0.10 参加者一覧の読み取り（ツイプラ・note などの画面・文章）
+
+/// 読み取った行がどの欄か。参加者だけを最初から選び、興味あり・不参加は選ばない。
+enum GiriParticipantSection: String {
+    case participants, interested, other
+    var title: String {
+        switch self {
+        case .participants: return "参加者"
+        case .interested: return "興味あり"
+        case .other: return "不参加・キャンセル待ちなど"
+        }
+    }
+}
+
+struct GiriParticipantCandidate: Identifiable, Equatable {
+    var id: Int
+    /// 読み取った元の文字
+    var source: String
+    /// 追加する名前（登録済みのプレイヤーと合えばその名前）
+    var name: String
+    /// 照合できた登録済みのプレイヤー
+    var registered: String?
+    /// 名前が「…」で途中までしか読めなかった
+    var truncated: Bool
+    /// 先頭の1文字がアイコンの読み違いかもしれない（「Gしゆにく」の G など）
+    var suspiciousPrefix: String?
+    var section: GiriParticipantSection
+    var included: Bool
+}
+
+/// 照合用の名前：読み（ひらがな）・小書き文字・記号・空白の違いを吸収する。
+func giriOCRNameKey(_ value: String) -> String {
+    let small: [Character: Character] = ["ぁ": "あ", "ぃ": "い", "ぅ": "う", "ぇ": "え", "ぉ": "お", "っ": "つ",
+                                         "ゃ": "や", "ゅ": "ゆ", "ょ": "よ", "ゎ": "わ", "ゕ": "か", "ゖ": "け"]
+    let ignored = Set("・･.。、,，-‐－―—~〜…‥()（）[]［］「」『』【】!！?？:：;；'\"’”*＊#＃@＠_")
+    return String(playerSearchKey(value).compactMap { character -> Character? in
+        if character.isWhitespace || ignored.contains(character) { return nil }
+        return small[character] ?? character
+    })
+}
+
+/// 2つの名前の近さ（0〜1）。文字の置き換え・抜け・増えを1文字ずつ数える。
+func giriNameSimilarity(_ first: String, _ second: String) -> Double {
+    let a = Array(first), b = Array(second)
+    guard !a.isEmpty, !b.isEmpty else { return 0 }
+    var previous = Array(0...b.count)
+    for i in 1...a.count {
+        var current = [i] + Array(repeating: 0, count: b.count)
+        for j in 1...b.count {
+            current[j] = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1))
+        }
+        previous = current
+    }
+    return 1 - Double(previous[b.count]) / Double(max(a.count, b.count))
+}
+
+/// 登録済みのプレイヤーと照合する。完全一致 → 先頭のアイコンの読み違いを除いて一致 →
+/// 「…」で切れた名前の前方一致 → 読み違い1〜2文字まで（3文字以上の名前だけ）。候補が1人に決まる時だけ返す。
+func giriMatchRegisteredName(_ text: String, truncated: Bool = false, known: [String]) -> String? {
+    let key = giriOCRNameKey(text)
+    guard !key.isEmpty else { return nil }
+    var seen = Set<String>()
+    let index = known.compactMap { name -> (String, String)? in
+        let normalized = giriOCRNameKey(name)
+        guard !normalized.isEmpty, seen.insert(normalized).inserted else { return nil }
+        return (name, normalized)
+    }
+    if let hit = index.first(where: { $0.1 == key }) { return hit.0 }
+    for drop in 1...2 where key.count - drop >= 2 {
+        let rest = String(key.dropFirst(drop))
+        if let hit = index.first(where: { $0.1 == rest }) { return hit.0 }
+    }
+    if truncated {
+        for drop in 0...1 where key.count - drop >= 2 {
+            let rest = String(key.dropFirst(drop))
+            let hits = index.filter { $0.1.hasPrefix(rest) }
+            if hits.count == 1 { return hits[0].0 }
+        }
+    }
+    guard key.count >= 3, !key.allSatisfy(\.isNumber) else { return nil }
+    let scored = index.filter { $0.1.count >= 3 }.map { ($0.0, giriNameSimilarity(key, $0.1)) }
+        .filter { $0.1 >= 0.75 }.sorted { $0.1 > $1.1 }
+    guard let best = scored.first else { return nil }
+    if scored.count > 1 && abs(scored[1].1 - best.1) < 0.0001 { return nil }
+    return best.0
+}
+
+/// 欄の見出し（「参加者（15人／定員15人）」「興味あり（5人）」「不参加（0人）」など）。
+func giriParticipantHeader(_ text: String) -> GiriParticipantSection? {
+    let value = text.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+    if value.contains("プロフィール") { return nil }
+    if value.range(of: #"^(参加者|参加予定者?|参加メンバー|エントリー者?|出場者)([（(]|[0-9０-９]|一覧|リスト|[:：]|$)"#, options: .regularExpression) != nil { return .participants }
+    if value.hasPrefix("興味あり") || value.hasPrefix("気になる") { return .interested }
+    if value.hasPrefix("不参加") || value.hasPrefix("キャンセル待ち") || value.hasPrefix("補欠") { return .other }
+    return nil
+}
+
+/// 一覧の終わり（ボタン・コメント欄など）。
+func giriParticipantListEnds(_ text: String) -> Bool {
+    let value = text.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+    let markers = ["参加者プロフィール", "名前をID表示", "コメント", "ログインしてコメント", "イベント詳細", "参加をやめる", "シェアする"]
+    return markers.contains { value.contains($0) }
+}
+
+/// 名前ではない行（時刻・電波・URL・人数・案内文など）。
+func giriIsParticipantNoise(_ text: String) -> Bool {
+    let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.isEmpty { return true }
+    if value.count == 1, let scalar = value.unicodeScalars.first, !CharacterSet.letters.contains(scalar) || scalar.isASCII { return true }
+    let patterns = [#"^[0-9０-９]{1,2}[:：][0-9０-９]{2}$"#, #"(?i)^(https?://|www\.)"#, #"(?i)[a-z0-9-]+\.(jp|com|net|me|org)(/|$)"#,
+                    #"^[（(]?[0-9０-９]+\s*人[)）]?$"#, #"(?i)(^|\s)[345]G(\s|$)|LTE|Wi-?Fi"#,
+                    #"ログイン|ツイート|フォロー|ありません|しますか|定員|参加する$"#]
+    return patterns.contains { value.range(of: $0, options: .regularExpression) != nil }
+}
+
+/// 名前の前に付いたアイコンの読み違い（●・◆・①・「(」など）と、末尾の「…」を外す。
+func giriCleanParticipantText(_ raw: String) -> (name: String, truncated: Bool) {
+    var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    var truncated = false
+    if let range = value.range(of: #"\s*(…+|‥+|・・+|･･+|\.\.+)$"#, options: .regularExpression) {
+        value.removeSubrange(range)
+        truncated = true
+    }
+    value = value.replacingOccurrences(of: #"^[\s・･•●○◎◆◇■□▲△▼▽★☆※＊*\-－—―~〜凸(（\[［「『【①-⓿❶-➓]+"#, with: "", options: .regularExpression)
+    // アイコンが英数字1文字に読まれて、空白をはさんで名前が続く（「1 3104」「G しゅにく」）。
+    if let range = value.range(of: #"^[A-Za-z0-9Ａ-Ｚａ-ｚ０-９]\s+(?=\S)"#, options: .regularExpression) { value.removeSubrange(range) }
+    if !value.contains("(") && !value.contains("（") {
+        value = value.replacingOccurrences(of: #"[)）]+$"#, with: "", options: .regularExpression)
+    }
+    return (value.trimmingCharacters(in: .whitespacesAndNewlines), truncated)
+}
+
+/// 欄ごとに分けた行から候補を作る（同じ人は最初の1回だけ）。
+func giriParticipantCandidates(entries: [(text: String, section: GiriParticipantSection)], known: [String]) -> [GiriParticipantCandidate] {
+    var seen = Set<String>()
+    var output: [GiriParticipantCandidate] = []
+    for entry in entries {
+        let source = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !giriIsParticipantNoise(source), giriParticipantHeader(source) == nil else { continue }
+        let cleaned = giriCleanParticipantText(source)
+        guard !cleaned.name.isEmpty, !giriIsParticipantNoise(cleaned.name) else { continue }
+        let registered = giriMatchRegisteredName(cleaned.name, truncated: cleaned.truncated, known: known)
+        let name = registered ?? cleaned.name
+        guard seen.insert(giriOCRNameKey(name)).inserted else { continue }
+        var suspicious: String? = nil
+        if registered == nil, let first = cleaned.name.unicodeScalars.first, first.isASCII, CharacterSet.letters.union(.decimalDigits).contains(first),
+           cleaned.name.unicodeScalars.dropFirst().contains(where: { !$0.isASCII }) {
+            suspicious = String(first)
+        }
+        output.append(GiriParticipantCandidate(id: output.count, source: source, name: name, registered: registered,
+                                               truncated: cleaned.truncated && registered == nil, suspiciousPrefix: suspicious,
+                                               section: entry.section, included: entry.section == .participants))
+    }
+    return output
+}
+
+/// 貼り付けた文章：見出しがあれば欄ごとに分け、なければ全部を参加者として読む。
+func giriParticipantCandidates(text: String, known: [String]) -> [GiriParticipantCandidate] {
+    let lines = text.components(separatedBy: .newlines).flatMap { line -> [String] in
+        line.range(of: #"[、,，\t]"#, options: .regularExpression) == nil ? [line] : line.components(separatedBy: CharacterSet(charactersIn: "、,，\t"))
+    }
+    guard lines.contains(where: { giriParticipantHeader($0) != nil }) else {
+        return giriParticipantCandidates(entries: lines.map { ($0, .participants) }, known: known)
+    }
+    var section: GiriParticipantSection? = nil
+    var entries: [(text: String, section: GiriParticipantSection)] = []
+    for line in lines {
+        if let header = giriParticipantHeader(line) { section = header; continue }
+        if giriParticipantListEnds(line) { section = nil; continue }
+        if let section { entries.append((line, section)) }
+    }
+    return giriParticipantCandidates(entries: entries, known: known)
+}
+
+/// 画面の読み取り：見出しの位置から欄（列）を分け、見出しより下・一覧の終わりより上の行だけを使う。
+/// 見出しがない画像は、上から順に全部を参加者として読む。
+func giriParticipantCandidates(lines: [GiriOCRLine], known: [String]) -> [GiriParticipantCandidate] {
+    let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }
+    let headers = sorted.compactMap { line in giriParticipantHeader(line.text).map { (line: line, section: $0) } }
+    guard let firstHeader = headers.first else {
+        return giriParticipantCandidates(entries: sorted.map { ($0.text, .participants) }, known: known)
+    }
+    let end = sorted.first { $0.midY > firstHeader.line.midY && giriParticipantListEnds($0.text) }?.midY ?? .infinity
+    var entries: [(text: String, section: GiriParticipantSection)] = []
+    for line in sorted where line.midY > firstHeader.line.midY && line.midY < end && giriParticipantHeader(line.text) == nil {
+        // 行より上にある見出しのうち、横の位置がいちばん近い欄に入れる。
+        let above = headers.filter { $0.line.midY < line.midY }
+        guard let column = above.min(by: { abs($0.line.midX - line.midX) < abs($1.line.midX - line.midX) }) else { continue }
+        entries.append((line.text, column.section))
+    }
+    return giriParticipantCandidates(entries: entries, known: known)
+}

@@ -320,6 +320,11 @@ final class GiriStore: ObservableObject {
         let saved = group
         try mutate { next in
             Self.upsert(saved, into: &next.groups)
+            // 団体として登録した名前が主催者の会は、団体の主催にする。
+            let newKey = playerSearchKey(saved.name)
+            for index in next.events.indices where !next.events[index].organizerIsGroup && playerSearchKey(next.events[index].organizer) == newKey {
+                next.events[index].organizerIsGroup = true
+            }
             // 団体名を変えたら、その団体が主催した会の主催者名も変える。
             if let old, old.name != saved.name {
                 let key = playerSearchKey(old.name)

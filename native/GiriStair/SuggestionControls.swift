@@ -103,7 +103,19 @@ struct GiriPlayerSuggestionField: View {
         let profiles = store.playerDirectory
         if organizer {
             // GiriStair's requested exception: frequent hosts come first.
-            cachedNames = store.suggestPlayers("", organizer: true).map(\.name)
+            // 主催団体一覧の団体も、主催した回数の順に混ぜて出す。
+            var counts: [String: Int] = [:]
+            for event in store.events where event.status != .canceled {
+                counts[playerSearchKey(event.organizer), default: 0] += 1
+                for name in event.coOrganizers { counts[playerSearchKey(name), default: 0] += 1 }
+            }
+            var seen = Set<String>()
+            let names = (store.groupDirectory.map(\.name) + store.suggestPlayers("", organizer: true).map(\.name))
+                .filter { seen.insert(playerSearchKey($0)).inserted }
+            cachedNames = names.enumerated().sorted { first, second in
+                let a = counts[playerSearchKey(first.element), default: 0], b = counts[playerSearchKey(second.element), default: 0]
+                return a == b ? first.offset < second.offset : a > b
+            }.map(\.element)
         } else {
             // EventBasicEditor.sortedArtistSuggestionsByLatestSeen: recent
             // appearances first, then reading order for equally recent names.
@@ -135,20 +147,25 @@ struct GiriPlayerSuggestionField: View {
     }
 }
 
-/// 団体の主催者。団体名はプレイヤー一覧に入れないので、これまで団体として入れた名前から候補を出す。
-struct GiriGroupOrganizerField: View {
+/// 生大喜利のシリーズ名。空欄なら会の名前から「#5」などを除いた名前で同じシリーズにまとめる。
+/// 名前が同じ・含む関係のシリーズを先に候補へ出す。
+struct GiriSeriesField: View {
     @EnvironmentObject private var store: GiriStore
     @Binding var text: String
+    let eventTitle: String
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Text("主催者").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+            Text("シリーズ").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
                 .fixedSize().padding(.top, 2)
-            GiriSuggestionTextField(placeholder: "団体名", text: $text,
-                suggestions: groupNames, textAlignment: .trailing)
+            GiriSuggestionTextField(placeholder: placeholder, text: $text,
+                suggestions: giriSeriesSuggestions(for: eventTitle, in: store.events), textAlignment: .trailing,
+                showsAllSuggestionsWhenEmpty: true)
         }
     }
-    /// 主催団体一覧の団体（保存した団体と、団体として主催者に入れた名前）。
-    private var groupNames: [String] { store.groupDirectory.map(\.name) }
+    private var placeholder: String {
+        let derived = giriSeriesTitle(eventTitle)
+        return derived.isEmpty ? "任意" : derived
+    }
 }
 
 /// 大会の審査方法（段階ごとの審査方法が空の時に使う）。候補は段階の入力と同じ。
