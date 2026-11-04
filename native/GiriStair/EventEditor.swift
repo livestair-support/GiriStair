@@ -204,15 +204,6 @@ struct GiriEventEditor: View {
                 }
             }
         }
-        .onChange(of: eventPagePhoto) { _, item in
-            guard let item else { return }
-            readEventPage(item)
-        }
-        .sheet(item: $eventPageDraft) { page in
-            NavigationStack {
-                GiriEventPageReview(draft: page) { reviewed, replace in applyEventPage(reviewed, replace: replace) }
-            }
-        }
         .sheet(item: $bracketDraft) { draft in
             NavigationStack {
                 GiriBracketEditor(names: draft.names) { names in participants = names + [""] }
@@ -267,6 +258,14 @@ struct GiriEventEditor: View {
             }
             .buttonStyle(.plain)
             .disabled(readingEventPage)
+            .onChange(of: eventPagePhoto) { _, item in
+                if let item { readEventPage(item) }
+            }
+            .sheet(item: $eventPageDraft) { page in
+                NavigationStack {
+                    GiriEventPageReview(draft: page, onApply: applyEventPage)
+                }
+            }
         }.appEventEditorCardStyle(accentColor: AppSectionAccent.scan)
     }
 
@@ -293,40 +292,32 @@ struct GiriEventEditor: View {
 
     /// 読み取った内容を入力に反映する。置き換えない時は空欄だけに入れ、参加者は重ならない人だけ足す。
     private func applyEventPage(_ page: GiriEventPageDraft, replace: Bool) {
-        func fill(_ value: String, _ keyPath: WritableKeyPath<GiriEvent, String>) {
-            let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return }
-            guard replace || draft[keyPath: keyPath].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            draft[keyPath: keyPath] = text
-        }
-        fill(page.title, \.title)
-        fill(page.venue, \.venue)
-        fill(page.venueRoom, \.venueRoom)
-        fill(page.organizer, \.organizer)
-        if let fee = page.fee, replace || draft.entryFee == nil { draft.entryFee = fee }
         let calendar = Calendar.current
         if let date = page.date, replace || draft.eventDate == nil {
             let previous = draft.eventDate
-            let day = calendar.startOfDay(for: date)
+            let newDay = calendar.startOfDay(for: date)
+            lastEventDay = newDay
+            draft.eventDate = newDay
+            moveDay(from: previous, to: newDay)
+        }
+        var value = draft
+        value.title = Self.merged(value.title, page.title, replace: replace)
+        value.venue = Self.merged(value.venue, page.venue, replace: replace)
+        value.venueRoom = Self.merged(value.venueRoom, page.venueRoom, replace: replace)
+        value.organizer = Self.merged(value.organizer, page.organizer, replace: replace)
+        if let fee = page.fee, replace || value.entryFee == nil { value.entryFee = fee }
+        let day = value.eventDate ?? calendar.startOfDay(for: Date())
+        value.opensAt = Self.merged(value.opensAt, page.opens, on: day, replace: replace)
+        value.startsAt = Self.merged(value.startsAt, page.start, on: day, replace: replace)
+        value.endsAt = Self.merged(value.endsAt, page.end, on: day, replace: replace)
+        if let start = value.startsAt, let end = value.endsAt, end < start {
+            value.endsAt = calendar.date(byAdding: .day, value: 1, to: end)
+        }
+        if value.eventDate == nil && (value.startsAt != nil || value.opensAt != nil) {
             lastEventDay = day
-            draft.eventDate = day
-            moveDay(from: previous, to: day)
+            value.eventDate = day
         }
-        let day = draft.eventDate ?? calendar.startOfDay(for: Date())
-        func time(_ clock: GiriClock?, _ keyPath: WritableKeyPath<GiriEvent, Date?>) {
-            guard let clock, replace || draft[keyPath: keyPath] == nil, let value = giriClockDate(clock, on: day) else { return }
-            draft[keyPath: keyPath] = value
-        }
-        time(page.opens, \.opensAt)
-        time(page.start, \.startsAt)
-        time(page.end, \.endsAt)
-        if let start = draft.startsAt, let end = draft.endsAt, end < start {
-            draft.endsAt = calendar.date(byAdding: .day, value: 1, to: end)
-        }
-        if draft.eventDate == nil && (draft.startsAt != nil || draft.opensAt != nil) {
-            lastEventDay = day
-            draft.eventDate = day
-        }
+        draft = value
         let existing = Set(participants.map(giriEditorNameKey))
         let added = giriSelectedParticipantNames(page.participants).filter { !existing.contains(giriEditorNameKey($0)) }
         if !added.isEmpty {
@@ -334,6 +325,17 @@ struct GiriEventEditor: View {
             participants.append(contentsOf: added)
             participants.append("")
         }
+    }
+
+    private static func merged(_ current: String, _ read: String, replace: Bool) -> String {
+        let text = read.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return current }
+        return replace || current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? text : current
+    }
+
+    private static func merged(_ current: Date?, _ clock: GiriClock?, on day: Date, replace: Bool) -> Date? {
+        guard let clock, replace || current == nil, let value = giriClockDate(clock, on: day) else { return current }
+        return value
     }
 
     private var basicSection: some View {

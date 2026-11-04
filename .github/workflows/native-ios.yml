@@ -43,6 +43,8 @@ jobs:
           xcodebuild -project native/GiriStair.xcodeproj -scheme GiriStair -configuration Debug \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath build/native/DerivedData \
             CODE_SIGNING_ALLOWED=NO build > build/native/xcodebuild.log 2>&1 || {
+              # The compiler's own messages come before the long command list; show them first.
+              grep -n -A3 -E "(error|fatal error): " build/native/xcodebuild.log | head -n 80 || true
               tail -n 180 build/native/xcodebuild.log
               exit 1
             }

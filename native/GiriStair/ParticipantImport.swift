@@ -142,13 +142,6 @@ func giriParticipantKnownNames(_ store: GiriStore) -> [String] {
     return names
 }
 
-/// 選んだ名前（同じ人は1回だけ）。
-func giriSelectedParticipantNames(_ candidates: [GiriParticipantCandidate]) -> [String] {
-    var seen = Set<String>()
-    return candidates.filter(\.included).map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty && seen.insert(giriOCRNameKey($0)).inserted }
-}
-
 /// 読み取った参加者の確認（参加者・興味あり・不参加などの欄ごと）。参加者の一括追加とイベントページの読み取りで共通。
 struct GiriParticipantCandidateSections: View {
     @Binding var candidates: [GiriParticipantCandidate]

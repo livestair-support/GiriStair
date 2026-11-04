@@ -920,6 +920,13 @@ struct GiriParticipantCandidate: Identifiable, Equatable {
     var alreadyAdded: Bool = false
 }
 
+/// 選んだ名前（同じ人は1回だけ）。
+func giriSelectedParticipantNames(_ candidates: [GiriParticipantCandidate]) -> [String] {
+    var seen = Set<String>()
+    return candidates.filter(\.included).map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && seen.insert(giriOCRNameKey($0)).inserted }
+}
+
 /// 今の参加者と同じ人（読み違いの吸収込み）を「追加済み」にして、最初は選ばない。
 func giriMarkingAlreadyAdded(_ candidates: [GiriParticipantCandidate], existing: [String]) -> [GiriParticipantCandidate] {
     let keys = Set(existing.map(giriOCRNameKey).filter { !$0.isEmpty })
