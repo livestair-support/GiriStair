@@ -88,6 +88,34 @@ enum TournamentOutcome: String, Codable, CaseIterable, Identifiable {
     var displayName: String { title }
 }
 
+/// 段階の種類。大会ごとに段階の数が違っても「どこまで進んだか」を比べられるよう、
+/// 予選 → 本戦 → 準々決勝 → 準決勝 → 決勝 の順に並べる（その他は順番に数えない）。
+enum StageKind: String, CaseIterable, Identifiable {
+    case qualifier, main, quarterfinal, semifinal, final, other
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .qualifier: return "予選"
+        case .main: return "本戦"
+        case .quarterfinal: return "準々決勝"
+        case .semifinal: return "準決勝"
+        case .final: return "決勝"
+        case .other: return "その他"
+        }
+    }
+    /// 進んだ深さ（その他は nil）。
+    var depth: Int? {
+        switch self {
+        case .qualifier: return 0
+        case .main: return 1
+        case .quarterfinal: return 2
+        case .semifinal: return 3
+        case .final: return 4
+        case .other: return nil
+        }
+    }
+}
+
 enum SiteRecurrence: String, Codable, CaseIterable, Identifiable {
     case irregular, weekly
     var id: String { rawValue }
@@ -204,12 +232,15 @@ struct ResultStage: Codable, Equatable, Identifiable {
     var scoring: StageScoring? = nil
     /// 通過ライン（1人あたりの点の合計など、競い方の単位）
     var borderScore: Double? = nil
+    /// 0.10：段階の種類（予選・本戦・準々決勝・準決勝・決勝・その他）。nil は段階名から判断する。
+    /// 知らない値（新しい版の値）は読み込みを止めずに nil として扱う。
+    var kind: StageKind? = nil
 }
 
 extension ResultStage {
     private enum CodingKeys: String, CodingKey {
         case id, name, outcome, placement, memo, roundId, stageId, teamPlacement, individualPlacement, voterCount, points, maxPointsPerVoter
-        case group, lineup, judging, opponents, entrantCount, advanceCount, scoring, borderScore
+        case group, lineup, judging, opponents, entrantCount, advanceCount, scoring, borderScore, kind
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -246,6 +277,7 @@ extension ResultStage {
         advanceCount = try c.decodeIfPresent(Int.self, forKey: .advanceCount)
         scoring = try c.decodeIfPresent(StageScoring.self, forKey: .scoring)
         borderScore = try c.decodeIfPresent(Double.self, forKey: .borderScore)
+        kind = (try c.decodeIfPresent(String.self, forKey: .kind)).flatMap(StageKind.init(rawValue:))
 
         try validate()
     }
@@ -284,6 +316,7 @@ extension ResultStage {
         try c.encode(advanceCount, forKey: .advanceCount)
         try c.encode(scoring, forKey: .scoring)
         try c.encode(borderScore, forKey: .borderScore)
+        try c.encode(kind?.rawValue, forKey: .kind)
     }
 }
 
@@ -296,11 +329,16 @@ struct TournamentResult: Codable, Equatable {
     var memo: String = ""
     /// 最終結果の「ベスト○」（outcome は placed）。旧データにはない。
     var bestOf: Int? = nil
+    /// 0.10：最終結果「決勝進出」（outcome は placed）。順位は任意で placement、決勝の人数は finalEntrants。
+    var finalist: Bool = false
+    var finalEntrants: Int? = nil
+    /// 0.10：トーナメント表の並び（上から順。読み取り・手入力）。自分の山の対戦相手の候補に使う。
+    var bracket: [String] = []
 }
 
 extension TournamentResult {
     private enum CodingKeys: String, CodingKey {
-        case format, outcome, teamName, members, stages, memo, bestOf
+        case format, outcome, teamName, members, stages, memo, bestOf, finalist, finalEntrants, bracket
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -318,6 +356,9 @@ extension TournamentResult {
         memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
 
         bestOf = try c.decodeIfPresent(Int.self, forKey: .bestOf)
+        finalist = try c.decodeIfPresent(Bool.self, forKey: .finalist) ?? false
+        finalEntrants = try c.decodeIfPresent(Int.self, forKey: .finalEntrants)
+        bracket = try c.decodeIfPresent([String].self, forKey: .bracket) ?? []
 
         try validate()
     }
@@ -337,6 +378,9 @@ extension TournamentResult {
         try c.encode(memo, forKey: .memo)
 
         try c.encode(bestOf, forKey: .bestOf)
+        try c.encode(finalist, forKey: .finalist)
+        try c.encode(finalEntrants, forKey: .finalEntrants)
+        try c.encode(bracket, forKey: .bracket)
     }
 }
 
@@ -1328,12 +1372,12 @@ extension ResultStage {
     }
     var hasRecord: Bool {
         outcome != .unrecorded || placement != nil || teamPlacement != nil || individualPlacement != nil || voterCount != nil || points != nil || maxPointsPerVoter != 1 || !memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-            !group.isEmpty || !lineup.isEmpty || !judging.isEmpty || !opponents.isEmpty || entrantCount != nil || advanceCount != nil || scoring != nil || borderScore != nil
+            !group.isEmpty || !lineup.isEmpty || !judging.isEmpty || !opponents.isEmpty || entrantCount != nil || advanceCount != nil || scoring != nil || borderScore != nil || kind != nil
     }
 }
 
 extension TournamentResult {
-    func validate() throws { try uniqueIDs(stages); try stages.forEach { try $0.validate() }; try positive(bestOf, "ベスト○") }
+    func validate() throws { try uniqueIDs(stages); try stages.forEach { try $0.validate() }; try positive(bestOf, "ベスト○"); try positive(finalEntrants, "決勝の人数") }
     var hasRecord: Bool { outcome != .unrecorded || stages.contains(where: \.hasRecord) || !memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 }
 

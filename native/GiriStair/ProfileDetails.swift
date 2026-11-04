@@ -900,6 +900,8 @@ struct GiriPlayerDetail: View {
         let podiums = store.events.filter { $0.isCountableParticipation(now: now) && inYear($0) }.flatMap { event -> [(GiriEvent, TournamentStanding)] in
             event.standings.filter { standing in standing.playerNames.contains { playerSearchKey($0) == key } }.map { (event, $0) }
         }.sorted { $0.1.placement < $1.1.placement }
+        // 同じ組・対戦相手として記録した段階（自分の結果）。
+        let meetings = giriOpponentMeetings(store.events.filter(inYear), playerKey: key, now: now)
         let venues = giriRankItems(period.filter { $0.eventFormat.hasLiveTiming }.map { [$0.venue] })
         let coPlayers = giriRankItems(period.map(giriEventPeople), excluding: selfKeys.union([key]))
         let accent = AppSectionAccent.artist
@@ -952,6 +954,11 @@ struct GiriPlayerDetail: View {
                                 if index < podiums.count - 1 { Divider().overlay(appSeparatorColor) }
                             }
                         }
+                    }
+                }
+                if !selfKeys.contains(key) {
+                    GiriDetailCard(title: "対戦の記録", systemImage: "person.2.fill", accentColor: AppSectionAccent.ticket) {
+                        GiriOpponentRecordContent(meetings: meetings)
                     }
                 }
                 GiriRankingCard(title: "よく一緒になる会場", systemImage: "building.2", accentColor: AppSectionAccent.venue,
@@ -1598,3 +1605,48 @@ struct GiriMapSearchView: View {
         } catch { store.errorMessage = error.localizedDescription }
     }
 }
+
+/// プレイヤー詳細の「対戦の記録」：同じ組・対戦相手として記録した回数と、その時に自分が勝ち抜けた回数。
+private struct GiriOpponentRecordContent: View {
+    let meetings: [GiriMeeting]
+    var body: some View {
+        if meetings.isEmpty {
+            Text("同じ組・対戦相手として記録した段階はありません").font(.subheadline).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6)
+        } else {
+            VStack(spacing: 0) {
+                row("同じ組・対戦", "\(meetings.count)回")
+                Divider().overlay(appSeparatorColor)
+                row("自分が勝ち抜けた", "\(meetings.filter { $0.stage.passed == true }.count)回")
+                ForEach(Array(meetings.prefix(5))) { meeting in
+                    Divider().overlay(appSeparatorColor)
+                    NavigationLink { GiriEventDetail(eventID: meeting.event.id) } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(meeting.event.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
+                                Text(stageText(meeting.stage)).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right").font(.caption2.bold()).foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 10)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+    private func row(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            Spacer()
+            Text(value).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+        }.padding(.vertical, 8)
+    }
+    private func stageText(_ stage: ResultStage) -> String {
+        let result = giriStageResultText(stage)
+        return result.isEmpty ? stage.name : result
+    }
+}
+

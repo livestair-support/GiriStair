@@ -41,11 +41,7 @@ struct GiriResultsView: View {
     // Intermediate advancement, upcoming events, and other players' podiums
     // never become one's own completed participation or final placement.
     private var completed: [GiriEvent] { tournaments.filter { $0.isCountableParticipation() } }
-    private var champions: Int { completed.filter { $0.effectivePlacement == 1 }.count }
-    private var runnersUp: Int { completed.filter { $0.effectivePlacement == 2 }.count }
     // 3位とベスト4は分けて数える（3位決定戦のある大会とない大会を混ぜない）。
-    private var thirds: Int { completed.filter(\.isThirdPlace).count }
-    private var bestFours: Int { completed.filter { $0.isBest(4) }.count }
     private var otherPlaced: Int { completed.filter(giriIsOtherPlacement).count }
 
     var body: some View {
@@ -94,8 +90,97 @@ struct GiriResultsView: View {
     // MARK: まとめ
 
     @ViewBuilder private var summaryContent: some View {
-        statistics.padding(.horizontal, 18).padding(.vertical, 6)
+        let summary = giriTournamentSummary(tournaments)
+        statistics(summary).padding(.horizontal, 18).padding(.vertical, 6)
+        if summary.completed > 0 {
+            ratesCard(summary).padding(.horizontal, 18).padding(.vertical, 6)
+            if !summary.furthest.isEmpty {
+                furthestCard(summary).padding(.horizontal, 18).padding(.vertical, 6)
+            }
+            let organizers = giriOrganizerResults(tournaments)
+            if !organizers.isEmpty {
+                organizerCard(organizers).padding(.horizontal, 18).padding(.vertical, 6)
+            }
+            // ネット大喜利（長考）は段階の形式がほぼ1つなので、形式・審査方法ごとは出さない。
+            if selectedFormat != .onlineLong {
+                let lineups = giriStagePassRates(tournaments) { $0.lineup }
+                if !lineups.isEmpty {
+                    rateListCard("形式ごとの勝ち抜き", systemImage: "person.3.sequence", rows: lineups)
+                        .padding(.horizontal, 18).padding(.vertical, 6)
+                }
+                let judgings = giriStagePassRates(tournaments) { $0.judging }
+                if !judgings.isEmpty {
+                    rateListCard("審査方法ごとの勝ち抜き", systemImage: "hand.raised", rows: judgings)
+                        .padding(.horizontal, 18).padding(.vertical, 6)
+                }
+            }
+        }
         progressCard.padding(.horizontal, 18).padding(.vertical, 6)
+    }
+
+    /// 優勝率・決勝進出率・予選通過率（予選がない大会は最初の段階）。
+    private func ratesCard(_ summary: GiriTournamentSummary) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AppCardSectionTitle(title: "率", systemImage: "percent", accentColor: accent,
+                                infoTitle: "率について",
+                                infoMessage: "終わった大会のうちの割合です。予選通過率は予選の結果が分かる大会で数え、予選がない大会は最初の段階で数えます。")
+            rateRow("優勝率", summary.champions, summary.completed)
+            Divider().overlay(appSeparatorColor)
+            rateRow("決勝進出率", summary.finalists, summary.completed)
+            Divider().overlay(appSeparatorColor)
+            rateRow("予選通過率", summary.qualifierPassed, summary.qualifierKnown)
+        }.padding(14).appTintedCard(accentColor: accent)
+    }
+
+    private func rateRow(_ title: String, _ passed: Int, _ total: Int) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            Spacer()
+            Text(giriRateText(passed, total)).font(.body.weight(.semibold)).monospacedDigit()
+            Text("\(passed)/\(total)").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                .frame(minWidth: 44, alignment: .trailing)
+        }
+    }
+
+    /// どこまで進んだか（大会ごとの段階の数が違っても、予選〜決勝の深さで比べる）。
+    private func furthestCard(_ summary: GiriTournamentSummary) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AppCardSectionTitle(title: "どこまで進んだか", systemImage: "stairs", accentColor: accent,
+                                infoTitle: "どこまで進んだかについて",
+                                infoMessage: "大会ごとに、記録のある一番先の段階で数えます。段階の種類は段階名から自動で決まり、結果の入力で変えられます。")
+            let kinds = StageKind.allCases.filter { $0.depth != nil }.reversed()
+            ForEach(Array(kinds.enumerated()), id: \.element) { index, kind in
+                if index > 0 { Divider().overlay(appSeparatorColor) }
+                summaryRow(kind.title, "\(summary.furthest[kind] ?? 0)件")
+            }
+        }.padding(14).appTintedCard(accentColor: accent)
+    }
+
+    private func organizerCard(_ rows: [GiriOrganizerRow]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AppCardSectionTitle(title: "主催ごと", systemImage: "person.crop.rectangle", accentColor: accent)
+            ForEach(Array(rows.prefix(8).enumerated()), id: \.element.id) { index, row in
+                if index > 0 { Divider().overlay(appSeparatorColor) }
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(row.name).font(.subheadline).lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text("出場\(row.entries)・決勝\(row.finals)・優勝\(row.champions)")
+                        .font(.subheadline.weight(.medium)).monospacedDigit()
+                }
+            }
+        }.padding(14).appTintedCard(accentColor: accent)
+    }
+
+    private func rateListCard(_ title: String, systemImage: String, rows: [GiriRateRow]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AppCardSectionTitle(title: title, systemImage: systemImage, accentColor: accent,
+                                infoTitle: title,
+                                infoMessage: "結果を入れた段階のうち、通過・優勝した割合です。")
+            ForEach(Array(rows.prefix(10).enumerated()), id: \.element.id) { index, row in
+                if index > 0 { Divider().overlay(appSeparatorColor) }
+                rateRow(row.label, row.passed, row.total)
+            }
+        }.padding(14).appTintedCard(accentColor: accent)
     }
 
     /// 結果の入力状況。未入力があれば大会一覧の「結果未入力」へ移れる。
@@ -191,24 +276,31 @@ struct GiriResultsView: View {
         .appTintedCard(accentColor: accent, cornerRadius: 20, railVerticalInset: 14, lightTintOpacity: 0.065)
         .padding(.horizontal, 18).padding(.bottom, 12)
     }
-    private var statistics: some View {
+    private func statistics(_ summary: GiriTournamentSummary) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             AppCardSectionTitle(title: "最終成績", systemImage: "trophy", accentColor: accent)
             HStack(spacing: 0) {
-                metric("優勝", champions, image: "trophy.fill", color: accent)
+                metric("優勝", summary.champions, image: "trophy.fill", color: accent)
                 Divider().overlay(appSeparatorColor)
-                metric("準優勝", runnersUp, image: "medal.fill", color: .secondary)
+                metric("準優勝", summary.runnersUp, image: "medal.fill", color: .secondary)
                 Divider().overlay(appSeparatorColor)
-                metric("3位", thirds, image: "3.circle.fill", color: AppSectionAccent.ticket)
+                metric("3位", summary.thirds, image: "3.circle.fill", color: AppSectionAccent.ticket)
                 Divider().overlay(appSeparatorColor)
-                metric("ベスト4", bestFours, image: "rosette", color: AppSectionAccent.artist)
+                metric("ベスト4", summary.bestFours, image: "rosette", color: AppSectionAccent.artist)
             }.frame(height: 72)
+            Divider().overlay(appSeparatorColor)
+            summaryRow("決勝進出（優勝・準優勝を含む）", "\(summary.finalists)件")
             Divider().overlay(appSeparatorColor)
             if otherPlaced > 0 {
                 summaryRow("ベスト8・その他の入賞", "\(otherPlaced)件")
                 Divider().overlay(appSeparatorColor)
             }
-            summaryRow("終了した大会", "\(completed.count)件")
+            // 個人戦とチーム戦の両方がある時だけ、優勝の内訳を出す（合計は上の数）。
+            if summary.teamCount > 0 && summary.individualCount > 0 {
+                summaryRow("優勝の内訳", "個人戦\(summary.individualChampions)・チーム戦\(summary.teamChampions)")
+                Divider().overlay(appSeparatorColor)
+            }
+            summaryRow("終了した大会", "\(summary.completed)件")
         }.padding(14).appTintedCard(accentColor: accent)
     }
     private func metric(_ title: String, _ count: Int, image: String, color: Color) -> some View {

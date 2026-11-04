@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 /// Date dependencies match TicketScheduleViews: only untouched derived fields move.
 struct GiriRoundFields: View {
@@ -176,6 +177,9 @@ struct GiriResultEntry: View {
     @State private var nextDraft: GiriRoundDraftAction?
     @State private var resultSaved = false
     @State private var editingStageID: String?
+    @State private var bracketPhoto: PhotosPickerItem?
+    @State private var readingBracket = false
+    @State private var bracketDraft: GiriBracketDraft?
 
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
@@ -211,7 +215,7 @@ struct GiriResultEntry: View {
             if let event {
                 GiriStageEditor(event: event, stage: stageBinding(id), answerNotes: $answerNotes,
                                 team: result.format != .individual,
-                                namePriority: otherPlayerNames(event),
+                                namePriority: stageNamePriority(id, event: event),
                                 onDelete: {
                                     existing.remove(id)
                                     result.stages.removeAll { $0.id == id }
@@ -235,6 +239,60 @@ struct GiriResultEntry: View {
         } message: { Text("直前の日程を引き継いだ入力欄を開きます。保存するまで予定は追加されません。") }
         .sheet(item: $nextDraft, onDismiss: { if resultSaved { dismiss() } }) { action in
             NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
+        }
+        .sheet(item: $bracketDraft) { draft in
+            NavigationStack { GiriBracketEditor(names: draft.names, onApply: applyBracket) }
+        }
+        .onChange(of: bracketPhoto) { _, item in
+            guard let item else { return }
+            readingBracket = true
+            Task {
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
+                    let lines = try await GiriParticipantOCR.recognizeLines(data)
+                    bracketDraft = GiriBracketDraft(names: giriBracketOrder(lines))
+                } catch { store.errorMessage = error.localizedDescription }
+                readingBracket = false
+                bracketPhoto = nil
+            }
+        }
+    }
+
+    /// 対戦相手の候補：トーナメント表があれば、その回戦で当たりうる隣の山を先に出す。
+    private func stageNamePriority(_ stageID: String, event: GiriEvent) -> [String] {
+        let others = otherPlayerNames(event)
+        let wide = result.stages.filter { $0.roundId == nil }
+        guard !result.bracket.isEmpty, let index = wide.firstIndex(where: { $0.id == stageID }) else { return others }
+        let candidates = giriBracketOpponents(result.bracket, round: index + 1, isSelf: store.preferences.isSelf)
+        return candidates + others
+    }
+
+    /// 読み取ったトーナメント表を保存し、段階がなければ「1回戦〜決勝」を作る（1回戦の相手も入れる）。
+    private func applyBracket(_ names: [String]) {
+        result.bracket = names
+        let isSelf = store.preferences.isSelf
+        let firstOpponents = giriBracketOpponents(names, round: 1, isSelf: isSelf)
+        if result.stages.contains(where: { $0.roundId == nil }) {
+            if let index = result.stages.firstIndex(where: { $0.roundId == nil }), result.stages[index].opponents.isEmpty {
+                result.stages[index].opponents = firstOpponents
+            }
+            return
+        }
+        for (offset, name) in giriBracketStageNames(names.count).enumerated() {
+            var stage = ResultStage()
+            stage.name = name
+            stage.lineup = "タイマン"
+            if offset == 0 { stage.opponents = firstOpponents }
+            result.stages.append(stage)
+            existing.insert(stage.id)
+        }
+    }
+
+    /// 前回の同じ大会（同じ主催・同じ名前）の段階構成を使う。
+    private func applyTemplate(from source: GiriEvent) {
+        for stage in giriStageTemplate(from: source) {
+            result.stages.append(stage)
+            existing.insert(stage.id)
         }
     }
 
@@ -295,6 +353,18 @@ struct GiriResultEntry: View {
                 Button { editingStageID = round.id } label: { stageRow(round, nested: true) }
                     .buttonStyle(.plain)
             }
+            if wide.isEmpty && rounds.isEmpty, let source = giriStageTemplateSource(for: event, in: store.events) {
+                Button { applyTemplate(from: source) } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label("前回の段階を使う", systemImage: "square.on.square")
+                        Text(templateCaption(source)).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .tint(accentActionColor)
+            }
+            if !(event.eventFormat.hasOnlineRounds && !event.effectiveRounds.isEmpty) {
+                bracketRow
+            }
             Button {
                 var stage = ResultStage()
                 stage.name = wide.isEmpty ? "予選" : giriEditorNextStage(wide.last?.name ?? "")
@@ -304,6 +374,41 @@ struct GiriResultEntry: View {
             } label: { Label("段階を追加", systemImage: "plus.circle") }
             .tint(accentActionColor)
         }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
+    private func templateCaption(_ source: GiriEvent) -> String {
+        let names = source.stageResults.map(\.name).filter { !$0.isEmpty }.joined(separator: "→")
+        return [source.title, names].filter { !$0.isEmpty }.joined(separator: "：")
+    }
+
+    /// トーナメント表（画像の文字を読み取り、上から順の名前にする）。
+    @ViewBuilder private var bracketRow: some View {
+        if result.bracket.isEmpty {
+            PhotosPicker(selection: $bracketPhoto, matching: .images) {
+                HStack {
+                    Label("トーナメント表を読み取る", systemImage: "text.viewfinder")
+                    Spacer()
+                    if readingBracket { ProgressView() }
+                }
+            }
+            .disabled(readingBracket)
+            .tint(accentActionColor)
+        } else {
+            Button { bracketDraft = GiriBracketDraft(names: result.bracket) } label: {
+                HStack {
+                    Label("トーナメント表", systemImage: "list.number")
+                    Spacer()
+                    Text(bracketCaption).font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            .tint(accentActionColor)
+        }
+    }
+
+    private var bracketCaption: String {
+        let count = result.bracket.count
+        guard let position = result.bracket.firstIndex(where: store.preferences.isSelf) else { return "\(count)人" }
+        return "\(count)人・自分は\(position + 1)番目"
     }
 
     private func stageRow(_ stage: ResultStage, nested: Bool) -> some View {
@@ -348,13 +453,15 @@ struct GiriResultEntry: View {
 
     private var finalChoice: Binding<GiriFinalResultChoice> {
         Binding(get: {
-            GiriFinalResultChoice.current(outcome: result.outcome == .advanced ? .unrecorded : result.outcome, placement: placement, bestOf: result.bestOf)
+            GiriFinalResultChoice.current(outcome: result.outcome == .advanced ? .unrecorded : result.outcome, placement: placement, bestOf: result.bestOf, finalist: result.finalist)
         }, set: { choice in
             result.outcome = choice.outcome
             result.bestOf = choice.bestOf
+            result.finalist = choice == .finalist
+            if choice != .finalist { result.finalEntrants = nil }
             switch choice {
             case .third: placement = 3
-            case .placed: if placement == 3 { placement = nil }
+            case .placed, .finalist: if placement == 3 { placement = nil }
             default: placement = nil
             }
         })
@@ -365,12 +472,26 @@ struct GiriResultEntry: View {
         Section {
             AppCardSectionTitle(title: "最終結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket,
                                 infoTitle: "最終結果について",
-                                infoMessage: "戦績では優勝・準優勝・3位・ベスト4を分けて数えます。敗退は「予選敗退」「2回戦敗退」のように段階の名前から表示します。")
+                                infoMessage: "優勝・準優勝・3位・ベスト4を分けて数えます。決勝で順位がはっきりしない時は「決勝進出」（順位は分かれば）。敗退は段階の名前から「予選敗退」のように表示します。")
                 .listRowSeparator(.hidden)
             Picker(selection: finalChoice) {
                 ForEach(GiriFinalResultChoice.allCases) { Text($0.title).tag($0) }
             } label: { GiriEditorLabel("最終結果") }
             .pickerStyle(.menu).tint(.primary)
+            // 段階の記録（準々決勝で敗退→ベスト8 など）から候補を出す。押した時だけ反映する。
+            if let suggestion = giriSuggestedFinalChoice(result.stages),
+               [.unrecorded, .eliminated].contains(finalChoice.wrappedValue), suggestion != finalChoice.wrappedValue {
+                Button { finalChoice.wrappedValue = suggestion } label: {
+                    Label("段階の記録から「\(suggestion.title)」にする", systemImage: "wand.and.stars")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.borderless)
+                .tint(accentActionColor)
+            }
+            if finalChoice.wrappedValue == .finalist {
+                GiriIntegerField(title: "決勝の人数（任意）", value: $result.finalEntrants, suffix: "人")
+                GiriIntegerField(title: "決勝の順位（任意）", value: $placement, suffix: "位")
+            }
             if finalChoice.wrappedValue == .eliminated {
                 HStack {
                     GiriEditorLabel("表示")
@@ -634,7 +755,7 @@ struct GiriStageEditor: View {
 
     static let stageNames = ["予選", "予選1回戦", "予選2回戦", "本戦", "本戦1回戦", "本戦2回戦", "敗者復活戦", "準々決勝", "準決勝", "3位決定戦", "決勝"]
     static let lineups = ["横並び3人", "横並び4人", "横並び5人", "横並び6人", "タイマン", "総当たり", "トーナメント"]
-    static let judgings = ["挙手（1人1票）", "挙手（1人2票）", "拍手", "加点審査", "印象審査", "超加点審査", "審査員の採点", "ネット投票"]
+    static let judgings = ["挙手（1人1票）", "挙手（1人2票）", "拍手", "加点審査", "印象審査", "超加点審査", "審査員の採点", "ネット投票", "その他"]
 
     var body: some View {
         Form {
@@ -643,6 +764,16 @@ struct GiriStageEditor: View {
                     .listRowSeparator(.hidden)
                 presetRow("段階名", placeholder: "予選・決勝など", text: $stage.name, presets: Self.stageNames)
                 if isStageWide {
+                    HStack(spacing: 4) {
+                        GiriEditorLabel("種類")
+                        AppInfoButton(title: "段階の種類について",
+                                      message: "戦績のまとめで、予選通過率・決勝進出率と「どこまで進んだか」を数えるのに使います。段階名から自動で選びます。",
+                                      tintColor: AppSectionAccent.artist)
+                        Spacer(minLength: 8)
+                        Picker("種類", selection: Binding(get: { stage.effectiveKind }, set: { stage.kind = $0 })) {
+                            ForEach(StageKind.allCases) { Text($0.title).tag($0) }
+                        }.labelsHidden().pickerStyle(.menu).tint(.primary)
+                    }
                     textRow("組", placeholder: "Aブロックなど", text: $stage.group)
                     presetRow("形式", placeholder: "横並び5人など", text: $stage.lineup, presets: Self.lineups)
                     presetRow("審査方法", placeholder: "挙手・加点など", text: $stage.judging, presets: Self.judgings)
@@ -1175,5 +1306,92 @@ struct GiriCycleResultEditor: View {
             playLiveStairSaveFeedback()
             dismiss()
         } catch { store.errorMessage = error.localizedDescription }
+    }
+}
+
+struct GiriBracketDraft: Identifiable {
+    let id = UUID()
+    var names: [String]
+}
+
+/// トーナメント表の並びを確認・修正する。読み取りの誤りは直し、順番は上の山から。
+/// 自分の位置から、各回戦で当たりうる相手を候補に出す。
+struct GiriBracketEditor: View {
+    @EnvironmentObject private var store: GiriStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var names: [String]
+    @State private var original: [String]
+    @State private var discard = false
+    let onApply: ([String]) -> Void
+
+    init(names: [String], onApply: @escaping ([String]) -> Void) {
+        _names = State(initialValue: names.isEmpty ? [""] : names)
+        _original = State(initialValue: names.isEmpty ? [""] : names)
+        self.onApply = onApply
+    }
+
+    private var cleaned: [String] { names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
+    private var changed: Bool { names != original }
+    private var selfIndex: Int? { cleaned.firstIndex(where: store.preferences.isSelf) }
+
+    var body: some View {
+        Form {
+            Section {
+                AppCardSectionTitle(title: "トーナメント表", systemImage: "list.number", accentColor: AppSectionAccent.ticket,
+                                    infoTitle: "トーナメント表について",
+                                    infoMessage: "上の山から順に並べます。左右に山がある表は左→右です。自分の位置から、各回戦で当たりうる相手を候補に出します。")
+                    .listRowSeparator(.hidden)
+                Text(summary).font(.subheadline).foregroundStyle(selfIndex == nil ? AppSectionAccent.ticket : Color.secondary)
+                ForEach(names.indices, id: \.self) { index in
+                    HStack(spacing: 8) {
+                        Text("\(index + 1)").font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 24, alignment: .trailing)
+                        TextField("名前", text: $names[index])
+                        if store.preferences.isSelf(names[index]) {
+                            Text("自分").font(.caption2.weight(.semibold)).foregroundStyle(AppSectionAccent.ticket)
+                        }
+                        Menu {
+                            if index > 0 { Button("上へ", systemImage: "arrow.up") { names.swapAt(index, index - 1) } }
+                            if index + 1 < names.count { Button("下へ", systemImage: "arrow.down") { names.swapAt(index, index + 1) } }
+                            Button("この下に追加", systemImage: "plus") { names.insert("", at: index + 1) }
+                            Button("削除", systemImage: "trash", role: .destructive) { names.remove(at: index); if names.isEmpty { names = [""] } }
+                        } label: { Image(systemName: "ellipsis.circle") }
+                        .tint(accentActionColor)
+                    }
+                }
+                Button { names.append("") } label: { Label("名前を追加", systemImage: "plus.circle") }
+                    .tint(accentActionColor)
+            }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+            if selfIndex != nil {
+                Section {
+                    AppCardSectionTitle(title: "自分の山", systemImage: "arrow.triangle.branch", accentColor: AppSectionAccent.artist)
+                        .listRowSeparator(.hidden)
+                    ForEach(Array(giriBracketStageNames(cleaned.count).enumerated()), id: \.offset) { offset, name in
+                        HStack(alignment: .firstTextBaseline) {
+                            GiriEditorLabel(name)
+                            Spacer(minLength: 8)
+                            Text(giriBracketOpponents(cleaned, round: offset + 1, isSelf: store.preferences.isSelf).joined(separator: "・"))
+                                .font(.subheadline).multilineTextAlignment(.trailing)
+                        }
+                    }
+                }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+            }
+        }
+        .appEditorFormStyle()
+        .navigationTitle("トーナメント表").navigationBarTitleDisplayMode(.inline)
+        .giriNavigationBarStyle()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { if changed { discard = true } else { dismiss() } } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("使う") { onApply(cleaned); dismiss() }.fontWeight(.bold).disabled(cleaned.count < 2)
+            }
+        }
+        .interactiveDismissDisabled(changed)
+        .giriDiscardChangesAlert(isPresented: $discard) { dismiss() }
+    }
+
+    private var summary: String {
+        let rounds = giriBracketRoundCount(cleaned.count)
+        guard let index = selfIndex else { return "\(cleaned.count)人・自分の名前が見つかりません（読み取りを直してください）" }
+        return "\(cleaned.count)人・\(rounds)回戦・自分は\(index + 1)番目"
     }
 }

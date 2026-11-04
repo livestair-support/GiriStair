@@ -27,6 +27,26 @@ enum GiriParticipantOCR {
             return text
         }.value
     }
+
+    /// 文字と位置（トーナメント表の並びを決めるため）。位置は 0〜1、上が 0。
+    static func recognizeLines(_ data: Data) async throws -> [GiriOCRLine] {
+        try await Task.detached(priority: .userInitiated) {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["ja-JP", "en-US"]
+            request.usesLanguageCorrection = false
+            request.automaticallyDetectsLanguage = true
+            let handler = VNImageRequestHandler(data: data, options: [:])
+            try handler.perform([request])
+            let lines = (request.results ?? []).compactMap { observation -> GiriOCRLine? in
+                guard let text = observation.topCandidates(1).first?.string else { return nil }
+                let box = observation.boundingBox
+                return GiriOCRLine(text: text, midX: Double(box.midX), midY: Double(1 - box.midY))
+            }
+            guard !lines.isEmpty else { throw GiriParticipantReadError.noText }
+            return lines
+        }.value
+    }
 }
 
 struct GiriParticipantImport: View {
