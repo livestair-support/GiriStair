@@ -27,6 +27,8 @@ enum GiriThoughtDestination: Hashable, Identifiable {
 struct GiriListRequest: Equatable {
     var players: [String] = []
     var venue: String? = nil
+    /// 主催した会（主催・共催、団体を含む）。
+    var organizer: String? = nil
     let id = UUID()
 }
 
@@ -75,8 +77,8 @@ final class GiriNavigation: ObservableObject {
         else if unsavedEditorEventID == eventID { unsavedEditorEventID = nil }
     }
 
-    func openList(players: [String] = [], venue: String? = nil) {
-        listRequest = GiriListRequest(players: players, venue: venue)
+    func openList(players: [String] = [], venue: String? = nil, organizer: String? = nil) {
+        listRequest = GiriListRequest(players: players, venue: venue, organizer: organizer)
         selectedTab = 1
     }
 

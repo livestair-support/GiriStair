@@ -20,6 +20,8 @@ struct GiriListView: View {
     @State private var stage = "all"
     /// 生大喜利のシリーズ（同じ名前・回数違いの会）で絞り込む。
     @State private var seriesFilter = "all"
+    /// 生大喜利の主催（共催を含む）で絞り込む。プレイヤー・団体詳細の「主催した会」から開く。
+    @State private var hostFilter = "all"
     /// 通常サイトの詳細・編集・結果入力（このタブの中で遷移する）。
     @State private var siteRoute: GiriSiteRoute?
     @State private var ascending: Bool?
@@ -42,9 +44,17 @@ struct GiriListView: View {
     }
     private var venueNames: [String] { Array(Set(searchableEvents.map(\.venue).filter { !$0.isEmpty })).sorted() }
     private var playerNames: [String] {
-        Array(Set(searchableEvents.flatMap { $0.participants + $0.teams.flatMap(\.members) }.filter {
-            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        })).sorted { first, second in
+        // 別名義をまとめて表示する人は、本名義だけを出す。
+        let merged = store.mergedAliasOwners
+        var names: [String] = []
+        var seen = Set<String>()
+        for name in searchableEvents.flatMap({ $0.participants + $0.teams.flatMap(\.members) }) {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let shown = merged[playerSearchKey(trimmed)] ?? trimmed
+            if seen.insert(playerSearchKey(shown)).inserted { names.append(shown) }
+        }
+        return names.sorted { first, second in
             let firstPlayer = store.players.first { playerSearchKey($0.name) == playerSearchKey(first) }
             let secondPlayer = store.players.first { playerSearchKey($0.name) == playerSearchKey(second) }
             let firstReading = firstPlayer.flatMap { $0.furigana.isEmpty ? nil : $0.furigana } ?? first
@@ -62,6 +72,7 @@ struct GiriListView: View {
         if !selectedPlayers.isEmpty { values.append(selectedPlayers.sorted().joined(separator: " / ")) }
         if stage != "all" { values.append(stage) }
         if seriesFilter != "all", let title = seriesOptions.first(where: { $0.0 == seriesFilter })?.1 { values.append(title) }
+        if hostFilter != "all" { values.append("主催：" + hostFilter) }
         if !search.isEmpty { values.append("検索「\(search)」") }
         return values
     }
@@ -73,9 +84,28 @@ struct GiriListView: View {
             .map { key, events in (key, events.max { $0.createdAt < $1.createdAt }?.seriesTitle ?? key) }
             .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
     }
+    /// 主催者・共催（団体を含む）の名前。
+    private var hostNames: [String] {
+        var names: [String] = []
+        var seen = Set<String>()
+        for event in searchableEvents {
+            for name in [event.organizer] + event.coOrganizers {
+                let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty && seen.insert(playerSearchKey(trimmed)).inserted { names.append(trimmed) }
+            }
+        }
+        if hostFilter != "all" && seen.insert(playerSearchKey(hostFilter)).inserted { names.append(hostFilter) }
+        return names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+    private func isHosted(_ event: GiriEvent, keys: Set<String>) -> Bool {
+        keys.contains(playerSearchKey(event.organizer)) || event.coOrganizers.contains { keys.contains(playerSearchKey($0)) }
+    }
     private var filteredEvents: [GiriEvent] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         let now = Date()
+        // 別名義をまとめて表示する人は、別名義で入った会も同じ人として探す。
+        let playerKeySets = selectedPlayers.map { store.nameKeys(for: $0) }
+        let hostKeys = hostFilter == "all" ? Set<String>() : store.nameKeys(for: hostFilter)
         return searchableEvents.filter { event in
             if meeting != "all" && event.meetingType.rawValue != meeting { return false }
             switch status {
@@ -94,9 +124,10 @@ struct GiriListView: View {
             // 形式を切り替えても条件は残し、長考では適用しない。
             if hasParticipantFilter && venue != "all" && event.venue != venue { return false }
             // LiveStair selectedArtists is an AND filter, retaining all selected people.
-            if hasParticipantFilter && !selectedPlayers.isEmpty && !selectedPlayers.allSatisfy({ person in
-                (event.participants + event.teams.flatMap(\.members)).contains { playerSearchKey($0) == playerSearchKey(person) }
+            if hasParticipantFilter && !playerKeySets.isEmpty && !playerKeySets.allSatisfy({ keys in
+                (event.participants + event.teams.flatMap(\.members)).contains { keys.contains(playerSearchKey($0)) }
             }) { return false }
+            if hasParticipantFilter && !hostKeys.isEmpty && !isHosted(event, keys: hostKeys) { return false }
             if site != "all" && event.onlineSiteId != site { return false }
             if stage != "all" && !event.effectiveRounds.contains(where: { $0.name == stage }) { return false }
             if seriesFilter != "all" && event.seriesKey != seriesFilter { return false }
@@ -108,6 +139,7 @@ struct GiriListView: View {
                                     event.memo, event.affiliation, event.block, venueRecord?.prefecture ?? "", siteRecord?.name ?? ""]
             fields.append(event.seriesTitle)
             fields += event.coOrganizers
+            fields += event.reserves
             fields += event.participants
             fields += event.teams.flatMap { [$0.name] + $0.members }
             let text = fields.joined(separator: " ")
@@ -308,6 +340,10 @@ struct GiriListView: View {
                     separator
                     GiriListFilterMenu(title: "会場", selection: $venue, options: [("all", "全会場")] + (venueNames + (venue != "all" && !venueNames.contains(venue) ? [venue] : [])).map { ($0, $0) })
                 }
+                if hasParticipantFilter && hostFilter != "all" {
+                    separator
+                    GiriListFilterMenu(title: "主催", selection: $hostFilter, options: [("all", "すべて")] + hostNames.map { ($0, $0) })
+                }
                 if !seriesOptions.isEmpty || seriesFilter != "all" {
                     separator
                     GiriListFilterMenu(title: "シリーズ", selection: $seriesFilter, options: [("all", "すべて")] + seriesOptions)
@@ -419,13 +455,15 @@ struct GiriListView: View {
         navigation.listRequest = nil
         destinationID = nil
         closePlayerDropdown()
-        let people = request.players.map(playerSearchKey).filter { !$0.isEmpty }
+        let people = request.players.filter { !playerSearchKey($0).isEmpty }.map { store.nameKeys(for: $0) }
         let venueKey = request.venue.map(playerSearchKey) ?? ""
+        let hostKeys = request.organizer.map { store.nameKeys(for: $0) } ?? []
         func matches(_ event: GiriEvent) -> Bool {
             guard event.isActualParticipant, event.eventFormat.hasLiveTiming else { return false }
             let names = (event.participants + event.teams.flatMap(\.members)).map(playerSearchKey)
-            if !people.allSatisfy({ names.contains($0) }) { return false }
+            if !people.allSatisfy({ keys in names.contains { keys.contains($0) } }) { return false }
             if !venueKey.isEmpty && playerSearchKey(event.venue) != venueKey { return false }
+            if !hostKeys.isEmpty && !isHosted(event, keys: hostKeys) { return false }
             return true
         }
         let candidates = store.preferences.visibleFormatOrder.filter(\.hasLiveTiming)
@@ -442,6 +480,7 @@ struct GiriListView: View {
         search = ""; year = "all"; meeting = "all"; status = "all"; site = "all"; stage = "all"; ascending = nil
         attended = hasCompleted
         selectedPlayers = Set(request.players.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+        hostFilter = request.organizer.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? "all"
         venue = request.venue.flatMap { $0.isEmpty ? nil : $0 } ?? "all"
         // 一覧の会場名と表記が違う場合は、記録に保存された名前で絞り込む。
         if let saved = store.events.first(where: { matches($0) && !$0.venue.isEmpty })?.venue, !venueKey.isEmpty { venue = saved }
@@ -756,9 +795,9 @@ struct GiriEventCard: View {
                     .foregroundStyle(.secondary).fixedSize(horizontal: true, vertical: false)
                     .accessibilityElement(children: .combine)
                 }
-                GiriListBadge(text: GiriEventPresentation.formatBadgeTitle(event.eventFormat), color: accent, fitsColumn: true)
+                // 形式（生大喜利・長考など）は一覧の形式タブで分かるので出さず、会の種類を上に詰める。
+                GiriListBadge(text: event.meetingType.title, color: GiriBadgeColors.meeting(event.meetingType), fitsColumn: true)
                     .frame(width: 70, alignment: .leading).offset(x: 2)
-                    .accessibilityLabel(event.eventFormat.title)
             }
             HStack(alignment: .top, spacing: 6) {
                 Text(event.title.isEmpty ? "会・大会名未設定" : event.title)
@@ -767,19 +806,28 @@ struct GiriEventCard: View {
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                VStack(alignment: .leading, spacing: 4) {
-                    GiriListBadge(text: event.meetingType.title, color: accent)
-                    // 生大喜利で、プレイヤーとして出ない立場（主催・観覧・リザーバー）。
-                    if event.eventFormat == .live && event.selfRole != .player {
-                        GiriListBadge(text: event.selfRole.shortTitle(tournament: event.meetingType == .tournament), color: accent)
+                let badges = statusBadges
+                if !badges.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(badges.enumerated()), id: \.offset) { _, badge in
+                            GiriListBadge(text: badge.text, color: badge.color)
+                        }
                     }
-                    if event.participationState() != .completed {
-                        GiriListBadge(text: event.participationState().title, color: accent)
-                    }
+                    .frame(width: 70, alignment: .leading)
                 }
-                .frame(width: 70, alignment: .leading)
             }
         }
+    }
+    /// LiveStair の一覧カードの右の札：立場・参加状況を、状態ごとの色で出す。
+    private var statusBadges: [(text: String, color: Color)] {
+        var badges: [(text: String, color: Color)] = []
+        // 生大喜利で、プレイヤーとして出ない立場（主催・観覧・リザーバー）。
+        if event.eventFormat == .live && event.selfRole != .player {
+            badges.append((event.selfRole.shortTitle(tournament: event.meetingType == .tournament), GiriBadgeColors.role(event.selfRole)))
+        }
+        let state = event.participationState()
+        if state != .completed { badges.append((state.title, GiriBadgeColors.state(state))) }
+        return badges
     }
     private func dateLabel(compact: Bool) -> some View {
         Text(GiriEventPresentation.day(date, compact: compact))
@@ -884,6 +932,43 @@ struct GiriListCard<Content: View>: View {
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+/// LiveStair の札の色（CommonUI LiveAttendanceStatus.badgeColor・チケットの状態・ライブの種類と同じ値）。
+enum GiriBadgeColors {
+    /// 参加予定・参加中（LiveStair の参加）
+    static let going = Color(red: 0.32, green: 0.62, blue: 0.46)
+    /// 興味あり（LiveStair の迷い中）
+    static let considering = Color(red: 0.84, green: 0.62, blue: 0.10)
+    /// キャンセル（LiveStair の中止）
+    static let canceled = Color(red: 0.82, green: 0.30, blue: 0.30)
+    /// リザーバー（LiveStair の延期）
+    static let reserve = Color(red: 0.88, green: 0.55, blue: 0.18)
+    /// 観覧（LiveStair の落選）
+    static let spectator = Color(red: 0.52, green: 0.45, blue: 0.70)
+    /// 主催・運営（LiveStair の取り置き）
+    static let staff = Color(red: 0.76, green: 0.55, blue: 0.28)
+
+    static func state(_ state: ParticipationState) -> Color {
+        switch state {
+        case .upcoming, .ongoing, .completed: return going
+        case .interested: return considering
+        case .canceled: return canceled
+        case .unjoined: return Color.gray
+        }
+    }
+    static func role(_ role: GiriSelfRole) -> Color {
+        switch role {
+        case .player: return going
+        case .staff: return staff
+        case .spectator: return spectator
+        case .reserve: return reserve
+        }
+    }
+    /// 会の種類（LiveStair のライブの種類と同じく、種類ごとの色）。
+    static func meeting(_ type: MeetingType) -> Color {
+        type == .tournament ? AppSectionAccent.ticket : AppSectionAccent.artist
     }
 }
 

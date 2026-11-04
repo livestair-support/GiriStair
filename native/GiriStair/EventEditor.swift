@@ -79,14 +79,51 @@ struct GiriEventEditor: View {
         }
     }
     private var fixedTeamSize: Int? { draft.tournamentFormat == .pair ? 2 : draft.teamSize }
+    /// 参加状況。生大喜利の「観覧」は参加状況で選び、自分の立場を観覧にする（ほかの立場は入力から決める）。
     private var participationChoice: Binding<String> {
         Binding(get: {
-            draft.status == .canceled ? "canceled" : draft.isInterested ? "interested" : "participating"
+            if draft.status == .canceled { return "canceled" }
+            if draft.isInterested { return "interested" }
+            return isLive && draft.selfRole == .spectator ? "spectating" : "participating"
         }, set: { choice in
             draft.isInterested = choice == "interested"
-            draft.isParticipating = choice == "participating"
+            draft.isParticipating = choice == "participating" || choice == "spectating"
             draft.status = choice == "canceled" ? .canceled : .planned
+            let spectating = choice == "spectating"
+            if spectating != (draft.selfRole == .spectator) {
+                draft.selfRole = spectating ? .spectator : .player
+                placeSelf(force: true)
+            }
         })
+    }
+    /// 入力した内容から決まる自分の立場（保存する時もこれを使う）。
+    private var currentSelfRole: GiriSelfRole {
+        var value = draft
+        value.participants = participants
+        return value.derivedSelfRole(isSelf: store.preferences.isSelf)
+    }
+    /// リザーバーの名前。自分を入れたら参加者から外す。
+    private var reservesBinding: Binding<[String]> {
+        Binding(get: { draft.reserves }, set: { names in
+            draft.reserves = names
+            placeSelf(force: false)
+        })
+    }
+    private var hasReservesBinding: Binding<Bool> {
+        Binding(get: { draft.hasReserves }, set: { enabled in
+            draft.hasReserves = enabled
+            if enabled && draft.reserves.isEmpty { draft.reserves = [""] }
+            placeSelf(force: false)
+        })
+    }
+    /// 生大喜利の大会だけ：参加者の一番下でリザーバーのあり・なしと名前を入れる。
+    private var showsReserves: Bool { isLive && isTournament }
+    @ViewBuilder private var reserveRows: some View {
+        Toggle(isOn: hasReservesBinding) { GiriEditorLabel("リザーバー") }
+            .tint(AppSectionAccent.artist)
+        if draft.hasReserves {
+            GiriNamesField(title: "リザーバーの名前（当日キャンセルに備えて観覧）", names: reservesBinding)
+        }
     }
     private var isValid: Bool {
         !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -103,6 +140,7 @@ struct GiriEventEditor: View {
             if !isSite {
                 if showsParticipantSection { participantSection }
                 if draft.meetingType == .tournament { teamSections }
+                if showsReserves && !showsParticipantSection { reserveSection }
                 if draft.eventFormat.hasOnlineRounds { scheduleSections }
                 Section {
                     GiriEventCardSectionTitle(title: "メモ", systemImage: "text.alignleft", accentColor: AppSectionAccent.memo)
@@ -147,7 +185,6 @@ struct GiriEventEditor: View {
         }
         // 共催・MC・審査員・主催の種類が変わった時も、自分がプレイヤーかどうかを合わせる。
         .onChange(of: draft.staffNames) { _, _ in syncSelf() }
-        .onChange(of: draft.selfRole) { _, _ in applySelfRole(force: true) }
         .onChange(of: draft.eventDate) { _, next in
             if next != lastEventDay { let previous = lastEventDay; lastEventDay = next; moveDay(from: previous, to: next) }
         }
@@ -157,7 +194,6 @@ struct GiriEventEditor: View {
             if format != .live { draft.selfRole = .player; draft.knockout = false }
         }
         .onChange(of: draft.meetingType) { _, type in
-            if !GiriSelfRole.choices(tournament: type == .tournament).contains(draft.selfRole) { draft.selfRole = .spectator }
             if type == .tournament && draft.eventFormat == .onlineLong && draft.rounds.isEmpty { addRound(sameStage: false) }
             if type == .tournament && draft.tournamentFormat != .individual { ensureOwnTeam() }
         }
@@ -388,14 +424,10 @@ struct GiriEventEditor: View {
             if !isSite {
                 Picker(selection: participationChoice) {
                     Text("参加").tag("participating")
+                    if isLive { Text("観覧").tag("spectating") }
                     Text("興味あり").tag("interested")
                     Text("キャンセル").tag("canceled")
                 } label: { GiriEditorLabel("参加状況") }.pickerStyle(.menu).tint(.primary)
-                if isLive {
-                    Picker(selection: $draft.selfRole) {
-                        ForEach(GiriSelfRole.choices(tournament: isTournament)) { Text($0.title(tournament: isTournament)).tag($0) }
-                    } label: { GiriEditorLabel("自分の立場") }.pickerStyle(.menu).tint(.primary)
-                }
             }
             TextField(isSite ? "サイト名 *" : "会・大会名 *", text: $draft.title, axis: .vertical)
                 .lineLimit(1...5)
@@ -481,6 +513,16 @@ struct GiriEventEditor: View {
                     Label("並びと自分の山を確認", systemImage: "arrow.triangle.branch")
                 }.tint(accentActionColor)
             }
+            if showsReserves { reserveRows }
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
+    }
+
+    /// チーム戦（参加者の欄がない時）のリザーバー。
+    private var reserveSection: some View {
+        Section {
+            GiriEventCardSectionTitle(title: "リザーバー", systemImage: "person.badge.clock", accentColor: AppSectionAccent.artist)
+                .listRowSeparator(.hidden)
+            reserveRows
         }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
     }
 
@@ -628,7 +670,7 @@ struct GiriEventEditor: View {
     }
     private func ensureOwnTeam() {
         // プレイヤーとして出ない時（主催・観覧など）は「自分のチーム」を作らない。
-        guard draft.tournamentFormat != .individual, draft.selfRole == .player else { return }
+        guard draft.tournamentFormat != .individual, currentSelfRole == .player else { return }
         if let mine = draft.teams.first(where: { $0.id == draft.myTeamId || $0.isMine }) {
             draft.myTeamId = mine.id
         } else {
@@ -705,9 +747,10 @@ struct GiriEventEditor: View {
             var team = GiriTeam(); team.name = old.teamName; team.members = old.members; team.isMine = true
             draft.teams = [team]; draft.myTeamId = team.id; draft.tournamentFormat = old.format
         }
-        // 生大喜利で自分が主催・共催などにいて、参加者・チームにいない旧データは「主催（出ない）」として開く。
-        if event != nil && isLive && draft.selfRole == .player && selfIsStaff && !draft.everyone.contains(where: { store.preferences.isSelf($0) }) {
-            draft.selfRole = .staff
+        // 0.10〜0.11 で「自分の立場」をリザーバーにした記録は、リザーバーの欄に自分を入れて開く（立場は入力から決める）。
+        if event != nil && isLive && draft.selfRole == .reserve && !draft.reserveNames.contains(where: { store.preferences.isSelf($0) }) {
+            let me = store.preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !me.isEmpty { draft.hasReserves = true; draft.reserves.insert(me, at: 0) }
         }
         lastSelfStaff = selfIsStaff
         if draft.tournamentFormat != .individual { ensureOwnTeam() }
@@ -728,25 +771,49 @@ struct GiriEventEditor: View {
         loaded = true
     }
 
-    /// 生大喜利：主催・共催・MC・審査員に自分を入れたら、まずはプレイヤーとしては出ない扱いにする
-    /// （出る時は「自分の立場」をプレイヤーに戻す）。ほかの形式は従来どおり。
+    /// 生大喜利：主催・共催・MC・審査員に自分を入れたら、自動で入れた参加者の自分を外す
+    /// （出る時は参加者に自分を入れる）。自分の立場は入力から決める。ほかの形式は従来どおり。
     private func syncSelf() {
         guard isLive else { legacySyncSelf(); return }
         let staff = selfIsStaff
         if staff != lastSelfStaff {
             lastSelfStaff = staff
-            if staff && draft.selfRole == .player { draft.selfRole = .staff }
-            else if !staff && draft.selfRole == .staff { draft.selfRole = .player }
+            if staff { removeAutoAddedSelf() }
         }
-        applySelfRole(force: false)
+        placeSelf(force: false)
     }
 
-    /// 自分の立場に合わせて、参加者・自分のチームに自分を入れる／外す。
-    private func applySelfRole(force: Bool) {
+    /// 自動で入れた自分（参加者・自分だけのチーム）を外す。
+    private func removeAutoAddedSelf() {
+        if selfWasAdded {
+            participants.removeAll { store.preferences.isSelf($0) }
+            if participants.isEmpty { participants = [""] }
+            selfWasAdded = false
+        }
+        if isTeamTournament, let index = draft.teams.firstIndex(where: { $0.id == draft.myTeamId }),
+           draft.teams[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           draft.teams[index].members.filter({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }).allSatisfy({ store.preferences.isSelf($0) }) {
+            removeSelfFromTeams()
+        }
+    }
+
+    private func removeSelfFromTeams() {
+        for team in draft.teams.indices {
+            for member in draft.teams[team].members.indices where store.preferences.isSelf(draft.teams[team].members[member]) {
+                draft.teams[team].members[member] = ""
+            }
+            if draft.teams[team].isMine { draft.teams[team].isMine = false }
+        }
+        if draft.myTeamId != nil { draft.myTeamId = nil }
+    }
+
+    /// 入力から決まる立場に合わせて、参加者・自分のチームに自分を入れる／外す。
+    private func placeSelf(force: Bool) {
         guard isLive else { return }
         let me = store.preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !me.isEmpty else { return }
-        if draft.selfRole == .player {
+        switch currentSelfRole {
+        case .player:
             if isTeamTournament {
                 ensureOwnTeam()
                 if let index = draft.teams.firstIndex(where: { $0.id == draft.myTeamId }),
@@ -761,18 +828,15 @@ struct GiriEventEditor: View {
                 else { participants.append(me) }
                 selfWasAdded = true
             }
-        } else {
+        case .spectator, .reserve:
             if participants.contains(where: { store.preferences.isSelf($0) }) {
                 participants.removeAll { store.preferences.isSelf($0) }
                 if participants.isEmpty { participants = [""] }
             }
-            for team in draft.teams.indices {
-                for member in draft.teams[team].members.indices where store.preferences.isSelf(draft.teams[team].members[member]) {
-                    draft.teams[team].members[member] = ""
-                }
-                if draft.teams[team].isMine { draft.teams[team].isMine = false }
-            }
-            if draft.myTeamId != nil { draft.myTeamId = nil }
+            selfWasAdded = false
+            removeSelfFromTeams()
+        case .staff:
+            break
         }
     }
 
@@ -872,6 +936,7 @@ struct GiriEventEditor: View {
                 candidate.coOrganizers = cleanedNames(candidate.coOrganizers)
                 candidate.mcs = cleanedNames(candidate.mcs)
                 candidate.judges = cleanedNames(candidate.judges)
+                candidate.reserves = candidate.hasReserves ? cleanedNames(candidate.reserves) : []
                 candidate.judging = candidate.judging.trimmingCharacters(in: .whitespacesAndNewlines)
                 candidate.venueRoom = candidate.venueRoom.trimmingCharacters(in: .whitespacesAndNewlines)
                 candidate.series = candidate.series.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -882,6 +947,8 @@ struct GiriEventEditor: View {
                     candidate.participants = participants.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty && seen.insert(giriEditorNameKey($0)).inserted }
                 }
                 for i in candidate.teams.indices { candidate.teams[i].members = candidate.teams[i].members.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
+                // 自分の立場は選ばず、参加状況（観覧）・リザーバー・参加者・主催などの入力から決める。
+                candidate.selfRole = candidate.derivedSelfRole(isSelf: store.preferences.isSelf)
                 if let size = candidate.teamSize, candidate.teams.contains(where: { $0.members.count > size }) {
                     store.errorMessage = "チーム人数を超えているチームがあります。人数設定かメンバーを確認してください。"; return
                 }

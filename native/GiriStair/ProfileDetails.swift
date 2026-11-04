@@ -772,21 +772,17 @@ struct GiriPlayerDetail: View {
 
     private func basicPage(_ player: GiriPlayer) -> some View {
         let key = playerSearchKey(player.name)
-        let together = store.events.filter { $0.isActualParticipant && giriEventPeople($0).contains { playerSearchKey($0) == key } }
-        let hosted = store.events.filter { $0.isActualParticipant && $0.isHosted(byKey: key) }
-        let favorites = store.notes.flatMap(\.otherAnswerRecords).filter { playerSearchKey($0.answerer) == key }
-        let authored = store.notes.filter { playerSearchKey($0.promptAuthor) == key }
+        // 別名義をまとめて表示する時は、別名義で入った記録もこの人として数える。
+        let keys = store.nameKeys(for: player.name)
+        let together = store.events.filter { $0.isActualParticipant && giriEventPeople($0).contains { keys.contains(playerSearchKey($0)) } }
+        let hosted = store.events.filter { $0.isActualParticipant && $0.isHosted(byKeys: keys) }
+        let favorites = store.notes.flatMap(\.otherAnswerRecords).filter { keys.contains(playerSearchKey($0.answerer)) }
+        let authored = store.notes.filter { keys.contains(playerSearchKey($0.promptAuthor)) }
         return ScrollView {
             VStack(spacing: 14) {
                 GiriDetailCard(title: "基本情報", systemImage: "person.text.rectangle", accentColor: AppSectionAccent.artist,
                                trailing: { GiriCardEditButton { editing = .basic } }) {
-                    VStack(spacing: 0) {
-                        GiriProfileInfoRow(title: "プレイヤー名", value: player.name)
-                        Divider().overlay(appSeparatorColor)
-                        GiriProfileInfoRow(title: "フリガナ", value: player.furigana.isEmpty ? "未設定" : player.furigana)
-                        Divider().overlay(appSeparatorColor)
-                        GiriProfileInfoRow(title: "地域", value: player.region)
-                    }
+                    basicRows(player, key: key)
                 }
                 iconCard(player)
                 GiriDetailCard(title: "ショートカット", systemImage: "arrow.up.right.square", accentColor: AppSectionAccent.live) {
@@ -806,26 +802,10 @@ struct GiriPlayerDetail: View {
                             navigation.openThoughts(author: player.name)
                         }
                         Divider().overlay(appSeparatorColor)
-                        GiriProfileShortcutRow(title: "主催した会", systemImage: "person.crop.circle", accentColor: AppSectionAccent.live,
-                                               countText: "\(hosted.count)件") {
-                            GiriProfileRecordsPage(title: "\(player.name)の主催") { event in
-                                event.isHosted(byKey: key)
-                            }
-                        }
-                        // 所属している団体（主催団体一覧のメンバー）。
-                        let memberships = store.groupDirectory.filter { $0.members.contains { playerSearchKey($0) == key } }
-                        ForEach(memberships) { group in
-                            Divider().overlay(appSeparatorColor)
-                            GiriProfileShortcutRow(title: "所属：" + group.name, systemImage: "person.3", accentColor: AppSectionAccent.artist) {
-                                GiriGroupDetail(groupID: group.id)
-                            }
-                        }
-                        // 以前プレイヤーとして入れた団体名を、主催団体に移す。
-                        if !store.preferences.selfKeys.contains(key) {
-                            Divider().overlay(appSeparatorColor)
-                            Button { convertingToGroup = true } label: {
-                                GiriProfileShortcutLabel(title: "この名前を団体にする", systemImage: "person.3.sequence", accentColor: accentActionColor)
-                            }.buttonStyle(.plain)
+                        // 一覧タブで、この人の主催（共催を含む）を選んだ状態で開く。
+                        GiriProfileShortcutButton(title: "主催した会", systemImage: "person.crop.circle", accentColor: AppSectionAccent.live,
+                                                  countText: "\(hosted.count)件") {
+                            navigation.openList(organizer: player.name)
                         }
                     }
                 }
@@ -849,6 +829,48 @@ struct GiriPlayerDetail: View {
             .padding(.bottom, 110)
         }
         .scrollIndicators(.hidden)
+    }
+
+    /// 基本情報：名前・フリガナ・地域・別名義・所属団体・団体への変更。
+    @ViewBuilder private func basicRows(_ player: GiriPlayer, key: String) -> some View {
+        let isMe = !store.preferences.selfName.isEmpty && key == playerSearchKey(store.preferences.selfName)
+        let aliases = store.aliases(of: player.name)
+        let merges = isMe ? store.preferences.mergesSelfAliases : player.mergesAliases
+        let memberships = store.groupDirectory.filter { $0.members.contains { playerSearchKey($0) == key } }
+        VStack(spacing: 0) {
+            GiriProfileInfoRow(title: "プレイヤー名", value: player.name)
+            Divider().overlay(appSeparatorColor)
+            GiriProfileInfoRow(title: "フリガナ", value: player.furigana.isEmpty ? "未設定" : player.furigana)
+            Divider().overlay(appSeparatorColor)
+            GiriProfileInfoRow(title: "地域", value: giriRegionText(region: player.region, prefecture: player.prefecture))
+            Divider().overlay(appSeparatorColor)
+            GiriProfileInfoRow(title: "別名義", value: aliases.joined(separator: "・"))
+            if !aliases.isEmpty {
+                Divider().overlay(appSeparatorColor)
+                GiriProfileInfoRow(title: "別名義の表示", value: merges ? "まとめて表示" : "それぞれ表示")
+            }
+            // 別名義（それぞれ表示）の時は、本名義へ。
+            if let owner = store.aliasOwner(of: player.name), let main = store.playerByName(owner), main.id != player.id {
+                Divider().overlay(appSeparatorColor)
+                GiriProfileShortcutRow(title: "本名義：" + owner, systemImage: "person.crop.circle.badge.checkmark", accentColor: AppSectionAccent.artist) {
+                    GiriPlayerDetail(playerID: main.id)
+                }
+            }
+            // 所属している団体（主催団体一覧のメンバー）。
+            ForEach(memberships) { group in
+                Divider().overlay(appSeparatorColor)
+                GiriProfileShortcutRow(title: "所属：" + group.name, systemImage: "person.3", accentColor: AppSectionAccent.artist) {
+                    GiriGroupDetail(groupID: group.id)
+                }
+            }
+            // 以前プレイヤーとして入れた団体名を、主催団体に移す。
+            if !store.preferences.selfKeys.contains(key) {
+                Divider().overlay(appSeparatorColor)
+                Button { convertingToGroup = true } label: {
+                    GiriProfileShortcutLabel(title: "この名前を団体にする", systemImage: "person.3.sequence", accentColor: accentActionColor)
+                }.buttonStyle(.plain)
+            }
+        }
     }
 
     // MARK: アイコン（ArtistDetailView.artistPhotoSection を小さなアイコン用にしたもの）
@@ -940,8 +962,9 @@ struct GiriPlayerDetail: View {
     private func analyticsPage(_ player: GiriPlayer) -> some View {
         let now = Date()
         let key = playerSearchKey(player.name)
+        let keys = store.nameKeys(for: player.name)
         let selfKeys = store.preferences.selfKeys
-        let together = store.events.filter { $0.isActualParticipant && giriEventPeople($0).contains { playerSearchKey($0) == key } }
+        let together = store.events.filter { $0.isActualParticipant && giriEventPeople($0).contains { keys.contains(playerSearchKey($0)) } }
         let completed = together.filter { $0.isCountableParticipation(now: now) }
         let mine = store.events.filter { $0.isCountableParticipation(now: now) }
         let years = Array(Set(completed.compactMap(giriAnalyticsDate).map { String(Calendar(identifier: .gregorian).component(.year, from: $0)) })).sorted(by: >)
@@ -950,18 +973,16 @@ struct GiriPlayerDetail: View {
         }
         let period = completed.filter(inYear)
         // 主催は共催も含める。MC・審査員は別に数える。
-        let hosted = store.events.filter { $0.isCountableParticipation(now: now) && $0.isHosted(byKey: key) && inYear($0) }
-        let staffed = store.events.filter { $0.isCountableParticipation(now: now) && $0.isMCOrJudge(byKey: key) && inYear($0) }
+        let hosted = store.events.filter { $0.isCountableParticipation(now: now) && $0.isHosted(byKeys: keys) && inYear($0) }
+        let staffed = store.events.filter { $0.isCountableParticipation(now: now) && $0.isMCOrJudge(byKeys: keys) && inYear($0) }
         let ordered = completed.filter { giriAnalyticsDate($0) != nil }.sorted { (giriAnalyticsDate($0) ?? .distantPast) < (giriAnalyticsDate($1) ?? .distantPast) }
         let upcoming = together.filter { [.upcoming, .ongoing].contains($0.participationState(now: now)) }
             .sorted { (giriAnalyticsDate($0) ?? .distantFuture) < (giriAnalyticsDate($1) ?? .distantFuture) }
         let podiums = store.events.filter { $0.isCountableParticipation(now: now) && inYear($0) }.flatMap { event -> [(GiriEvent, TournamentStanding)] in
-            event.standings.filter { standing in standing.playerNames.contains { playerSearchKey($0) == key } }.map { (event, $0) }
+            event.standings.filter { standing in standing.playerNames.contains { keys.contains(playerSearchKey($0)) } }.map { (event, $0) }
         }.sorted { $0.1.placement < $1.1.placement }
         // 同じ組・対戦相手として記録した段階（自分の結果）。
-        let meetings = giriOpponentMeetings(store.events.filter(inYear), playerKey: key, now: now)
-        let venues = giriRankItems(period.filter { $0.eventFormat.hasLiveTiming }.map { [$0.venue] })
-        let coPlayers = giriRankItems(period.map(giriEventPeople), excluding: selfKeys.union([key]))
+        let meetings = giriOpponentMeetings(store.events.filter(inYear), playerKeys: keys, now: now)
         let accent = AppSectionAccent.artist
         return ScrollView {
             VStack(spacing: 14) {
@@ -1026,26 +1047,6 @@ struct GiriPlayerDetail: View {
                         GiriOpponentRecordContent(meetings: meetings)
                     }
                 }
-                GiriRankingCard(title: "よく一緒になる会場", systemImage: "building.2", accentColor: AppSectionAccent.venue,
-                                unit: "件", items: venues) { item in
-                    if let venue = store.venueDirectory.first(where: { playerSearchKey($0.name) == item.id }) {
-                        NavigationLink { GiriVenueDetail(venueID: venue.id) } label: {
-                            GiriRankRowLabel(item: item) { EmptyView() }
-                        }.buttonStyle(.plain)
-                    } else {
-                        GiriRankRowLabel(item: item) { EmptyView() }
-                    }
-                }
-                GiriRankingCard(title: "よく一緒に参加するプレイヤー", systemImage: "person.2", accentColor: AppSectionAccent.song,
-                                unit: "人", items: coPlayers) { item in
-                    if let other = store.playerByName(item.name) {
-                        NavigationLink { GiriPlayerDetail(playerID: other.id) } label: {
-                            GiriRankRowLabel(item: item) { GiriPlayerAvatar(name: other.name, size: 40) }
-                        }.buttonStyle(.plain)
-                    } else {
-                        GiriRankRowLabel(item: item) { EmptyView() }
-                    }
-                }
             }
             .padding(.top, 4)
             .padding(.bottom, 110)
@@ -1063,13 +1064,22 @@ struct GiriPlayerEditor: View {
     @State private var photo: PhotosPickerItem?
     @State private var discard = false
     @State private var renaming = false
+    /// 自分の別名義は設定と同じ保存先（設定の「自分の名前」）。
+    @State private var selfAliases: [String] = []
+    @State private var mergesSelfAliases = false
+    @State private var loadedSelf = false
     private let original: GiriPlayer
     private let isNew: Bool
     private let section: GiriProfileEditSection?
     private var onSaved: ((GiriPlayer) -> Void)?
 
     init(player: GiriPlayer? = nil, section: GiriProfileEditSection? = nil, onSaved: ((GiriPlayer) -> Void)? = nil) {
-        let value = player ?? GiriPlayer()
+        var value = player ?? GiriPlayer()
+        // 以前の版で地域に都道府県を入れていた時は、地方と都道府県に分けて開く（保存するまで変えない）。
+        if value.prefecture.isEmpty, let prefecture = giriPrefectureName(value.region), let region = giriRegion(ofPrefecture: prefecture) {
+            value.prefecture = prefecture
+            value.region = region
+        }
         _draft = State(initialValue: value)
         original = value
         isNew = player == nil
@@ -1077,9 +1087,47 @@ struct GiriPlayerEditor: View {
         self.onSaved = onSaved
     }
 
+    private var isSelfPlayer: Bool {
+        let me = playerSearchKey(store.preferences.selfName)
+        return !isNew && !me.isEmpty && playerSearchKey(original.name) == me
+    }
+    private var aliasesBinding: Binding<[String]> { isSelfPlayer ? $selfAliases : $draft.aliases }
+    private var mergesBinding: Binding<Bool> { isSelfPlayer ? $mergesSelfAliases : $draft.mergesAliases }
+    private var selfAliasesChanged: Bool {
+        guard isSelfPlayer && loadedSelf else { return false }
+        let cleaned = selfAliases.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        return cleaned != store.preferences.selfAliases || mergesSelfAliases != store.preferences.mergesSelfAliases
+    }
+    /// 地域（地方）。以前の版の自由入力の地域も選べるように残す。
+    private var regionChoices: [String] {
+        var values = giriRegions.map { $0.name }
+        if !draft.region.isEmpty && !values.contains(draft.region) { values.append(draft.region) }
+        return values
+    }
+    private var prefectureChoices: [String] {
+        var values = giriRegions.first { $0.name == draft.region }?.prefectures ?? giriRegions.flatMap { $0.prefectures }
+        if !draft.prefecture.isEmpty && !values.contains(draft.prefecture) { values.append(draft.prefecture) }
+        return values
+    }
+    private var regionBinding: Binding<String> {
+        Binding(get: { draft.region }, set: { region in
+            draft.region = region
+            // 違う地方の都道府県は外す。
+            if let current = giriRegion(ofPrefecture: draft.prefecture), current != region, giriRegions.contains(where: { $0.name == region }) {
+                draft.prefecture = ""
+            }
+        })
+    }
+    private var prefectureBinding: Binding<String> {
+        Binding(get: { draft.prefecture }, set: { prefecture in
+            draft.prefecture = prefecture
+            if let region = giriRegion(ofPrefecture: prefecture) { draft.region = region }
+        })
+    }
+
     private func shows(_ value: GiriProfileEditSection) -> Bool { section == nil || section == value }
     private var trimmedName: String { draft.name.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var changed: Bool { draft != original }
+    private var changed: Bool { draft != original || selfAliasesChanged }
     private var title: String {
         if isNew { return "プレイヤーを追加" }
         switch section {
@@ -1096,7 +1144,25 @@ struct GiriPlayerEditor: View {
                     AppCardSectionTitle(title: "基本情報", systemImage: "person.text.rectangle", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
                     GiriProfileTextRow(title: "プレイヤー名", placeholder: "必須", text: $draft.name).textContentType(.nickname)
                     GiriProfileTextRow(title: "フリガナ", placeholder: "未入力", text: $draft.furigana)
-                    GiriProfileTextRow(title: "地域", placeholder: "未入力", text: $draft.region)
+                    Picker(selection: regionBinding) {
+                        Text("未設定").tag("")
+                        ForEach(regionChoices, id: \.self) { Text($0).tag($0) }
+                    } label: { GiriEditorLabel("地域") }
+                    .pickerStyle(.menu).tint(.primary)
+                    Picker(selection: prefectureBinding) {
+                        Text("未設定").tag("")
+                        ForEach(prefectureChoices, id: \.self) { Text($0).tag($0) }
+                    } label: { GiriEditorLabel("都道府県") }
+                    .pickerStyle(.menu).tint(.primary)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+                Section {
+                    AppCardSectionTitle(title: "別名義", systemImage: "person.2.badge.gearshape", accentColor: AppSectionAccent.artist,
+                                        infoTitle: "別名義について",
+                                        infoMessage: "同じ人の別の名前です。まとめて表示すると、プレイヤー一覧と集計でこの人として数えます。")
+                        .listRowSeparator(.hidden)
+                    GiriNamesField(title: "別名義", names: aliasesBinding)
+                    Toggle(isOn: mergesBinding) { GiriEditorLabel("まとめて表示") }
+                        .tint(AppSectionAccent.artist)
                 }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
             }
             if isNew {
@@ -1146,6 +1212,12 @@ struct GiriPlayerEditor: View {
         } message: {
             Text("「\(original.name)」を「\(trimmedName)」へ変更すると、これまでの記録の名前もすべて変更されます。")
         }
+        .onAppear {
+            guard !loadedSelf else { return }
+            selfAliases = store.preferences.selfAliases
+            mergesSelfAliases = store.preferences.mergesSelfAliases
+            loadedSelf = true
+        }
         .onChange(of: photo) { _, item in
             guard let item else { return }
             Task { @MainActor in
@@ -1165,7 +1237,10 @@ struct GiriPlayerEditor: View {
             var value = draft
             value.name = trimmedName
             value.twitterUrl = giriNormalizedXURL(value.twitterUrl)
+            let me = isSelfPlayer
             try store.savePlayer(value)
+            // 自分の別名義は設定と同じところへ保存する。
+            if me && selfAliasesChanged { try store.saveSelfAliases(selfAliases, merges: mergesSelfAliases) }
             onSaved?(store.playerByName(value.name) ?? value)
             playLiveStairSaveFeedback()
             dismiss()

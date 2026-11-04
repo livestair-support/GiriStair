@@ -2,6 +2,8 @@
 
 AGENTS.md、docs/DESIGN.md、docs/NATIVE_MIGRATION.mdを読んでから作業してください。
 
+- ユーザーへの返答・途中経過・完了報告は、どのタブ・セッションでも必ず日本語で書きます（コミットメッセージ・コード内のコメントは従来どおり）。
+
 - iPhoneはnative/GiriStairのSwiftUI版。Androidは既存Flutter版です。
 - LiveStairの実際のSwiftUI共通部品を移植して使います。LiveStair風の独自再実装へ戻しません。参照元はLiveStair `074206d2d92cefdf6e1a076900ed7af807ae1eb8`。
 - LiveStairとの照合はアプリ全体に適用します。一覧だけに限定せず、5タブ・登録／詳細／編集・各一覧／プロフィール・集計／共有・カレンダー・シートに、対応するLiveStairの実装を使ってください。今後の追加画面も同じです。

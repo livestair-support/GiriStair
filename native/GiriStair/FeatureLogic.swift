@@ -714,9 +714,15 @@ struct GiriMeeting: Identifiable {
 }
 
 func giriOpponentMeetings(_ events: [GiriEvent], playerKey: String, now: Date = Date()) -> [GiriMeeting] {
-    guard !playerKey.isEmpty else { return [] }
+    giriOpponentMeetings(events, playerKeys: [playerKey], now: now)
+}
+
+/// 別名義をまとめる時は、名前の照合キーのどれかで探す。
+func giriOpponentMeetings(_ events: [GiriEvent], playerKeys: Set<String>, now: Date = Date()) -> [GiriMeeting] {
+    let keys = playerKeys.filter { !$0.isEmpty }
+    guard !keys.isEmpty else { return [] }
     return events.filter { $0.isCountableParticipation(now: now) }.flatMap { event in
-        (event.tournamentResult?.stages ?? []).filter { stage in stage.opponents.contains { playerSearchKey($0) == playerKey } }
+        (event.tournamentResult?.stages ?? []).filter { stage in stage.opponents.contains { keys.contains(playerSearchKey($0)) } }
             .map { GiriMeeting(event: event, stage: $0) }
     }.sorted { ($0.event.eventDate ?? $0.event.startsAt ?? $0.event.createdAt) > ($1.event.eventDate ?? $1.event.startsAt ?? $1.event.createdAt) }
 }
@@ -839,6 +845,60 @@ extension GiriEvent {
         guard !key.isEmpty else { return false }
         return (mcs + judges).contains { playerSearchKey($0) == key }
     }
+    /// 別名義をまとめて数える時（名前の照合キーのどれか）。
+    func isHosted(byKeys keys: Set<String>) -> Bool { keys.contains { isHosted(byKey: $0) } }
+    func isMCOrJudge(byKeys keys: Set<String>) -> Bool { keys.contains { isMCOrJudge(byKey: $0) } }
+    /// リザーバーの名前（大会で「リザーバーあり」の時だけ）。
+    var reserveNames: [String] {
+        guard hasReserves && meetingType == .tournament else { return [] }
+        var seen = Set<String>()
+        return reserves.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    }
+    /// 生大喜利の自分の立場を、入力した内容から決める（選ぶ項目にはしない）。
+    /// 観覧は参加状況で選ぶ。リザーバーにいれば リザーバー、参加者・チームにいれば プレイヤー、
+    /// 主催・共催・MC・審査員だけにいれば 主催・MCなど、どれでもなければ プレイヤー。
+    func derivedSelfRole(isSelf: (String) -> Bool) -> GiriSelfRole {
+        guard eventFormat == .live else { return .player }
+        if selfRole == .spectator && isParticipating && !isInterested && status != .canceled { return .spectator }
+        if meetingType == .tournament && reserveNames.contains(where: isSelf) { return .reserve }
+        if everyone.contains(where: isSelf) { return .player }
+        if staffNames.contains(where: isSelf) { return .staff }
+        return .player
+    }
+}
+
+/// 地域（地方）と都道府県。プレイヤーの地域は地方で入れ、分かれば都道府県も入れる。
+let giriRegions: [(name: String, prefectures: [String])] = [
+    ("北海道", ["北海道"]),
+    ("東北", ["青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県"]),
+    ("関東", ["茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県"]),
+    ("中部", ["新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県", "静岡県", "愛知県"]),
+    ("近畿", ["三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県"]),
+    ("中国", ["鳥取県", "島根県", "岡山県", "広島県", "山口県"]),
+    ("四国", ["徳島県", "香川県", "愛媛県", "高知県"]),
+    ("九州・沖縄", ["福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"]),
+]
+
+/// 都道府県の地方（「大阪」「大阪府」のどちらでも）。分からなければ nil。
+func giriRegion(ofPrefecture value: String) -> String? {
+    let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return nil }
+    return giriRegions.first { region in
+        region.prefectures.contains { $0 == text || $0.dropLast() == Substring(text) }
+    }?.name
+}
+
+/// 都道府県の正式な名前（「大阪」→「大阪府」）。分からなければ nil。
+func giriPrefectureName(_ value: String) -> String? {
+    let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return nil }
+    return giriRegions.flatMap { $0.prefectures }.first { $0 == text || $0.dropLast() == Substring(text) }
+}
+
+/// 地域の表示（「関東・東京都」）。以前の版の自由入力の地域はそのまま出す。
+func giriRegionText(region: String, prefecture: String) -> String {
+    [region, prefecture].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "・")
 }
 
 /// シリーズの表示名：会の名前から「#5」「第5回」「vol.2」と末尾の数字を除いたもの。

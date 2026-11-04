@@ -457,6 +457,10 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var venueRoom: String = ""
     /// 0.10（生大喜利）：開場時刻。
     var opensAt: Date? = nil
+    /// 0.12（生大喜利）：リザーバー（当日キャンセルに備えて観覧する人）がいる会か、とその名前。
+    /// 自分がリザーバーにいる時は、自分の立場をリザーバーにする。
+    var hasReserves: Bool = false
+    var reserves: [String] = []
     /// 0.10（生大喜利）：シリーズ名（「#5」などの回数を除いた名前）。空なら会の名前から判断する。
     var series: String = ""
 }
@@ -488,7 +492,7 @@ enum GiriSelfRole: String, CaseIterable, Identifiable {
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -597,6 +601,8 @@ extension GiriEvent {
         venueRoom = try c.decodeIfPresent(String.self, forKey: .venueRoom) ?? ""
         opensAt = try c.giriDate(forKey: .opensAt, required: false, calendarOnly: false)
         series = try c.decodeIfPresent(String.self, forKey: .series) ?? ""
+        hasReserves = try c.decodeIfPresent(Bool.self, forKey: .hasReserves) ?? false
+        reserves = try c.decodeIfPresent([String].self, forKey: .reserves) ?? []
 
         try validate()
     }
@@ -701,6 +707,8 @@ extension GiriEvent {
         try c.encode(venueRoom, forKey: .venueRoom)
         try c.encode(opensAt.map(GiriDates.timestamp), forKey: .opensAt)
         try c.encode(series, forKey: .series)
+        try c.encode(hasReserves, forKey: .hasReserves)
+        try c.encode(reserves, forKey: .reserves)
 
     }
 }
@@ -828,11 +836,16 @@ struct GiriPlayer: Codable, Equatable, Identifiable {
     var iconDataBase64: String = ""
     var twitterUrl: String = ""
     var memo: String = ""
+    /// 0.12：都道府県（地域は「関東」などの地方。以前の版の自由入力の地域はそのまま残す）。
+    var prefecture: String = ""
+    /// 0.12：別名義。mergesAliases が true なら、プレイヤー一覧・集計でこの人にまとめて表示する。
+    var aliases: [String] = []
+    var mergesAliases: Bool = true
 }
 
 extension GiriPlayer {
     private enum CodingKeys: String, CodingKey {
-        case id, name, furigana, region, iconDataBase64, twitterUrl, memo
+        case id, name, furigana, region, iconDataBase64, twitterUrl, memo, prefecture, aliases, mergesAliases
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -850,6 +863,12 @@ extension GiriPlayer {
         twitterUrl = try c.decodeIfPresent(String.self, forKey: .twitterUrl) ?? ""
 
         memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
+
+        prefecture = try c.decodeIfPresent(String.self, forKey: .prefecture) ?? ""
+
+        aliases = try c.decodeIfPresent([String].self, forKey: .aliases) ?? []
+
+        mergesAliases = try c.decodeIfPresent(Bool.self, forKey: .mergesAliases) ?? true
 
         try validate()
     }
@@ -869,6 +888,12 @@ extension GiriPlayer {
         try c.encode(twitterUrl, forKey: .twitterUrl)
 
         try c.encode(memo, forKey: .memo)
+
+        try c.encode(prefecture, forKey: .prefecture)
+
+        try c.encode(aliases, forKey: .aliases)
+
+        try c.encode(mergesAliases, forKey: .mergesAliases)
 
     }
 }
@@ -894,11 +919,13 @@ struct AppPreferences: Codable, Equatable {
     var hiddenFormats: [EventFormat] = []
     /// 自分の別名義（複数の名前で出ている場合）。参加者・回答者に出てきたら自分として扱う。
     var selfAliases: [String] = []
+    /// 0.12：自分の別名義をプレイヤー一覧で自分にまとめて表示する（以前の版はそれぞれ表示）。
+    var mergesSelfAliases: Bool = false
 }
 
 extension AppPreferences {
     private enum CodingKeys: String, CodingKey {
-        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder, hiddenFormats, selfAliases
+        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder, hiddenFormats, selfAliases, mergesSelfAliases
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -935,6 +962,7 @@ extension AppPreferences {
         formatOrder = try c.decodeIfPresent([EventFormat].self, forKey: .formatOrder) ?? EventFormat.allCases
         hiddenFormats = try c.decodeIfPresent([EventFormat].self, forKey: .hiddenFormats) ?? []
         selfAliases = try c.decodeIfPresent([String].self, forKey: .selfAliases) ?? []
+        mergesSelfAliases = try c.decodeIfPresent(Bool.self, forKey: .mergesSelfAliases) ?? false
 
         try validate()
     }
@@ -973,6 +1001,7 @@ extension AppPreferences {
         try c.encode(formatOrder, forKey: .formatOrder)
         try c.encode(hiddenFormats, forKey: .hiddenFormats)
         try c.encode(selfAliases, forKey: .selfAliases)
+        try c.encode(mergesSelfAliases, forKey: .mergesSelfAliases)
 
     }
 }

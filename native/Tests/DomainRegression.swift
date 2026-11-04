@@ -1099,6 +1099,66 @@ struct DomainRegression {
             try check(giriJudgingCategory("審査員の採点") == "その他" && giriJudgingCategory("").isEmpty && giriJudgingChoices == ["印象審査", "加点審査", "超加点審査", "その他"], "uncategorised judging is other")
         }
 
+        // 0.12 roles from inputs, reserves, aliases shown together or separately, regions.
+        do {
+            func isMe(_ name: String) -> Bool { playerSearchKey(name) == playerSearchKey("わたし") }
+            var live = GiriEvent(title: "大会"); live.eventFormat = .live; live.meetingType = .tournament
+            live.participants = ["わたし", "Aさん"]
+            try check(live.derivedSelfRole(isSelf: isMe) == .player, "listed participants play")
+            var host = live; host.participants = ["Aさん"]; host.organizer = "わたし"
+            try check(host.derivedSelfRole(isSelf: isMe) == .staff, "an organizer who is not listed does not play")
+            var hostPlays = host; hostPlays.participants = ["わたし", "Aさん"]
+            try check(hostPlays.derivedSelfRole(isSelf: isMe) == .player, "an organizer who is listed plays")
+            var reserve = host; reserve.organizer = ""; reserve.hasReserves = true; reserve.reserves = ["わたし", " "]
+            try check(reserve.derivedSelfRole(isSelf: isMe) == .reserve && reserve.reserveNames == ["わたし"], "the reserve list decides the reserve role")
+            var casualReserve = reserve; casualReserve.meetingType = .casual
+            try check(casualReserve.derivedSelfRole(isSelf: isMe) == .player && casualReserve.reserveNames.isEmpty, "casual meetings have no reserves")
+            var watching = live; watching.selfRole = .spectator
+            try check(watching.derivedSelfRole(isSelf: isMe) == .spectator, "spectating is chosen in the participation status")
+            var online = live; online.eventFormat = .onlineLong; online.selfRole = .spectator
+            try check(online.derivedSelfRole(isSelf: isMe) == .player, "online formats always play")
+            var reserveJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reserve)) as? [String: Any] ?? [:]
+            try check(try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(reserve)).reserves == reserve.reserves, "reserves roundtrip")
+            reserveJSON.removeValue(forKey: "hasReserves"); reserveJSON.removeValue(forKey: "reserves")
+            let olderEvent = try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: reserveJSON))
+            try check(!olderEvent.hasReserves && olderEvent.reserves.isEmpty, "older events decode without reserves")
+
+            var player = GiriPlayer(name: "まるお"); player.aliases = ["マルオ2号"]; player.prefecture = "大阪府"; player.region = "近畿"
+            var playerJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(player)) as? [String: Any] ?? [:]
+            for key in ["aliases", "mergesAliases", "prefecture"] { playerJSON.removeValue(forKey: key) }
+            let olderPlayer = try JSONDecoder().decode(GiriPlayer.self, from: JSONSerialization.data(withJSONObject: playerJSON))
+            try check(olderPlayer.aliases.isEmpty && olderPlayer.mergesAliases && olderPlayer.prefecture.isEmpty && olderPlayer.region == "近畿", "older players decode without aliases or a prefecture")
+            var preferencesJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(AppPreferences())) as? [String: Any] ?? [:]
+            preferencesJSON.removeValue(forKey: "mergesSelfAliases")
+            try check(!(try JSONDecoder().decode(AppPreferences.self, from: JSONSerialization.data(withJSONObject: preferencesJSON))).mergesSelfAliases, "older settings keep self aliases shown separately")
+
+            try check(giriRegion(ofPrefecture: "大阪") == "近畿" && giriRegion(ofPrefecture: "北海道") == "北海道" && giriPrefectureName("東京") == "東京都" && giriPrefectureName("関西") == nil, "prefectures map to regions")
+            try check(giriRegionText(region: "関東", prefecture: "東京都") == "関東・東京都" && giriRegionText(region: "関西", prefecture: "") == "関西", "regions show with the prefecture and keep older free text")
+
+            let aliasDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriAliases-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: aliasDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: aliasDirectory) }
+            let aliasStore = GiriStore(directory: aliasDirectory)
+            var evening = GiriEvent(title: "夜の会"); evening.eventFormat = .live; evening.participants = ["マルオ2号", "Bさん"]
+            try aliasStore.saveEvent(evening)
+            var merged = GiriPlayer(name: "まるお"); merged.aliases = [" マルオ2号 ", "まるお", ""]
+            try aliasStore.savePlayer(merged)
+            guard let savedMerged = aliasStore.players.first(where: { $0.name == "まるお" }) else { throw GiriDataError.invalid("Missing alias player") }
+            try check(savedMerged.aliases == ["マルオ2号"], "aliases are trimmed and never repeat the main name")
+            try check(!aliasStore.playerDirectory.contains { $0.name == "マルオ2号" } && aliasStore.playerByName("マルオ2号")?.name == "まるお", "merged aliases are shown as the main player")
+            try check(aliasStore.nameKeys(for: "まるお") == Set([playerSearchKey("まるお"), playerSearchKey("マルオ2号")]) && aliasStore.aliasOwner(of: "マルオ2号") == "まるお", "merged aliases count as the same person")
+            var separate = savedMerged; separate.mergesAliases = false
+            try aliasStore.savePlayer(separate)
+            try check(aliasStore.playerDirectory.contains { $0.name == "マルオ2号" } && aliasStore.nameKeys(for: "まるお") == Set([playerSearchKey("まるお")]) && aliasStore.aliasOwner(of: "マルオ2号") == "まるお", "separate aliases stay listed and link to the main name")
+            var settings = aliasStore.preferences; settings.selfName = "わたし"
+            try aliasStore.savePreferences(settings)
+            var withSelfAlias = GiriEvent(title: "昼の会"); withSelfAlias.eventFormat = .live; withSelfAlias.participants = ["わたし別名"]
+            try aliasStore.saveEvent(withSelfAlias)
+            try check(aliasStore.playerDirectory.contains { $0.name == "わたし別名" }, "an unregistered name is listed")
+            try aliasStore.saveSelfAliases(["わたし別名"], merges: true)
+            try check(aliasStore.preferences.mergesSelfAliases && !aliasStore.playerDirectory.contains { $0.name == "わたし別名" } && aliasStore.nameKeys(for: "わたし").contains(playerSearchKey("わたし別名")), "self aliases can be shown together")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

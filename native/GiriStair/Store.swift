@@ -82,6 +82,7 @@ final class GiriStore: ObservableObject {
         names += event.coOrganizers
         names += event.mcs
         names += event.judges
+        names += event.reserves
         names += event.participants
         names += event.teams.flatMap(\.members)
         names += event.tournamentResult?.members ?? []
@@ -89,8 +90,60 @@ final class GiriStore: ObservableObject {
         return names
     }
 
+    /// 別名義をまとめて表示する人：別名義の照合キー → 本名義。
+    var mergedAliasOwners: [String: String] {
+        var owners: [String: String] = [:]
+        let me = preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if preferences.mergesSelfAliases && !me.isEmpty {
+            for alias in preferences.selfAliases where playerSearchKey(alias) != playerSearchKey(me) { owners[playerSearchKey(alias)] = me }
+        }
+        for player in players where player.mergesAliases {
+            for alias in player.aliases where playerSearchKey(alias) != playerSearchKey(player.name) && owners[playerSearchKey(alias)] == nil {
+                owners[playerSearchKey(alias)] = player.name
+            }
+        }
+        owners.removeValue(forKey: "")
+        return owners
+    }
+    /// この人として数える名前の照合キー（本名義と、まとめて表示する別名義）。
+    func nameKeys(for name: String) -> Set<String> {
+        let key = playerSearchKey(name)
+        guard !key.isEmpty else { return [] }
+        var keys: Set<String> = [key]
+        if preferences.mergesSelfAliases && key == playerSearchKey(preferences.selfName) { keys.formUnion(preferences.selfKeys) }
+        if let player = players.first(where: { playerSearchKey($0.name) == key }), player.mergesAliases {
+            keys.formUnion(player.aliases.map(playerSearchKey))
+        }
+        keys.remove("")
+        return keys
+    }
+    /// 別名義の名前なら、その本名義（まとめる・それぞれ表示のどちらでも）。
+    func aliasOwner(of name: String) -> String? {
+        let key = playerSearchKey(name)
+        guard !key.isEmpty else { return nil }
+        let me = preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !me.isEmpty && key != playerSearchKey(me) && preferences.selfAliases.contains(where: { playerSearchKey($0) == key }) { return me }
+        return players.first { player in playerSearchKey(player.name) != key && player.aliases.contains { playerSearchKey($0) == key } }?.name
+    }
+    /// 別名義（自分の別名義を含む）。
+    func aliases(of name: String) -> [String] {
+        let key = playerSearchKey(name)
+        if !key.isEmpty && key == playerSearchKey(preferences.selfName) { return preferences.selfAliases }
+        return players.first { playerSearchKey($0.name) == key }?.aliases ?? []
+    }
+    /// 自分の別名義と、その表示（設定と同じ保存先）。
+    func saveSelfAliases(_ aliases: [String], merges: Bool) throws {
+        var value = preferences
+        value.selfAliases = aliases
+        value.mergesSelfAliases = merges
+        try savePreferences(value)
+    }
+
     var playerDirectory: [GiriPlayer] {
-        var profiles = Dictionary(players.map { (playerSearchKey($0.name), $0) }, uniquingKeysWith: { first, _ in first })
+        // 別名義をまとめて表示する人の別名義は、プレイヤー一覧に別に出さない。
+        let merged = mergedAliasOwners
+        var profiles = Dictionary(players.filter { merged[playerSearchKey($0.name)] == nil }.map { (playerSearchKey($0.name), $0) },
+                                  uniquingKeysWith: { first, _ in first })
         var sourceNames: [String] = [preferences.selfName]
         sourceNames += preferences.selfAliases
         sourceNames += events.flatMap(referencedNames)
@@ -99,7 +152,7 @@ final class GiriStore: ObservableObject {
         for name in sourceNames {
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             let key = playerSearchKey(trimmed)
-            if !trimmed.isEmpty && profiles[key] == nil { profiles[key] = GiriPlayer(id: "history:\(key)", name: trimmed) }
+            if !trimmed.isEmpty && profiles[key] == nil && merged[key] == nil { profiles[key] = GiriPlayer(id: "history:\(key)", name: trimmed) }
         }
         return profiles.values.sorted {
             let first = playerSearchKey($0.furigana.isEmpty ? $0.name : $0.furigana)
@@ -131,7 +184,14 @@ final class GiriStore: ObservableObject {
         names.remove("")
         return (Set(events.compactMap(\.venueId)), names)
     }
-    func playerByName(_ name: String) -> GiriPlayer? { playerDirectory.first { playerSearchKey($0.name) == playerSearchKey(name) } }
+    /// 名前のプレイヤー。別名義をまとめて表示する人の別名義は、本名義のプレイヤーを返す。
+    func playerByName(_ name: String) -> GiriPlayer? {
+        let key = playerSearchKey(name)
+        let directory = playerDirectory
+        if let hit = directory.first(where: { playerSearchKey($0.name) == key }) { return hit }
+        guard let owner = mergedAliasOwners[key] else { return nil }
+        return directory.first { playerSearchKey($0.name) == playerSearchKey(owner) }
+    }
     /// 団体：保存した団体と、会で「団体」の主催者として入れた名前（プレイヤー一覧とは別）。
     var groupDirectory: [GiriGroup] {
         var values = Dictionary(groups.map { (playerSearchKey($0.name), $0) }, uniquingKeysWith: { first, _ in first })
@@ -293,7 +353,12 @@ final class GiriStore: ObservableObject {
         player.name = player.name.trimmingCharacters(in: .whitespacesAndNewlines)
         player.furigana = player.furigana.trimmingCharacters(in: .whitespacesAndNewlines)
         player.region = player.region.trimmingCharacters(in: .whitespacesAndNewlines)
+        player.prefecture = player.prefecture.trimmingCharacters(in: .whitespacesAndNewlines)
         player.twitterUrl = player.twitterUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 別名義は空・本名義と同じ名前・重複を外す。
+        var seenAliases: Set<String> = [playerSearchKey(player.name)]
+        player.aliases = player.aliases.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seenAliases.insert(playerSearchKey($0)).inserted }
         try player.validate()
         let old = playerDirectory.first { $0.id == player.id }
         guard !playerDirectory.contains(where: { $0.id != player.id && playerSearchKey($0.name) == playerSearchKey(player.name) }) else { throw GiriDataError.invalid("同じ名前のプレイヤーが登録されています。") }
@@ -405,6 +470,7 @@ final class GiriStore: ObservableObject {
             next.events[index].coOrganizers = next.events[index].coOrganizers.map(rename)
             next.events[index].mcs = next.events[index].mcs.map(rename)
             next.events[index].judges = next.events[index].judges.map(rename)
+            next.events[index].reserves = next.events[index].reserves.map(rename)
             next.events[index].participants = next.events[index].participants.map(rename)
             for team in next.events[index].teams.indices { next.events[index].teams[team].members = next.events[index].teams[team].members.map(rename) }
             for standing in next.events[index].standings.indices { next.events[index].standings[standing].playerNames = next.events[index].standings[standing].playerNames.map(rename) }

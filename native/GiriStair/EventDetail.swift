@@ -163,6 +163,7 @@ struct GiriEventDetail: View {
             if !event.coOrganizers.isEmpty { detailValue("共催", event.coOrganizers.joined(separator: "・")) }
             if !event.mcs.isEmpty { detailValue("MC", event.mcs.joined(separator: "・")) }
             if !event.judges.isEmpty { detailValue("審査員", event.judges.joined(separator: "・")) }
+            if !event.reserveNames.isEmpty { detailValue("リザーバー", event.reserveNames.joined(separator: "・")) }
             if event.eventFormat.hasLiveTiming {
                 if let day = event.eventDate ?? event.startsAt {
                     HStack {
