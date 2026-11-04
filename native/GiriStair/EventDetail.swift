@@ -139,6 +139,7 @@ struct GiriEventDetail: View {
             }
             detailValue("参加状況", event.participationState().title)
             adaptiveName(event.title)
+            if event.eventFormat == .live { seriesRow(event) }
             if !event.hashtag.isEmpty {
                 HStack {
                     Text("ハッシュタグ").foregroundStyle(.secondary)
@@ -173,6 +174,7 @@ struct GiriEventDetail: View {
                             .multilineTextAlignment(.trailing)
                     }
                 } else { detailValue("日付", "未定") }
+                if let opens = event.opensAt { detailValue("開場", giriDetailTime(opens)) }
                 NavigationLink { GiriLiveTimingEditor(eventID: eventID) } label: {
                     HStack {
                         Text("開始").foregroundStyle(.secondary)
@@ -193,6 +195,7 @@ struct GiriEventDetail: View {
                         }
                     }
                 } else if event.eventFormat == .live || event.eventFormat == .hybrid { detailValue("会場", event.venue.isEmpty ? "未設定" : event.venue) }
+                if !event.venueRoom.isEmpty { detailValue("部屋", event.venueRoom) }
                 if event.eventFormat == .live || event.entryFee != nil {
                     detailValue("参加費", event.entryFee.map(giriYenText) ?? "未入力")
                 }
@@ -205,6 +208,23 @@ struct GiriEventDetail: View {
                 if !event.block.isEmpty { detailValue("ブロック", event.block) }
             }
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.live)
+    }
+
+    /// 同じシリーズ（名前が同じで回数違い、またはシリーズ名が同じ）の会へ。
+    @ViewBuilder private func seriesRow(_ event: GiriEvent) -> some View {
+        let seriesEvents = giriSeriesEvents(of: event, in: store.events)
+        if seriesEvents.count >= 2 || !event.series.isEmpty {
+            let key = event.seriesKey
+            NavigationLink {
+                GiriProfileRecordsPage(title: event.seriesTitle) { $0.eventFormat == .live && $0.seriesKey == key }
+            } label: {
+                HStack {
+                    Text("シリーズ").foregroundStyle(.secondary)
+                    Spacer()
+                    detailValueText(event.seriesTitle + "（\(seriesEvents.count)回）")
+                }
+            }
+        }
     }
 
     private func participants(_ names: [String], title: String, numbered: Bool) -> some View {
@@ -518,18 +538,22 @@ struct GiriLiveTimingEditor: View {
     @State private var day: Date?
     @State private var start: Date?
     @State private var end: Date?
+    @State private var opens: Date?
     @State private var loaded = false
     @State private var originalDay: Date?
     @State private var originalStart: Date?
     @State private var originalEnd: Date?
+    @State private var originalOpens: Date?
+    @State private var isLive = false
     @State private var leave = false
 
-    private var dirty: Bool { day != originalDay || start != originalStart || end != originalEnd }
+    private var dirty: Bool { day != originalDay || start != originalStart || end != originalEnd || opens != originalOpens }
     var body: some View {
         Form {
             Section {
                 GiriEventCardSectionTitle(title: "日付・時刻", systemImage: "calendar", accentColor: AppSectionAccent.live).listRowSeparator(.hidden)
                 OptionalDateRow(title: "日付", selection: $day, components: .date)
+                if isLive { OptionalDateRow(title: "開場", selection: $opens) }
                 OptionalDateRow(title: "開始", selection: $start)
                 OptionalDateRow(title: "終了", selection: $end)
             }.appEventDetailCardStyle(accentColor: AppSectionAccent.live)
@@ -545,8 +569,9 @@ struct GiriLiveTimingEditor: View {
             }
             .onAppear {
                 if !loaded, let event = store.events.first(where: { $0.id == eventID }) {
-                    day = event.eventDate; start = event.startsAt; end = event.endsAt
-                    originalDay = day; originalStart = start; originalEnd = end; loaded = true
+                    day = event.eventDate; start = event.startsAt; end = event.endsAt; opens = event.opensAt
+                    isLive = event.eventFormat == .live
+                    originalDay = day; originalStart = start; originalEnd = end; originalOpens = opens; loaded = true
                 }
             }
             .interactiveDismissDisabled(dirty)
@@ -555,6 +580,7 @@ struct GiriLiveTimingEditor: View {
     private func save() {
         guard var event = store.events.first(where: { $0.id == eventID }) else { return }
         event.eventDate = day; event.startsAt = start; event.endsAt = end
+        if isLive { event.opensAt = opens }
         do { try giriEditorValidate(event); try store.saveEvent(event); playLiveStairSaveFeedback(); dismiss() }
         catch { store.errorMessage = error.localizedDescription }
     }

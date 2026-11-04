@@ -18,6 +18,8 @@ struct GiriListView: View {
     @State private var playerSearch = ""
     @State private var site = "all"
     @State private var stage = "all"
+    /// 生大喜利のシリーズ（同じ名前・回数違いの会）で絞り込む。
+    @State private var seriesFilter = "all"
     @State private var ascending: Bool?
     @State private var isCollapsed = false
     @State private var destinationID: String?
@@ -49,6 +51,26 @@ struct GiriListView: View {
         }
     }
     private var stageNames: [String] { Array(Set(searchableEvents.flatMap { $0.effectiveRounds.map(\.name) })).sorted() }
+    /// 折りたたんだ時に出す、初期状態と違う条件。
+    private var collapsedConditions: [String] {
+        var values: [String] = []
+        if year != "all" { values.append(year) }
+        if meeting != "all" { values.append(meeting == "casual" ? "通常" : "大会") }
+        if venue != "all" { values.append(venue) }
+        if !selectedPlayers.isEmpty { values.append(selectedPlayers.sorted().joined(separator: " / ")) }
+        if stage != "all" { values.append(stage) }
+        if seriesFilter != "all", let title = seriesOptions.first(where: { $0.0 == seriesFilter })?.1 { values.append(title) }
+        if !search.isEmpty { values.append("検索「\(search)」") }
+        return values
+    }
+    /// 2回以上ある生大喜利のシリーズ（照合キー, 表示名）。
+    private var seriesOptions: [(String, String)] {
+        guard selectedFormat == .live else { return [] }
+        let groups = Dictionary(grouping: searchableEvents.filter { !$0.seriesKey.isEmpty }, by: \.seriesKey)
+        return groups.filter { $0.value.count >= 2 }
+            .map { key, events in (key, events.max { $0.createdAt < $1.createdAt }?.seriesTitle ?? key) }
+            .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
+    }
     private var filteredEvents: [GiriEvent] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         let now = Date()
@@ -75,12 +97,20 @@ struct GiriListView: View {
             }) { return false }
             if site != "all" && event.onlineSiteId != site { return false }
             if stage != "all" && !event.effectiveRounds.contains(where: { $0.name == stage }) { return false }
+            if seriesFilter != "all" && event.seriesKey != seriesFilter { return false }
             let venueRecord = store.venues.first { $0.id == event.venueId || $0.name == event.venue }
             let siteRecord = store.onlineSites.first { $0.id == event.onlineSiteId }
-            let text = ([event.title, event.organizer, event.venue, event.memo, event.affiliation, event.block,
-                         venueRecord?.prefecture ?? "", siteRecord?.name ?? ""] + event.participants +
-                        event.teams.flatMap { [$0.name] + $0.members }).joined(separator: " ")
-            return query.isEmpty || text.localizedStandardContains(query)
+            guard !query.isEmpty else { return true }
+            // 会場は部屋あり・なしのどちらでも、シリーズ名でも探せる。
+            var fields: [String] = [event.title, event.organizer, event.venue, event.venueRoom, event.venue + event.venueRoom,
+                                    event.memo, event.affiliation, event.block, venueRecord?.prefecture ?? "", siteRecord?.name ?? ""]
+            fields.append(event.seriesTitle)
+            fields += event.coOrganizers
+            fields += event.participants
+            fields += event.teams.flatMap { [$0.name] + $0.members }
+            let text = fields.joined(separator: " ")
+            let compactQuery = query.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "　", with: "")
+            return text.localizedStandardContains(query) || (event.venue + event.venueRoom).replacingOccurrences(of: " ", with: "").localizedStandardContains(compactQuery)
         }.sorted { a, b in
             let ad = GiriEventPresentation.date(a), bd = GiriEventPresentation.date(b)
             if ad == nil && bd == nil { return a.createdAt > b.createdAt }
@@ -155,7 +185,7 @@ struct GiriListView: View {
         }
         .onChange(of: selectedFormat) { _, _ in
             // 会場・参加者は詳細のショートカットから開いた条件を形式の切替後も残す。
-            year = "all"; meeting = "all"; status = "all"; site = "all"; stage = "all"
+            year = "all"; meeting = "all"; status = "all"; site = "all"; stage = "all"; seriesFilter = "all"
             closePlayerDropdown()
         }
         .onChange(of: isCalendar) { _, _ in closePlayerDropdown() }
@@ -275,6 +305,10 @@ struct GiriListView: View {
                     separator
                     GiriListFilterMenu(title: "会場", selection: $venue, options: [("all", "全会場")] + (venueNames + (venue != "all" && !venueNames.contains(venue) ? [venue] : [])).map { ($0, $0) })
                 }
+                if !seriesOptions.isEmpty || seriesFilter != "all" {
+                    separator
+                    GiriListFilterMenu(title: "シリーズ", selection: $seriesFilter, options: [("all", "すべて")] + seriesOptions)
+                }
                 if selectedFormat == .onlineLong {
                     separator
                     GiriListFilterMenu(title: "サイト", selection: $site, options: [("all", "全サイト")] + store.onlineSites.filter { $0.format == selectedFormat }.map { ($0.id, $0.name) })
@@ -286,9 +320,7 @@ struct GiriListView: View {
                 separator
                 GiriListFilterMenu(title: "参加状況", selection: $status, options: [("all", "参加記録"), ("interested", "興味あり"), ("canceled", "キャンセル")])
             } else {
-                let conditions = [year == "all" ? "" : year, meeting == "all" ? "" : meeting == "casual" ? "通常" : "大会",
-                                  venue == "all" ? "" : venue, selectedPlayers.isEmpty ? "" : selectedPlayers.sorted().joined(separator: " / "),
-                                  stage == "all" ? "" : stage, search.isEmpty ? "" : "検索「\(search)」"].filter { !$0.isEmpty }
+                let conditions = collapsedConditions
                 if !conditions.isEmpty { AppHeaderConditionSummary(conditions: conditions) }
             }
         }
@@ -679,7 +711,8 @@ struct GiriEventCard: View {
         store.venues.first { $0.id == event.venueId || $0.name == event.venue }
     }
     private var venueText: String {
-        let name = event.venue.isEmpty ? "会場未設定" : event.venue
+        let room = event.venueRoom.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = event.venue.isEmpty ? "会場未設定" : (room.isEmpty ? event.venue : event.venue + " " + room)
         guard let prefecture = venueRecord?.prefecture, !prefecture.isEmpty else { return name }
         return "\(name)（\(prefecture)）"
     }

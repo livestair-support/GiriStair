@@ -15,6 +15,8 @@ struct GiriEventEditor: View {
     @State private var automaticFields: [String: Set<String>] = [:]
     @State private var selfWasAdded = false
     @State private var importText = ""
+    /// 画面の読み取り結果（文字と位置）。参加者の欄を分けるのに使う。
+    @State private var importLines: [GiriOCRLine]?
     @State private var showImport = false
     @State private var photo: PhotosPickerItem?
     @State private var recognizing = false
@@ -166,7 +168,9 @@ struct GiriEventEditor: View {
                         let lines = try await GiriParticipantOCR.recognizeLines(data)
                         bracketDraft = GiriBracketDraft(names: giriBracketOrder(lines))
                     } else {
-                        importText = try await GiriParticipantOCR.recognize(data)
+                        // 参加者一覧の画面は、文字の位置から「参加者」の欄を分けて確認に進む。
+                        importLines = try await GiriParticipantOCR.recognizeLines(data)
+                        importText = ""
                         showImport = true
                     }
                 } catch { store.errorMessage = error.localizedDescription }
@@ -176,7 +180,7 @@ struct GiriEventEditor: View {
         }
         .sheet(isPresented: $showImport) {
             NavigationStack {
-                GiriParticipantImport(source: importText) { names in
+                GiriParticipantImport(source: importText, lines: importLines) { names in
                     let existing = Set(participants.map(giriEditorNameKey))
                     let added = names.filter { !existing.contains(giriEditorNameKey($0)) }
                     participants.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -278,19 +282,23 @@ struct GiriEventEditor: View {
             }
             TextField(isSite ? "サイト名 *" : "会・大会名 *", text: $draft.title, axis: .vertical)
                 .lineLimit(1...5)
+            if isLive { GiriSeriesField(text: $draft.series, eventTitle: draft.title) }
             if !isSite {
-                if isLive && draft.organizerIsGroup {
-                    GiriGroupOrganizerField(text: $draft.organizer)
-                } else {
-                    GiriEditorPlayerField(title: "主催者", text: $draft.organizer, preferHosts: true)
-                }
+                // 主催団体一覧に登録した団体は、名前を入れると団体の主催として保存する。
+                GiriEditorPlayerField(title: "主催者", text: $draft.organizer, preferHosts: true)
                 if isLive { staffRows }
                 GiriHashtagField(text: $draft.hashtag)
                 if draft.eventFormat.hasLiveTiming {
                     OptionalDateRow(title: "日付", selection: $draft.eventDate, components: .date)
-                    GiriEventTimeRow(startsAt: clockBinding(start: true), endsAt: clockBinding(start: false))
+                    GiriEventTimeRow(startsAt: clockBinding(start: true), endsAt: clockBinding(start: false),
+                                     opensAt: isLive ? openClockBinding : nil)
                     if draft.eventFormat != .onlineShort {
                         GiriVenueSuggestionField(text: $draft.venue)
+                        // 施設の会議室などは、会場名と分けて部屋を入れる（会場一覧は施設でまとまる）。
+                        HStack(spacing: 12) {
+                            GiriEditorLabel("部屋")
+                            TextField("会議室名・部屋番号（任意）", text: $draft.venueRoom).multilineTextAlignment(.trailing)
+                        }
                     }
                     // 参加費は生大喜利だけ（スプシ系・ネットは参加費なし）。
                     if draft.eventFormat == .live || draft.entryFee != nil {
@@ -325,7 +333,7 @@ struct GiriEventEditor: View {
                                           systemImage: isKnockoutBracket ? "list.number" : "person.2", accentColor: AppSectionAccent.artist)
                 Text(isTeamTournament ? "未振り分け\(unassignedNames.count)人" : "\(participants.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count)人")
                     .font(.caption).foregroundStyle(.secondary).fixedSize()
-                Button { importText = ""; showImport = true } label: {
+                Button { importText = ""; importLines = nil; showImport = true } label: {
                     importIcon("doc.on.clipboard")
                 }
                 .buttonStyle(.borderless).accessibilityLabel("文字貼り付け")
@@ -417,12 +425,8 @@ struct GiriEventEditor: View {
         .accessibilityLabel("並びを変える")
     }
 
-    /// 生大喜利の主催の種類・共催・MC・審査員（MC・審査員は大会だけ）。
+    /// 生大喜利の共催・MC・審査員（MC・審査員は大会だけ）。
     @ViewBuilder private var staffRows: some View {
-        Picker(selection: $draft.organizerIsGroup) {
-            Text("個人").tag(false)
-            Text("団体").tag(true)
-        } label: { GiriEditorLabel("主催の種類") }.pickerStyle(.menu).tint(.primary)
         ForEach(draft.coOrganizers.indices, id: \.self) { index in staffNameRow("共催", \.coOrganizers, index) }
         if isTournament {
             ForEach(draft.mcs.indices, id: \.self) { index in staffNameRow("MC", \.mcs, index) }
@@ -707,8 +711,19 @@ struct GiriEventEditor: View {
         })
     }
 
+    /// 開場（生大喜利）。日付は会の日付に合わせる。
+    private var openClockBinding: Binding<Date?> {
+        Binding(get: { draft.opensAt }, set: { value in
+            guard let value else { draft.opensAt = nil; return }
+            let clock = Calendar.current.dateComponents([.hour, .minute], from: value)
+            let day = draft.eventDate ?? value
+            draft.opensAt = Calendar.current.date(bySettingHour: clock.hour ?? 0, minute: clock.minute ?? 0, second: 0, of: day) ?? value
+            if draft.eventDate == nil { draft.eventDate = Calendar.current.startOfDay(for: value) }
+        })
+    }
+
     private func moveDay(from old: Date?, to new: Date?) {
-        guard let new else { draft.startsAt = nil; draft.endsAt = nil; return }
+        guard let new else { draft.startsAt = nil; draft.endsAt = nil; draft.opensAt = nil; return }
         func moved(_ value: Date?) -> Date? {
             guard let value else { return nil }
             let calendar = Calendar.current
@@ -719,6 +734,7 @@ struct GiriEventEditor: View {
         }
         draft.startsAt = moved(draft.startsAt)
         draft.endsAt = moved(draft.endsAt)
+        draft.opensAt = moved(draft.opensAt)
     }
 
     private func addRound(sameStage: Bool) {
@@ -746,10 +762,14 @@ struct GiriEventEditor: View {
                 var candidate = draft
                 candidate.title = candidate.title.trimmingCharacters(in: .whitespacesAndNewlines)
                 candidate.organizer = candidate.organizer.trimmingCharacters(in: .whitespacesAndNewlines)
+                // 主催が団体かどうかは、主催団体一覧に登録した団体かどうかで決める。
+                candidate.organizerIsGroup = store.groupByName(candidate.organizer) != nil
                 candidate.coOrganizers = cleanedNames(candidate.coOrganizers)
                 candidate.mcs = cleanedNames(candidate.mcs)
                 candidate.judges = cleanedNames(candidate.judges)
                 candidate.judging = candidate.judging.trimmingCharacters(in: .whitespacesAndNewlines)
+                candidate.venueRoom = candidate.venueRoom.trimmingCharacters(in: .whitespacesAndNewlines)
+                candidate.series = candidate.series.trimmingCharacters(in: .whitespacesAndNewlines)
                 let venueMatch = store.venueDirectory.first { playerSearchKey($0.name) == playerSearchKey(candidate.venue) }
                 candidate.venueId = venueMatch.flatMap { $0.id.hasPrefix("history:") ? nil : $0.id }
                 var seen = Set<String>()
@@ -864,6 +884,7 @@ enum GiriEditorValidationError: LocalizedError {
 
 func giriEditorValidate(_ event: GiriEvent) throws {
     if let start = event.startsAt, let end = event.endsAt, end < start { throw GiriEditorValidationError.schedule("終了を開始より後にしてください。") }
+    if let opens = event.opensAt, let start = event.startsAt, start < opens { throw GiriEditorValidationError.schedule("開場を開始より前にしてください。") }
     for round in event.effectiveRounds {
         if let start = round.submissionStart, let end = round.submissionEnd, end < start { throw GiriEditorValidationError.schedule("\(round.name)の投稿締切を投稿開始より後にしてください。") }
         if let start = round.votingStart, let end = round.votingEnd, end < start { throw GiriEditorValidationError.schedule("\(round.name)の投票締切を投票開始より後にしてください。") }

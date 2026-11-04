@@ -600,6 +600,8 @@ struct GiriPlayersView: View {
     @State private var query = ""
     @State private var isHeaderCollapsed = false
     @State private var adding = false
+    @State private var addingGroup = false
+    @State private var groupCandidate: GiriPlayer?
     private var players: [GiriPlayer] {
         store.playerDirectory.filter { query.isEmpty || "\($0.name) \($0.furigana) \($0.region)".localizedStandardContains(query) }
             .sorted { ($0.furigana.isEmpty ? $0.name : $0.furigana).localizedStandardCompare($1.furigana.isEmpty ? $1.name : $1.furigana) == .orderedAscending }
@@ -614,6 +616,13 @@ struct GiriPlayersView: View {
         let selfKeys = store.preferences.selfKeys
         let values = sections
         List {
+            // 団体はプレイヤーと分けて、主催団体一覧で管理する。
+            Section {
+                NavigationLink { GiriGroupsView() } label: {
+                    GiriProfileShortcutLabel(title: "主催団体一覧", systemImage: "person.3", accentColor: AppSectionAccent.artist,
+                                             countText: "\(store.groupDirectory.count)団体")
+                }
+            }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
             if values.isEmpty {
                 Section {
                     CenteredEmptyMessage(systemImage: "person.2", title: query.isEmpty ? "プレイヤーがいません" : "該当するプレイヤーがいません")
@@ -638,10 +647,24 @@ struct GiriPlayersView: View {
         .giriNavigationBarStyle()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { adding = true } label: { Image(systemName: "plus") }.accessibilityLabel("プレイヤーを追加")
+                Menu {
+                    Button("プレイヤーを追加", systemImage: "person.badge.plus") { adding = true }
+                    Button("団体を追加", systemImage: "person.3") { addingGroup = true }
+                } label: { Image(systemName: "plus") }
+                .accessibilityLabel("追加")
             }
         }
         .sheet(isPresented: $adding) { NavigationStack { GiriPlayerEditor() } }
+        .sheet(isPresented: $addingGroup) { NavigationStack { GiriGroupEditor() } }
+        .alert("団体にしますか？", isPresented: Binding(get: { groupCandidate != nil }, set: { if !$0 { groupCandidate = nil } })) {
+            Button("キャンセル", role: .cancel) { groupCandidate = nil }
+            Button("団体にする") {
+                if let player = groupCandidate {
+                    store.run { try store.convertPlayerToGroup(player.name); playLiveStairSaveFeedback() }
+                }
+                groupCandidate = nil
+            }
+        } message: { Text("「\(groupCandidate?.name ?? "")」を主催団体一覧に移します。主催した会は団体の主催になります。") }
     }
 
     private func playerRow(_ player: GiriPlayer, deletable: Bool) -> some View {
@@ -662,6 +685,9 @@ struct GiriPlayersView: View {
             }
         }
         .contextMenu {
+            if !store.preferences.selfKeys.contains(playerSearchKey(player.name)) {
+                Button { groupCandidate = player } label: { Label("団体にする", systemImage: "person.3") }
+            }
             if deletable {
                 Button(role: .destructive) { delete(player) } label: { Label("プレイヤーを削除", systemImage: "trash") }
             }
@@ -795,7 +821,7 @@ struct GiriPlayerDetail: View {
                             }
                         }
                         // 以前プレイヤーとして入れた団体名を、主催団体に移す。
-                        if !store.preferences.selfKeys.contains(key) && store.events.contains(where: { !$0.organizerIsGroup && playerSearchKey($0.organizer) == key }) {
+                        if !store.preferences.selfKeys.contains(key) {
                             Divider().overlay(appSeparatorColor)
                             Button { convertingToGroup = true } label: {
                                 GiriProfileShortcutLabel(title: "この名前を団体にする", systemImage: "person.3.sequence", accentColor: accentActionColor)

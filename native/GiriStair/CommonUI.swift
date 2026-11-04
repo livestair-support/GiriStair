@@ -1512,13 +1512,30 @@ struct OptionalDateRow: View {
 struct GiriEventTimeRow: View {
     @Binding var startsAt: Date?
     @Binding var endsAt: Date?
+    /// 開場（生大喜利）。nil の時は行を出さない。
+    var opensAt: Binding<Date?>? = nil
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let opensAt {
+                HStack(spacing: 0) {
+                    // 開場は開始の30分前から選び始める。
+                    timePair("開場", selection: opensAt, fallback: startsAt.map { $0.addingTimeInterval(-30 * 60) })
+                        .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
+                    Spacer(minLength: 4)
+                }
+            }
+            timeRow
+        }
+    }
+
+    private var timeRow: some View {
         HStack(alignment: .center, spacing: 0) {
-            timePair("開始", selection: $startsAt)
+            timePair("開始", selection: $startsAt, fallback: opensAt?.wrappedValue.map { $0.addingTimeInterval(30 * 60) })
                 .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 4)
-            timePair("終了", selection: $endsAt)
+            // 終了は開始より後（開始の2時間後）から選び始める。
+            timePair("終了", selection: $endsAt, fallback: startsAt.map { $0.addingTimeInterval(2 * 60 * 60) })
                 .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 4)
             Divider()
@@ -1528,6 +1545,7 @@ struct GiriEventTimeRow: View {
             Button {
                 startsAt = nil
                 endsAt = nil
+                if let opensAt { opensAt.wrappedValue = nil }
             } label: {
                 VStack(spacing: 3) {
                     Image(systemName: "arrow.counterclockwise").font(.footnote)
@@ -1541,13 +1559,13 @@ struct GiriEventTimeRow: View {
         .padding(.vertical, 4)
     }
 
-    private func timePair(_ title: String, selection: Binding<Date?>) -> some View {
+    private func timePair(_ title: String, selection: Binding<Date?>, fallback: Date? = nil) -> some View {
         HStack(spacing: 10) {
             Text(title)
                 .font(.subheadline.weight(.medium))
                 .foregroundColor(.secondary)
                 .fixedSize()
-            OptionalCompactTimePicker(selection: selection)
+            OptionalCompactTimePicker(selection: selection, fallback: fallback)
                 .frame(width: 70, height: 32)
                 .accessibilityLabel(title)
         }
@@ -1556,6 +1574,8 @@ struct GiriEventTimeRow: View {
 
 private struct OptionalCompactTimePicker: UIViewRepresentable {
     @Binding var selection: Date?
+    /// 未定（--:--）から選ぶ時に最初に出す時刻。なければ今の時刻。
+    var fallback: Date? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(selection: $selection) }
 
@@ -1581,9 +1601,10 @@ private struct OptionalCompactTimePicker: UIViewRepresentable {
             }
         } else {
             let calendar = Calendar.current
-            var parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: Date())
+            var parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: fallback ?? Date())
             parts.minute = (parts.minute ?? 0) / 5 * 5
-            picker.setDate(calendar.date(from: parts) ?? Date(), animated: false)
+            let initial = calendar.date(from: parts) ?? Date()
+            if abs(picker.date.timeIntervalSince(initial)) > 0.5 { picker.setDate(initial, animated: false) }
         }
         context.coordinator.emptyCover.isHidden = selection != nil
         picker.bringSubviewToFront(context.coordinator.emptyCover)

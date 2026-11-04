@@ -925,6 +925,84 @@ struct DomainRegression {
             try check(try GiriJSON.decode(JSONSerialization.data(withJSONObject: legacyDocument)).groups.isEmpty, "older backups without groups decode")
         }
 
+        // 0.10 participant lists read from a screen or pasted text: only the
+        // participants column, icon misreads removed, registered names matched.
+        do {
+            let known = ["もちゅこ", "大川 太郎", "たまごサンドイッチ", "4321", "青空 カモメ"]
+            try check(giriOCRNameKey("もちゆこ") == giriOCRNameKey("もちゅこ") && giriOCRNameKey("大川太郎") == giriOCRNameKey("大川 太郎"), "names compare without small kana or spaces")
+            try check(giriMatchRegisteredName("Gもちゆこ", known: known) == "もちゅこ", "a letter read from an icon is dropped when the rest is registered")
+            try check(giriMatchRegisteredName("欲たまごサンド", truncated: true, known: known) == "たまごサンドイッチ", "a cut-off name matches the registered name it starts")
+            try check(giriMatchRegisteredName("青空カモノ", known: known) == "青空 カモメ", "one misread character still matches a long name")
+            try check(giriMatchRegisteredName("大山", known: ["大川"]) == nil && giriMatchRegisteredName("4322", known: known) == nil, "short and numeric names need an exact match")
+            try check(giriCleanParticipantText("1 4321").name == "4321" && giriCleanParticipantText("②麓").name == "麓" && giriCleanParticipantText("(新しい人").name == "新しい人", "leading icon marks are removed")
+            let cut = giriCleanParticipantText("欲たまごサンド・・・")
+            try check(cut.truncated && cut.name == "欲たまごサンド", "a trailing ellipsis marks a cut-off name")
+            let pasted = """
+            13:30
+            •I1) 4G 26
+            example.jp
+            このイベントに参加しますか？
+            まずxアカウントでログインする
+            参加者（7人／定員
+            7人）
+            Gもちゆこ
+            ・大川太郎
+            欲たまごサンド・・・
+            ②麓
+            (新しい人
+            1 4321
+            ※青空カモメ
+            凸参加者プロフィール
+            興味あり（2人）
+            見学さん
+            もちゅこ
+            """
+            let fromText = giriParticipantCandidates(text: pasted, known: known)
+            try check(fromText.filter(\.included).map(\.name) == ["もちゅこ", "大川 太郎", "たまごサンドイッチ", "麓", "新しい人", "4321", "青空 カモメ"], "pasted lists keep only the participants section with registered spellings")
+            try check(fromText.first { $0.name == "見学さん" }.map { $0.section == .interested && !$0.included } == true && fromText.filter { $0.name == "もちゅこ" }.count == 1, "interested people are listed unselected and duplicates are dropped")
+            try check(fromText.first { $0.name == "新しい人" }?.registered == nil && fromText.first { $0.name == "4321" }?.registered == "4321", "new and registered people are told apart")
+            let screen = [GiriOCRLine(text: "13:30", midX: 0.15, midY: 0.02), GiriOCRLine(text: "example.jp", midX: 0.5, midY: 0.05),
+                          GiriOCRLine(text: "参加者（3人／定員", midX: 0.18, midY: 0.30), GiriOCRLine(text: "興味あり（1人）", midX: 0.47, midY: 0.30),
+                          GiriOCRLine(text: "不参加（0人）", midX: 0.77, midY: 0.30), GiriOCRLine(text: "3人）", midX: 0.08, midY: 0.33),
+                          GiriOCRLine(text: "Gもちゆこ", midX: 0.15, midY: 0.36), GiriOCRLine(text: "見学さん", midX: 0.46, midY: 0.36),
+                          GiriOCRLine(text: "・大川太郎", midX: 0.14, midY: 0.40), GiriOCRLine(text: "1 4321", midX: 0.12, midY: 0.44),
+                          GiriOCRLine(text: "凸参加者プロフィール", midX: 0.17, midY: 0.60), GiriOCRLine(text: "コメント", midX: 0.1, midY: 0.70),
+                          GiriOCRLine(text: "広告の文字", midX: 0.7, midY: 0.80)]
+            let fromScreen = giriParticipantCandidates(lines: screen, known: known)
+            try check(fromScreen.filter(\.included).map(\.name) == ["もちゅこ", "大川 太郎", "4321"], "a three-column screen keeps the participants column")
+            try check(fromScreen.contains { $0.name == "見学さん" && $0.section == .interested } && !fromScreen.contains { $0.source == "広告の文字" }, "other columns are separated and text after the list is ignored")
+            let plain = giriParticipantCandidates(text: "Aさん、Bさん\nCさん", known: [])
+            try check(plain.map(\.name) == ["Aさん", "Bさん", "Cさん"] && plain.allSatisfy(\.included), "a list without headers is read as participants")
+        }
+
+        // 0.10 live series, venue rooms, doors-open time and groups found by name.
+        do {
+            try check(giriSeriesTitle("大喜利レート戦「三光芒」#5") == "大喜利レート戦「三光芒」" && giriSeriesTitle("第3回 ひかり杯") == "ひかり杯" && giriSeriesTitle("集まり vol.2") == "集まり", "series titles drop edition numbers")
+            var fourth = GiriEvent(title: "大喜利レート戦「三光芒」#4"); fourth.eventFormat = .live
+            var fifth = GiriEvent(title: "大喜利レート戦「三光芒」＃5"); fifth.eventFormat = .live
+            var special = GiriEvent(title: "三光芒 番外編"); special.eventFormat = .live; special.series = "大喜利レート戦「三光芒」"
+            var other = GiriEvent(title: "別の会 #5"); other.eventFormat = .live
+            try check(giriSeriesEvents(of: fifth, in: [fourth, fifth, special, other]).count == 3 && fifth.seriesTitle == "大喜利レート戦「三光芒」", "editions and an explicitly named special share a series")
+            try check(giriSeriesSuggestions(for: "三光芒 #6", in: [other, fourth]).first == "大喜利レート戦「三光芒」", "a series containing the new title is suggested first")
+            var roomEvent = fifth; roomEvent.venue = "市民会館"; roomEvent.venueRoom = "第3会議室"
+            roomEvent.opensAt = GiriDates.parse("2026-11-01T09:30:00Z"); roomEvent.createdAt = GiriDates.parse("2026-11-01T00:00:00Z") ?? Date()
+            try check(try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(roomEvent)) == roomEvent, "room, doors-open time and series roundtrip")
+            var legacyJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(roomEvent)) as? [String: Any] ?? [:]
+            for key in ["venueRoom", "opensAt", "series"] { legacyJSON.removeValue(forKey: key) }
+            let legacy = try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
+            try check(legacy.venueRoom.isEmpty && legacy.opensAt == nil && legacy.series.isEmpty, "older events decode without a room, doors-open time or series")
+
+            let flagDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriGroupFlag-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: flagDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: flagDirectory) }
+            let flagStore = GiriStore(directory: flagDirectory)
+            var hostedByCircle = GiriEvent(title: "サークルの会"); hostedByCircle.eventFormat = .live; hostedByCircle.organizer = "サークルX"
+            try flagStore.saveEvent(hostedByCircle)
+            try check(flagStore.playerDirectory.contains { $0.name == "サークルX" }, "an unregistered organizer starts as a player")
+            try flagStore.saveGroup(GiriGroup(name: "サークルX"))
+            try check(flagStore.events[0].organizerIsGroup && !flagStore.playerDirectory.contains { $0.name == "サークルX" }, "registering a group turns its hosted events into group hosting")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }
