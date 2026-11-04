@@ -742,7 +742,8 @@ struct GiriStageEditor: View {
 
     static let stageNames = ["予選", "予選1回戦", "予選2回戦", "本戦", "本戦1回戦", "本戦2回戦", "敗者復活戦", "準々決勝", "準決勝", "3位決定戦", "決勝"]
     static let lineups = ["横並び3人", "横並び4人", "横並び5人", "横並び6人", "タイマン", "総当たり", "トーナメント"]
-    static let judgings = ["挙手（1人1票）", "挙手（1人2票）", "拍手", "加点審査", "印象審査", "超加点審査", "審査員の採点", "ネット投票", "その他"]
+    /// 審査方法は段階ごとに選ぶ（挙手・拍手などは印象審査のやり方なので分けない）。
+    static let judgings = giriJudgingChoices
 
     var body: some View {
         Form {
@@ -763,7 +764,13 @@ struct GiriStageEditor: View {
                     }
                     textRow("組", placeholder: "Aブロックなど", text: $stage.group)
                     presetRow("形式", placeholder: "横並び5人など", text: $stage.lineup, presets: Self.lineups)
-                    presetRow("審査方法", placeholder: "挙手・加点など", text: $stage.judging, presets: Self.judgings)
+                    Picker(selection: $stage.judging) {
+                        Text("未設定").tag("")
+                        ForEach(Self.judgings, id: \.self) { Text($0).tag($0) }
+                        // 以前の版で入れた「挙手（1人1票）」などは、そのまま残して選べるようにする。
+                        if !stage.judging.isEmpty && !Self.judgings.contains(stage.judging) { Text(stage.judging).tag(stage.judging) }
+                    } label: { GiriEditorLabel("審査方法") }
+                    .pickerStyle(.menu).tint(.primary)
                     GiriNamesField(title: "同じ組の人・対戦相手（任意）", names: $stage.opponents, priorityNames: namePriority)
                 }
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)

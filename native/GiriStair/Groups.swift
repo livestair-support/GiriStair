@@ -86,6 +86,7 @@ struct GiriGroupsView: View {
 
 struct GiriGroupDetail: View {
     @EnvironmentObject private var store: GiriStore
+    @EnvironmentObject private var navigation: GiriNavigation
     let groupID: String
     @State private var resolvedID: String?
     @State private var editing = false
@@ -126,7 +127,6 @@ struct GiriGroupDetail: View {
     }
 
     private func basicCard(_ group: GiriGroup) -> some View {
-        let key = playerSearchKey(group.name)
         let hosted = store.eventsHosted(byGroup: group.name).filter(\.isActualParticipant)
         return GiriDetailCard(title: "基本情報", systemImage: "person.text.rectangle", accentColor: AppSectionAccent.artist,
                               trailing: { GiriCardEditButton { editing = true } }) {
@@ -144,11 +144,10 @@ struct GiriGroupDetail: View {
                     }
                 }
                 Divider().overlay(appSeparatorColor)
-                GiriProfileShortcutRow(title: "主催した会", systemImage: "person.crop.circle", accentColor: AppSectionAccent.live,
-                                       countText: "\(hosted.count)件") {
-                    GiriProfileRecordsPage(title: "\(group.name)の主催") { event in
-                        event.organizerIsGroup && playerSearchKey(event.organizer) == key
-                    }
+                // 一覧タブで、この団体の主催を選んだ状態で開く。
+                GiriProfileShortcutButton(title: "主催した会", systemImage: "person.crop.circle", accentColor: AppSectionAccent.live,
+                                          countText: "\(hosted.count)件") {
+                    navigation.openList(organizer: group.name)
                 }
             }
         }

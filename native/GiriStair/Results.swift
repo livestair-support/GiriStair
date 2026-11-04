@@ -111,7 +111,7 @@ struct GiriResultsView: View {
                         .padding(.horizontal, 18).padding(.vertical, 6)
                 }
                 let judgings = giriStagePassRates(tournaments) { event, stage in
-                    stage.judging.isEmpty ? event.judging : stage.judging
+                    giriJudgingCategory(stage.judging.isEmpty ? event.judging : stage.judging)
                 }
                 if !judgings.isEmpty {
                     rateListCard("審査方法ごとの勝ち抜き", systemImage: "hand.raised", rows: judgings)

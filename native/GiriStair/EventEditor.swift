@@ -30,6 +30,10 @@ struct GiriEventEditor: View {
     @State private var lastSelfStaff = false
     /// トーナメント表（生大喜利・個人戦）の読み取り結果の確認。
     @State private var bracketDraft: GiriBracketDraft?
+    /// イベントページ（ツイプラなど）の読み取り：基本情報と参加者を確認してから反映する。
+    @State private var eventPagePhoto: PhotosPickerItem?
+    @State private var readingEventPage = false
+    @State private var eventPageDraft: GiriEventPageDraft?
 
     init(event: GiriEvent? = nil, onSaved: (() -> Void)? = nil) {
         self.event = event
@@ -52,6 +56,14 @@ struct GiriEventEditor: View {
         if isKnockoutBracket { return true }
         return !(draft.meetingType == .tournament && (draft.eventFormat == .onlineLong || draft.eventFormat == .onlineShort))
     }
+    /// 参加者が2人以上の時だけ並び替えを付ける（1人の時は「≡」を出さない）。
+    private var participantMoveAction: ((IndexSet, Int) -> Void)? {
+        guard canReorderParticipants else { return nil }
+        return { source, destination in participants.move(fromOffsets: source, toOffset: destination) }
+    }
+    private var canReorderParticipants: Bool {
+        showsParticipantSection && participants.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count > 1
+    }
     /// まだどのチームにも入っていない参加者（即席チーム）。
     private var unassignedNames: [String] {
         let assigned = Set(draft.teams.flatMap(\.members).map(giriEditorNameKey))
@@ -67,14 +79,51 @@ struct GiriEventEditor: View {
         }
     }
     private var fixedTeamSize: Int? { draft.tournamentFormat == .pair ? 2 : draft.teamSize }
+    /// 参加状況。生大喜利の「観覧」は参加状況で選び、自分の立場を観覧にする（ほかの立場は入力から決める）。
     private var participationChoice: Binding<String> {
         Binding(get: {
-            draft.status == .canceled ? "canceled" : draft.isInterested ? "interested" : "participating"
+            if draft.status == .canceled { return "canceled" }
+            if draft.isInterested { return "interested" }
+            return isLive && draft.selfRole == .spectator ? "spectating" : "participating"
         }, set: { choice in
             draft.isInterested = choice == "interested"
-            draft.isParticipating = choice == "participating"
+            draft.isParticipating = choice == "participating" || choice == "spectating"
             draft.status = choice == "canceled" ? .canceled : .planned
+            let spectating = choice == "spectating"
+            if spectating != (draft.selfRole == .spectator) {
+                draft.selfRole = spectating ? .spectator : .player
+                placeSelf(force: true)
+            }
         })
+    }
+    /// 入力した内容から決まる自分の立場（保存する時もこれを使う）。
+    private var currentSelfRole: GiriSelfRole {
+        var value = draft
+        value.participants = participants
+        return value.derivedSelfRole(isSelf: store.preferences.isSelf)
+    }
+    /// リザーバーの名前。自分を入れたら参加者から外す。
+    private var reservesBinding: Binding<[String]> {
+        Binding(get: { draft.reserves }, set: { names in
+            draft.reserves = names
+            placeSelf(force: false)
+        })
+    }
+    private var hasReservesBinding: Binding<Bool> {
+        Binding(get: { draft.hasReserves }, set: { enabled in
+            draft.hasReserves = enabled
+            if enabled && draft.reserves.isEmpty { draft.reserves = [""] }
+            placeSelf(force: false)
+        })
+    }
+    /// 生大喜利の大会だけ：参加者の一番下でリザーバーのあり・なしと名前を入れる。
+    private var showsReserves: Bool { isLive && isTournament }
+    @ViewBuilder private var reserveRows: some View {
+        Toggle(isOn: hasReservesBinding) { GiriEditorLabel("リザーバー") }
+            .tint(AppSectionAccent.artist)
+        if draft.hasReserves {
+            GiriNamesField(title: "リザーバーの名前（当日キャンセルに備えて観覧）", names: reservesBinding)
+        }
     }
     private var isValid: Bool {
         !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -85,11 +134,13 @@ struct GiriEventEditor: View {
 
     var body: some View {
         Form {
+            if isLive { eventReadSection }
             basicSection
             if isSite { siteSection }
             if !isSite {
                 if showsParticipantSection { participantSection }
                 if draft.meetingType == .tournament { teamSections }
+                if showsReserves && !showsParticipantSection { reserveSection }
                 if draft.eventFormat.hasOnlineRounds { scheduleSections }
                 Section {
                     GiriEventCardSectionTitle(title: "メモ", systemImage: "text.alignleft", accentColor: AppSectionAccent.memo)
@@ -100,6 +151,8 @@ struct GiriEventEditor: View {
         }
         .appEditorFormStyle()
         .environment(\.defaultMinListRowHeight, 48)
+        // LiveStair EventBasicEditor と同じく、参加者が2人以上の時は「≡」を長押しして並び替える。
+        .environment(\.editMode, .constant(canReorderParticipants ? EditMode.active : EditMode.inactive))
         .navigationTitle(event == nil ? "" : "編集")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(event != nil && isDirty)
@@ -132,7 +185,6 @@ struct GiriEventEditor: View {
         }
         // 共催・MC・審査員・主催の種類が変わった時も、自分がプレイヤーかどうかを合わせる。
         .onChange(of: draft.staffNames) { _, _ in syncSelf() }
-        .onChange(of: draft.selfRole) { _, _ in applySelfRole(force: true) }
         .onChange(of: draft.eventDate) { _, next in
             if next != lastEventDay { let previous = lastEventDay; lastEventDay = next; moveDay(from: previous, to: next) }
         }
@@ -142,7 +194,6 @@ struct GiriEventEditor: View {
             if format != .live { draft.selfRole = .player; draft.knockout = false }
         }
         .onChange(of: draft.meetingType) { _, type in
-            if !GiriSelfRole.choices(tournament: type == .tournament).contains(draft.selfRole) { draft.selfRole = .spectator }
             if type == .tournament && draft.eventFormat == .onlineLong && draft.rounds.isEmpty { addRound(sameStage: false) }
             if type == .tournament && draft.tournamentFormat != .individual { ensureOwnTeam() }
         }
@@ -180,7 +231,7 @@ struct GiriEventEditor: View {
         }
         .sheet(isPresented: $showImport) {
             NavigationStack {
-                GiriParticipantImport(source: importText, lines: importLines) { names in
+                GiriParticipantImport(source: importText, lines: importLines, existing: participants) { names in
                     let existing = Set(participants.map(giriEditorNameKey))
                     let added = names.filter { !existing.contains(giriEditorNameKey($0)) }
                     participants.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -218,6 +269,109 @@ struct GiriEventEditor: View {
             .overlay(Capsule().stroke(Color.primary.opacity(0.10), lineWidth: 1))
             .disabled(!isValid || saving)
             .opacity(isValid && !saving ? 1 : 0.55)
+    }
+
+    /// LiveStair EventBasicEditor ocrReadRow：イベントページの画像から基本情報・参加者を読み取る。
+    private var eventReadSection: some View {
+        Section {
+            PhotosPicker(selection: $eventPagePhoto, matching: .images) {
+                HStack(spacing: 12) {
+                    Image(systemName: "text.viewfinder")
+                        .font(.system(size: appFontSize(17), weight: .semibold))
+                        .foregroundStyle(AppSectionAccent.scan)
+                        .frame(width: 30, height: 30)
+                        .background(AppSectionAccent.scan.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("画像からOCR読み取り").font(.body.weight(.semibold)).foregroundStyle(.primary)
+                        Text("イベントページから基本情報・参加者を入力").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if readingEventPage { ProgressView().controlSize(.small) }
+                    else { Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(readingEventPage)
+            .onChange(of: eventPagePhoto) { _, item in
+                if let item { readEventPage(item) }
+            }
+            .sheet(item: $eventPageDraft) { page in
+                NavigationStack {
+                    GiriEventPageReview(draft: page, onApply: applyEventPage)
+                }
+            }
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.scan)
+    }
+
+    private func readEventPage(_ item: PhotosPickerItem) {
+        readingEventPage = true
+        let known = giriParticipantKnownNames(store)
+        let venues = store.venueDirectory.map(\.name)
+        var organizers = store.playerDirectory.map(\.name)
+        organizers.append(contentsOf: store.groupDirectory.map(\.name))
+        let current = participants
+        Task {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
+                let lines = try await GiriParticipantOCR.recognizeLines(data)
+                var page = giriEventPageDraft(lines: lines, known: known, venues: venues, organizers: organizers)
+                page.participants = giriMarkingAlreadyAdded(page.participants, existing: current)
+                guard page.hasBasicInfo || !page.participants.isEmpty else { throw GiriParticipantReadError.noText }
+                eventPageDraft = page
+            } catch { store.errorMessage = error.localizedDescription }
+            readingEventPage = false
+            eventPagePhoto = nil
+        }
+    }
+
+    /// 読み取った内容を入力に反映する。置き換えない時は空欄だけに入れ、参加者は重ならない人だけ足す。
+    private func applyEventPage(_ page: GiriEventPageDraft, replace: Bool) {
+        let calendar = Calendar.current
+        if let date = page.date, replace || draft.eventDate == nil {
+            let previous = draft.eventDate
+            let newDay = calendar.startOfDay(for: date)
+            lastEventDay = newDay
+            draft.eventDate = newDay
+            moveDay(from: previous, to: newDay)
+        }
+        var value = draft
+        value.title = Self.merged(value.title, page.title, replace: replace)
+        value.venue = Self.merged(value.venue, page.venue, replace: replace)
+        value.venueRoom = Self.merged(value.venueRoom, page.venueRoom, replace: replace)
+        value.organizer = Self.merged(value.organizer, page.organizer, replace: replace)
+        if let fee = page.fee, replace || value.entryFee == nil { value.entryFee = fee }
+        let day = value.eventDate ?? calendar.startOfDay(for: Date())
+        value.opensAt = Self.merged(value.opensAt, page.opens, on: day, replace: replace)
+        value.startsAt = Self.merged(value.startsAt, page.start, on: day, replace: replace)
+        value.endsAt = Self.merged(value.endsAt, page.end, on: day, replace: replace)
+        if let start = value.startsAt, let end = value.endsAt, end < start {
+            value.endsAt = calendar.date(byAdding: .day, value: 1, to: end)
+        }
+        if value.eventDate == nil && (value.startsAt != nil || value.opensAt != nil) {
+            lastEventDay = day
+            value.eventDate = day
+        }
+        draft = value
+        let existing = Set(participants.map(giriEditorNameKey))
+        let added = giriSelectedParticipantNames(page.participants).filter { !existing.contains(giriEditorNameKey($0)) }
+        if !added.isEmpty {
+            participants.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            participants.append(contentsOf: added)
+            participants.append("")
+        }
+    }
+
+    private static func merged(_ current: String, _ read: String, replace: Bool) -> String {
+        let text = read.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return current }
+        return replace || current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? text : current
+    }
+
+    private static func merged(_ current: Date?, _ clock: GiriClock?, on day: Date, replace: Bool) -> Date? {
+        guard let clock, replace || current == nil, let value = giriClockDate(clock, on: day) else { return current }
+        return value
     }
 
     private var basicSection: some View {
@@ -265,24 +419,18 @@ struct GiriEventEditor: View {
                         Text("横並び・その他").tag(false)
                         Text("トーナメント（1対1）").tag(true)
                     } label: { GiriEditorLabel("対戦形式") }.pickerStyle(.menu).tint(.primary)
-                    GiriJudgingField(text: $draft.judging)
                 }
             }
             if !isSite {
                 Picker(selection: participationChoice) {
                     Text("参加").tag("participating")
+                    if isLive { Text("観覧").tag("spectating") }
                     Text("興味あり").tag("interested")
                     Text("キャンセル").tag("canceled")
                 } label: { GiriEditorLabel("参加状況") }.pickerStyle(.menu).tint(.primary)
-                if isLive {
-                    Picker(selection: $draft.selfRole) {
-                        ForEach(GiriSelfRole.choices(tournament: isTournament)) { Text($0.title(tournament: isTournament)).tag($0) }
-                    } label: { GiriEditorLabel("自分の立場") }.pickerStyle(.menu).tint(.primary)
-                }
             }
             TextField(isSite ? "サイト名 *" : "会・大会名 *", text: $draft.title, axis: .vertical)
                 .lineLimit(1...5)
-            if isLive { GiriSeriesField(text: $draft.series, eventTitle: draft.title) }
             if !isSite {
                 // 主催団体一覧に登録した団体は、名前を入れると団体の主催として保存する。
                 GiriEditorPlayerField(title: "主催者", text: $draft.organizer, preferHosts: true)
@@ -350,7 +498,6 @@ struct GiriEventEditor: View {
                     }
                     GiriEditorPlayerField(title: "参加者名", text: participantBinding(index), compact: true)
                     if isTeamTournament { assignMenu(index) }
-                    if isKnockoutBracket { orderMenu(index) }
                     Button(role: .destructive) {
                         participants.remove(at: index)
                         if participants.isEmpty { participants = [""] }
@@ -359,12 +506,23 @@ struct GiriEventEditor: View {
                 }.listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 12))
                     .environment(\.defaultMinListRowHeight, 36)
             }
+            .onMove(perform: participantMoveAction)
             Button { participants.append("") } label: { Label("参加者を追加", systemImage: "plus.circle") }.tint(accentActionColor)
             if isKnockoutBracket {
                 Button { bracketDraft = GiriBracketDraft(names: participants.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }) } label: {
                     Label("並びと自分の山を確認", systemImage: "arrow.triangle.branch")
                 }.tint(accentActionColor)
             }
+            if showsReserves { reserveRows }
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
+    }
+
+    /// チーム戦（参加者の欄がない時）のリザーバー。
+    private var reserveSection: some View {
+        Section {
+            GiriEventCardSectionTitle(title: "リザーバー", systemImage: "person.badge.clock", accentColor: AppSectionAccent.artist)
+                .listRowSeparator(.hidden)
+            reserveRows
         }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
     }
 
@@ -412,17 +570,6 @@ struct GiriEventEditor: View {
                 Button { appendOtherTeam() } label: { Label("他のチームを追加", systemImage: "plus.circle") }
             }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
         }
-    }
-
-    /// トーナメント表の並びを入れ替える。
-    private func orderMenu(_ index: Int) -> some View {
-        Menu {
-            if index > 0 { Button("上へ", systemImage: "arrow.up") { participants.swapAt(index, index - 1) } }
-            if index + 1 < participants.count { Button("下へ", systemImage: "arrow.down") { participants.swapAt(index, index + 1) } }
-            Button("この下に追加", systemImage: "plus") { participants.insert("", at: index + 1) }
-        } label: { Image(systemName: "arrow.up.arrow.down") }
-        .tint(accentActionColor)
-        .accessibilityLabel("並びを変える")
     }
 
     /// 生大喜利の共催・MC・審査員（MC・審査員は大会だけ）。
@@ -523,7 +670,7 @@ struct GiriEventEditor: View {
     }
     private func ensureOwnTeam() {
         // プレイヤーとして出ない時（主催・観覧など）は「自分のチーム」を作らない。
-        guard draft.tournamentFormat != .individual, draft.selfRole == .player else { return }
+        guard draft.tournamentFormat != .individual, currentSelfRole == .player else { return }
         if let mine = draft.teams.first(where: { $0.id == draft.myTeamId || $0.isMine }) {
             draft.myTeamId = mine.id
         } else {
@@ -600,9 +747,10 @@ struct GiriEventEditor: View {
             var team = GiriTeam(); team.name = old.teamName; team.members = old.members; team.isMine = true
             draft.teams = [team]; draft.myTeamId = team.id; draft.tournamentFormat = old.format
         }
-        // 生大喜利で自分が主催・共催などにいて、参加者・チームにいない旧データは「主催（出ない）」として開く。
-        if event != nil && isLive && draft.selfRole == .player && selfIsStaff && !draft.everyone.contains(where: { store.preferences.isSelf($0) }) {
-            draft.selfRole = .staff
+        // 0.10〜0.11 で「自分の立場」をリザーバーにした記録は、リザーバーの欄に自分を入れて開く（立場は入力から決める）。
+        if event != nil && isLive && draft.selfRole == .reserve && !draft.reserveNames.contains(where: { store.preferences.isSelf($0) }) {
+            let me = store.preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !me.isEmpty { draft.hasReserves = true; draft.reserves.insert(me, at: 0) }
         }
         lastSelfStaff = selfIsStaff
         if draft.tournamentFormat != .individual { ensureOwnTeam() }
@@ -623,25 +771,49 @@ struct GiriEventEditor: View {
         loaded = true
     }
 
-    /// 生大喜利：主催・共催・MC・審査員に自分を入れたら、まずはプレイヤーとしては出ない扱いにする
-    /// （出る時は「自分の立場」をプレイヤーに戻す）。ほかの形式は従来どおり。
+    /// 生大喜利：主催・共催・MC・審査員に自分を入れたら、自動で入れた参加者の自分を外す
+    /// （出る時は参加者に自分を入れる）。自分の立場は入力から決める。ほかの形式は従来どおり。
     private func syncSelf() {
         guard isLive else { legacySyncSelf(); return }
         let staff = selfIsStaff
         if staff != lastSelfStaff {
             lastSelfStaff = staff
-            if staff && draft.selfRole == .player { draft.selfRole = .staff }
-            else if !staff && draft.selfRole == .staff { draft.selfRole = .player }
+            if staff { removeAutoAddedSelf() }
         }
-        applySelfRole(force: false)
+        placeSelf(force: false)
     }
 
-    /// 自分の立場に合わせて、参加者・自分のチームに自分を入れる／外す。
-    private func applySelfRole(force: Bool) {
+    /// 自動で入れた自分（参加者・自分だけのチーム）を外す。
+    private func removeAutoAddedSelf() {
+        if selfWasAdded {
+            participants.removeAll { store.preferences.isSelf($0) }
+            if participants.isEmpty { participants = [""] }
+            selfWasAdded = false
+        }
+        if isTeamTournament, let index = draft.teams.firstIndex(where: { $0.id == draft.myTeamId }),
+           draft.teams[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           draft.teams[index].members.filter({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }).allSatisfy({ store.preferences.isSelf($0) }) {
+            removeSelfFromTeams()
+        }
+    }
+
+    private func removeSelfFromTeams() {
+        for team in draft.teams.indices {
+            for member in draft.teams[team].members.indices where store.preferences.isSelf(draft.teams[team].members[member]) {
+                draft.teams[team].members[member] = ""
+            }
+            if draft.teams[team].isMine { draft.teams[team].isMine = false }
+        }
+        if draft.myTeamId != nil { draft.myTeamId = nil }
+    }
+
+    /// 入力から決まる立場に合わせて、参加者・自分のチームに自分を入れる／外す。
+    private func placeSelf(force: Bool) {
         guard isLive else { return }
         let me = store.preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !me.isEmpty else { return }
-        if draft.selfRole == .player {
+        switch currentSelfRole {
+        case .player:
             if isTeamTournament {
                 ensureOwnTeam()
                 if let index = draft.teams.firstIndex(where: { $0.id == draft.myTeamId }),
@@ -656,18 +828,15 @@ struct GiriEventEditor: View {
                 else { participants.append(me) }
                 selfWasAdded = true
             }
-        } else {
+        case .spectator, .reserve:
             if participants.contains(where: { store.preferences.isSelf($0) }) {
                 participants.removeAll { store.preferences.isSelf($0) }
                 if participants.isEmpty { participants = [""] }
             }
-            for team in draft.teams.indices {
-                for member in draft.teams[team].members.indices where store.preferences.isSelf(draft.teams[team].members[member]) {
-                    draft.teams[team].members[member] = ""
-                }
-                if draft.teams[team].isMine { draft.teams[team].isMine = false }
-            }
-            if draft.myTeamId != nil { draft.myTeamId = nil }
+            selfWasAdded = false
+            removeSelfFromTeams()
+        case .staff:
+            break
         }
     }
 
@@ -767,6 +936,7 @@ struct GiriEventEditor: View {
                 candidate.coOrganizers = cleanedNames(candidate.coOrganizers)
                 candidate.mcs = cleanedNames(candidate.mcs)
                 candidate.judges = cleanedNames(candidate.judges)
+                candidate.reserves = candidate.hasReserves ? cleanedNames(candidate.reserves) : []
                 candidate.judging = candidate.judging.trimmingCharacters(in: .whitespacesAndNewlines)
                 candidate.venueRoom = candidate.venueRoom.trimmingCharacters(in: .whitespacesAndNewlines)
                 candidate.series = candidate.series.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -777,6 +947,8 @@ struct GiriEventEditor: View {
                     candidate.participants = participants.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty && seen.insert(giriEditorNameKey($0)).inserted }
                 }
                 for i in candidate.teams.indices { candidate.teams[i].members = candidate.teams[i].members.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
+                // 自分の立場は選ばず、参加状況（観覧）・リザーバー・参加者・主催などの入力から決める。
+                candidate.selfRole = candidate.derivedSelfRole(isSelf: store.preferences.isSelf)
                 if let size = candidate.teamSize, candidate.teams.contains(where: { $0.members.count > size }) {
                     store.errorMessage = "チーム人数を超えているチームがあります。人数設定かメンバーを確認してください。"; return
                 }

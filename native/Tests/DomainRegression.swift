@@ -1003,6 +1003,162 @@ struct DomainRegression {
             try check(flagStore.events[0].organizerIsGroup && !flagStore.playerDirectory.contains { $0.name == "サークルX" }, "registering a group turns its hosted events into group hosting")
         }
 
+        // 0.11 sites between seasons: no regular rounds while waiting, resume from the entered deadline.
+        do {
+            let anchor = GiriDates.parse("2026-10-01T22:00:00Z") ?? Date()
+            func day(_ offset: Int) -> Date { addCalendarDays(anchor, offset) }
+            var site = OnlineSite(id: "waiting-site", name: "合間のサイト", recurrence: .weekly)
+            site.submissionDays = 7; site.votingDays = 3
+            site.cycleSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: anchor, intervalDays: 7)
+            try check(siteCycleDescriptors(site, around: day(30)).contains { $0.kind == .regular && $0.isActive(day(30)) }, "a weekly site keeps generating rounds")
+            var waiting = site
+            waiting.cycleSettings?.waitingForNext = true
+            try check(!siteCycleDescriptors(waiting, around: day(30)).contains { $0.kind == .regular }, "waiting between seasons creates no regular rounds")
+            let roundtrip = try JSONDecoder().decode(SiteCycleSettings.self, from: JSONEncoder().encode(waiting.cycleSettings))
+            try check(roundtrip.waitingForNext && roundtrip.notBefore == nil, "the waiting state roundtrips")
+            var legacyJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(site.cycleSettings)) as? [String: Any] ?? [:]
+            legacyJSON.removeValue(forKey: "waitingForNext"); legacyJSON.removeValue(forKey: "notBefore")
+            let legacy = try JSONDecoder().decode(SiteCycleSettings.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
+            try check(!legacy.waitingForNext && legacy.notBefore == nil, "older settings decode as not waiting")
+            var resumedSite = waiting
+            resumedSite.cycleSettings = siteResumeSettings(waiting, firstDeadline: day(47), cycleNumber: 5)
+            let resumedRows = siteCycleDescriptors(resumedSite, around: day(41))
+            try check(resumedRows.contains { $0.cycleNumber == 5 && $0.round.isSubmissionOpen(day(41)) }, "resuming starts at the entered round")
+            try check(!resumedRows.contains { $0.kind == .regular && ($0.start ?? anchor) < day(40) }, "resuming does not fabricate rounds in the gap")
+
+            var joinedCycle = GiriEvent(title: "第3回"); joinedCycle.eventFormat = .onlineLong
+            joinedCycle.onlineSiteId = site.id; joinedCycle.siteCycleNumber = 3
+            var unjoined = joinedCycle; unjoined.id = UUID().uuidString; unjoined.siteCycleNumber = 6; unjoined.isParticipating = false
+            try check(siteSuggestedResumeCycleNumber(site, events: [joinedCycle, unjoined]) == 4 && siteSuggestedResumeCycleNumber(site, events: []) == 1, "the next round follows the last recorded round")
+
+            let waitDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriWaiting-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: waitDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: waitDirectory) }
+            let waitStore = GiriStore(directory: waitDirectory)
+            try waitStore.saveOnlineSite(site)
+            guard var saved = waitStore.onlineSites.first, var settings = saved.cycleSettings else { throw GiriDataError.invalid("Missing waiting site") }
+            // 設定画面と同じく、今の回より前で前の決まりを止めて次のお題待ちにする。
+            let cutoff = siteCycleDescriptors(saved, around: day(30)).filter { $0.kind == .regular && $0.isActive(day(30)) }.compactMap(\.start).min() ?? day(30)
+            settings.anchorStart = cutoff; settings.waitingForNext = true; settings.anchorCycleNumber = 5
+            saved.cycleSettings = settings
+            try waitStore.saveOnlineSite(saved)
+            guard let paused = waitStore.onlineSites.first else { throw GiriDataError.invalid("Missing paused site") }
+            try check(paused.ruleHistory.count == 1 && !siteCycleDescriptors(paused, around: day(30)).contains { $0.kind == .regular && $0.isActive(day(30)) }, "the previous rule stops before the current round while waiting")
+            try waitStore.resumeSiteCycle(paused.id, firstDeadline: day(47), cycleNumber: 5)
+            guard let back = waitStore.onlineSites.first else { throw GiriDataError.invalid("Missing resumed site") }
+            try check(back.cycleSettings?.waitingForNext == false && siteCycleDescriptors(back, around: day(41)).contains { $0.cycleNumber == 5 && $0.round.isSubmissionOpen(day(41)) }, "resuming from the store continues at the entered round")
+            try check(!siteCycleDescriptors(back, around: day(35)).contains { $0.kind == .regular && $0.isActive(day(35)) }, "nothing is open in the gap after resuming")
+        }
+
+        // 0.11 event pages: headers only from real section titles, description lines ignored,
+        // basic info from the date line, labels and time notation (fictional names only).
+        do {
+            try check(giriParticipantHeader("キャンセル待ちはないので空きがありましたら自分で参") == nil && giriParticipantHeader("不参加 (0人)") == .other && giriParticipantHeader("興味あり (5人)") == .interested, "sentences in the description are not section headers")
+            let noise = ["2025/11/18(水)18:00〜21:15", "《場所》", "500円", "みどり線「ひかり」駅 徒歩5分", ">今すぐ無料インストール", "15名(途中抜け、途中参加可能)", "[146 views]", "お題を一題お願いします。"]
+            try check(noise.allSatisfy(giriIsParticipantNoise), "dates, prices, access, ads and sentences are not names")
+            try check(!giriIsParticipantNoise("まな!") && !giriIsParticipantNoise("みかん星人") && !giriIsParticipantNoise("たまごサン…"), "short names are kept")
+            func row(_ text: String, _ y: Double, x: Double = 0.2, h: Double = 0.007) -> GiriOCRLine { GiriOCRLine(text: text, midX: x, midY: y, height: h) }
+            let page = [row("2026年11月18日[水] 夜", 0.05, h: 0.012), row("初参加歓迎", 0.08, x: 0.15, h: 0.006), row("途中参加OK", 0.08, x: 0.35, h: 0.006),
+                        row("ふしぎな会", 0.10, h: 0.013), row("さくらもち", 0.13), row("[146 views]", 0.15), row("LINEで送る", 0.155, x: 0.5),
+                        row("《内容》", 0.25), row("キャンセル待ちはないので空きがありましたら自分で参", 0.27), row("加に変更していただいて構いません。", 0.28),
+                        row("《日時》", 0.30), row("2025/11/18(水)18:00〜21:15", 0.31), row("《場所》", 0.33), row("市民交流センター　和室", 0.34),
+                        row("みどり線「ひかり」駅 徒歩5分", 0.35), row("《参加費》", 0.40), row("500円", 0.41), row("今夜は3.5秒で", 0.45),
+                        row("このイベントは定員に達しました", 0.55), row("興味あり", 0.57, x: 0.35), row("不参加", 0.57, x: 0.55),
+                        row("参加者 (3人／定員", 0.60, x: 0.15), row("興味あり (1人)", 0.60, x: 0.47), row("不参加 (0人)", 0.60, x: 0.77), row("3人)", 0.615, x: 0.08),
+                        row("●まつぼっくり", 0.63, x: 0.15), row("●みかん星人", 0.63, x: 0.46), row("●たまごサンドイッチ", 0.65, x: 0.15), row("●新しい人", 0.67, x: 0.15),
+                        row("参加者プロフィール", 0.70, x: 0.17), row("•名前をID表示に", 0.698, x: 0.5), row("コメント", 0.75, x: 0.1), row("19:30ごろ到着見込みです", 0.78)]
+            let now = GiriDates.parse("2026-11-04T03:00:00Z") ?? Date()
+            let draft = giriEventPageDraft(lines: page, known: ["たまごサンドイッチ"], venues: [], organizers: ["さくらもち"], now: now)
+            try check(draft.participants.filter(\.included).map(\.name) == ["まつぼっくり", "たまごサンドイッチ", "新しい人"], "only the participants column is selected")
+            try check(draft.participants.contains { $0.name == "みかん星人" && $0.section == .interested } && !draft.participants.contains { $0.section == .other }, "description text is not read as a cancelled list")
+            try check(!draft.participants.contains { $0.name.contains("ID表示") || $0.name.contains("円") }, "buttons and prices are never names")
+            let calendar = Calendar.current
+            try check(draft.title == "ふしぎな会" && draft.organizer == "さくらもち", "the title is the large line after the date and the organizer is just below")
+            let pageDay = draft.date.map { calendar.dateComponents([.year, .month, .day], from: $0) }
+            try check(pageDay?.year == 2026 && pageDay?.month == 11 && pageDay?.day == 18, "the page date wins over a stale year in the description")
+            try check(draft.start == GiriClock(hour: 18, minute: 0) && draft.end == GiriClock(hour: 21, minute: 15) && draft.opens == nil, "time ranges fill start and end")
+            try check(draft.venue == "市民交流センター" && draft.venueRoom == "和室" && draft.fee == 500, "venue, room and fee come from labelled lines")
+            let mixed = giriEventPageTimes("（18：15開場 21:15撤収予定）")
+            try check(mixed.opens == GiriClock(hour: 18, minute: 15) && mixed.teardown == GiriClock(hour: 21, minute: 15) && mixed.start == nil, "time-first labels")
+            let labelled = giriEventPageTimes("開場 18:00 / 開演 18:30")
+            try check(labelled.opens == GiriClock(hour: 18, minute: 0) && labelled.start == GiriClock(hour: 18, minute: 30), "label-first times")
+            try check(giriEventPageTimes("OPEN 13時半 START 14時").start == GiriClock(hour: 14, minute: 0) && giriEventPageTimes("OPEN 13時半").opens == GiriClock(hour: 13, minute: 30), "kanji clock notation")
+            let numbered = giriSplitVenueRoom("みどり区民センター 306", venues: [])
+            try check(numbered.venue == "みどり区民センター" && numbered.room == "306", "a room number after the facility")
+            let parenthesised = giriSplitVenueRoom("ひかり市立公民館205会議室2（ひかりコラボセンター内2階）", venues: [])
+            try check(parenthesised.venue == "ひかり市立公民館" && parenthesised.room == "205会議室2", "notes in brackets are dropped and the room follows the facility")
+            let hall = giriSplitVenueRoom("さくらホール 小ホール", venues: [])
+            let cafe = giriSplitVenueRoom("カフェ＆バー", venues: [])
+            try check(hall.venue == "さくらホール" && hall.room == "小ホール" && cafe.venue == "カフェ＆バー" && cafe.room.isEmpty, "a venue is not cut inside its own name")
+            let registeredVenue = giriSplitVenueRoom("つばさ会館 第2会議室", venues: ["つばさ会館"])
+            try check(registeredVenue.venue == "つばさ会館" && registeredVenue.room == "第2会議室", "registered venues are matched first")
+            try check(giriEventPageDate("10月18日(日)", now: now).map { calendar.component(.year, from: $0) } == 2026 && giriEventPageDate("1月5日(火)", now: now).map { calendar.component(.year, from: $0) } == 2027, "a date without a year is the nearest coming one")
+            let marked = giriMarkingAlreadyAdded(draft.participants, existing: ["まつぼっくり"])
+            try check(marked.first { $0.name == "まつぼっくり" }.map { $0.alreadyAdded && !$0.included } == true && giriSelectedParticipantNames(marked) == ["たまごサンドイッチ", "新しい人"], "people already in the list are not added twice")
+            try check(giriJudgingCategory("挙手（1人1票）") == "印象審査" && giriJudgingCategory("超加点審査") == "超加点審査" && giriJudgingCategory("加点審査") == "加点審査", "judging categories")
+            try check(giriJudgingCategory("審査員の採点") == "その他" && giriJudgingCategory("").isEmpty && giriJudgingChoices == ["印象審査", "加点審査", "超加点審査", "その他"], "uncategorised judging is other")
+        }
+
+        // 0.12 roles from inputs, reserves, aliases shown together or separately, regions.
+        do {
+            func isMe(_ name: String) -> Bool { playerSearchKey(name) == playerSearchKey("わたし") }
+            var live = GiriEvent(title: "大会"); live.eventFormat = .live; live.meetingType = .tournament
+            live.participants = ["わたし", "Aさん"]
+            try check(live.derivedSelfRole(isSelf: isMe) == .player, "listed participants play")
+            var host = live; host.participants = ["Aさん"]; host.organizer = "わたし"
+            try check(host.derivedSelfRole(isSelf: isMe) == .staff, "an organizer who is not listed does not play")
+            var hostPlays = host; hostPlays.participants = ["わたし", "Aさん"]
+            try check(hostPlays.derivedSelfRole(isSelf: isMe) == .player, "an organizer who is listed plays")
+            var reserve = host; reserve.organizer = ""; reserve.hasReserves = true; reserve.reserves = ["わたし", " "]
+            try check(reserve.derivedSelfRole(isSelf: isMe) == .reserve && reserve.reserveNames == ["わたし"], "the reserve list decides the reserve role")
+            var casualReserve = reserve; casualReserve.meetingType = .casual
+            try check(casualReserve.derivedSelfRole(isSelf: isMe) == .player && casualReserve.reserveNames.isEmpty, "casual meetings have no reserves")
+            var watching = live; watching.selfRole = .spectator
+            try check(watching.derivedSelfRole(isSelf: isMe) == .spectator, "spectating is chosen in the participation status")
+            var online = live; online.eventFormat = .onlineLong; online.selfRole = .spectator
+            try check(online.derivedSelfRole(isSelf: isMe) == .player, "online formats always play")
+            var reserveJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reserve)) as? [String: Any] ?? [:]
+            try check(try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(reserve)).reserves == reserve.reserves, "reserves roundtrip")
+            reserveJSON.removeValue(forKey: "hasReserves"); reserveJSON.removeValue(forKey: "reserves")
+            let olderEvent = try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: reserveJSON))
+            try check(!olderEvent.hasReserves && olderEvent.reserves.isEmpty, "older events decode without reserves")
+
+            var player = GiriPlayer(name: "まるお"); player.aliases = ["マルオ2号"]; player.prefecture = "大阪府"; player.region = "近畿"
+            var playerJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(player)) as? [String: Any] ?? [:]
+            for key in ["aliases", "mergesAliases", "prefecture"] { playerJSON.removeValue(forKey: key) }
+            let olderPlayer = try JSONDecoder().decode(GiriPlayer.self, from: JSONSerialization.data(withJSONObject: playerJSON))
+            try check(olderPlayer.aliases.isEmpty && olderPlayer.mergesAliases && olderPlayer.prefecture.isEmpty && olderPlayer.region == "近畿", "older players decode without aliases or a prefecture")
+            var preferencesJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(AppPreferences())) as? [String: Any] ?? [:]
+            preferencesJSON.removeValue(forKey: "mergesSelfAliases")
+            try check(!(try JSONDecoder().decode(AppPreferences.self, from: JSONSerialization.data(withJSONObject: preferencesJSON))).mergesSelfAliases, "older settings keep self aliases shown separately")
+
+            try check(giriRegion(ofPrefecture: "大阪") == "近畿" && giriRegion(ofPrefecture: "北海道") == "北海道" && giriPrefectureName("東京") == "東京都" && giriPrefectureName("関西") == nil, "prefectures map to regions")
+            try check(giriRegionText(region: "関東", prefecture: "東京都") == "関東・東京都" && giriRegionText(region: "関西", prefecture: "") == "関西", "regions show with the prefecture and keep older free text")
+
+            let aliasDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriAliases-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: aliasDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: aliasDirectory) }
+            let aliasStore = GiriStore(directory: aliasDirectory)
+            var evening = GiriEvent(title: "夜の会"); evening.eventFormat = .live; evening.participants = ["マルオ2号", "Bさん"]
+            try aliasStore.saveEvent(evening)
+            var merged = GiriPlayer(name: "まるお"); merged.aliases = [" マルオ2号 ", "まるお", ""]
+            try aliasStore.savePlayer(merged)
+            guard let savedMerged = aliasStore.players.first(where: { $0.name == "まるお" }) else { throw GiriDataError.invalid("Missing alias player") }
+            try check(savedMerged.aliases == ["マルオ2号"], "aliases are trimmed and never repeat the main name")
+            try check(!aliasStore.playerDirectory.contains { $0.name == "マルオ2号" } && aliasStore.playerByName("マルオ2号")?.name == "まるお", "merged aliases are shown as the main player")
+            try check(aliasStore.nameKeys(for: "まるお") == Set([playerSearchKey("まるお"), playerSearchKey("マルオ2号")]) && aliasStore.aliasOwner(of: "マルオ2号") == "まるお", "merged aliases count as the same person")
+            var separate = savedMerged; separate.mergesAliases = false
+            try aliasStore.savePlayer(separate)
+            try check(aliasStore.playerDirectory.contains { $0.name == "マルオ2号" } && aliasStore.nameKeys(for: "まるお") == Set([playerSearchKey("まるお")]) && aliasStore.aliasOwner(of: "マルオ2号") == "まるお", "separate aliases stay listed and link to the main name")
+            var settings = aliasStore.preferences; settings.selfName = "わたし"
+            try aliasStore.savePreferences(settings)
+            var withSelfAlias = GiriEvent(title: "昼の会"); withSelfAlias.eventFormat = .live; withSelfAlias.participants = ["わたし別名"]
+            try aliasStore.saveEvent(withSelfAlias)
+            try check(aliasStore.playerDirectory.contains { $0.name == "わたし別名" }, "an unregistered name is listed")
+            try aliasStore.saveSelfAliases(["わたし別名"], merges: true)
+            try check(aliasStore.preferences.mergesSelfAliases && !aliasStore.playerDirectory.contains { $0.name == "わたし別名" } && aliasStore.nameKeys(for: "わたし").contains(playerSearchKey("わたし別名")), "self aliases can be shown together")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }
