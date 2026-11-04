@@ -86,7 +86,8 @@ struct GiriSiteDetail: View {
     @Environment(\.dismiss) private var dismiss
     let siteID: String
     @State private var deleting = false
-    @State private var resultEvent: GiriEvent?
+    /// 日程の設定・結果の入力は、この詳細の上に積んで開く（シートにしない）。
+    @State private var route: GiriSiteRoute?
     @State private var timelineStart = Date()
 
     private var site: OnlineSite? { store.onlineSites.first { $0.id == siteID } }
@@ -172,7 +173,7 @@ struct GiriSiteDetail: View {
                          message: "「\(site?.name ?? "")」の登録を削除します。過去の参加記録とお題・回答は残ります。") {
             store.run { try store.deleteOnlineSite(siteID); playLiveStairDeleteFeedback(); dismiss() }
         }
-        .sheet(item: $resultEvent) { event in NavigationStack { GiriCycleResultEditor(eventID: event.id) } }
+        .navigationDestination(item: $route) { GiriSiteRouteView(route: $0) }
     }
 
     private func statusPage(_ site: OnlineSite) -> some View {
@@ -193,7 +194,7 @@ struct GiriSiteDetail: View {
                 }
                 GiriDetailCard(title: "現在の状況", systemImage: "clock", accentColor: AppSectionAccent.artist, kind: .venue) {
                     TimelineView(.periodic(from: timelineStart, by: 60)) { context in
-                        GiriSitePeriodActions(site: site, now: context.date)
+                        GiriSitePeriodActions(site: site, now: context.date, onRoute: { route = $0 })
                     }
                 }
                 siteCard(site)
@@ -268,7 +269,7 @@ struct GiriSiteDetail: View {
                                 Button { navigation.openThoughts(eventID: event.id) } label: { historyRow(event) }
                                     .buttonStyle(.plain)
                                     .contextMenu {
-                                        if event.hasEnded() { Button("結果を記録", systemImage: "square.and.pencil") { resultEvent = event } }
+                                        if event.hasEnded() { Button("結果を記録", systemImage: "square.and.pencil") { route = .cycleResult(event.id) } }
                                     }
                                 if event.id != group.events.last?.id { Divider().overlay(appSeparatorColor) }
                             }

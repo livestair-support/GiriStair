@@ -615,6 +615,20 @@ func giriStagePassRates(_ events: [GiriEvent], now: Date = Date(), by key: (Giri
         .sorted { $0.total == $1.total ? $0.label < $1.label : $0.total > $1.total }
 }
 
+/// 審査方法の選択肢（段階ごと）。
+let giriJudgingChoices = ["印象審査", "加点審査", "超加点審査", "その他"]
+
+/// 集計で使う審査方法の分類。以前の版の「挙手（1人1票）」「拍手」などは印象審査、
+/// 「審査員の採点」などの分類できないものはその他にまとめる（保存した文字は変えない）。
+func giriJudgingCategory(_ value: String) -> String {
+    let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return "" }
+    if text.contains("超加点") { return "超加点審査" }
+    if text.contains("加点") { return "加点審査" }
+    if text.contains("印象") || text.contains("挙手") || text.contains("拍手") || text.contains("投票") { return "印象審査" }
+    return "その他"
+}
+
 /// 主催ごとの出場・決勝進出・優勝。
 struct GiriOrganizerRow: Identifiable, Equatable {
     var name: String
@@ -712,6 +726,8 @@ struct GiriOCRLine: Equatable {
     var text: String
     var midX: Double
     var midY: Double
+    /// 文字の高さ（0〜1）。見出し・タイトルの大きさを比べるのに使う。分からない時は 0。
+    var height: Double = 0
 }
 
 /// トーナメント表の名前らしくない行（回戦名・数字・得点など）を除く。
@@ -900,6 +916,22 @@ struct GiriParticipantCandidate: Identifiable, Equatable {
     var suspiciousPrefix: String?
     var section: GiriParticipantSection
     var included: Bool
+    /// もう参加者に入っている（追加しても重ならないように、最初は選ばない）
+    var alreadyAdded: Bool = false
+}
+
+/// 今の参加者と同じ人（読み違いの吸収込み）を「追加済み」にして、最初は選ばない。
+func giriMarkingAlreadyAdded(_ candidates: [GiriParticipantCandidate], existing: [String]) -> [GiriParticipantCandidate] {
+    let keys = Set(existing.map(giriOCRNameKey).filter { !$0.isEmpty })
+    guard !keys.isEmpty else { return candidates }
+    return candidates.map { candidate in
+        var value = candidate
+        if keys.contains(giriOCRNameKey(candidate.name)) {
+            value.alreadyAdded = true
+            value.included = false
+        }
+        return value
+    }
 }
 
 /// 照合用の名前：読み（ひらがな）・小書き文字・記号・空白の違いを吸収する。
@@ -960,12 +992,14 @@ func giriMatchRegisteredName(_ text: String, truncated: Bool = false, known: [St
 }
 
 /// 欄の見出し（「参加者（15人／定員15人）」「興味あり（5人）」「不参加（0人）」など）。
+/// 見出しは短く、語のすぐ後が人数・括弧・「一覧」などの時だけ（説明文の「キャンセル待ちはないので…」は見出しにしない）。
 func giriParticipantHeader(_ text: String) -> GiriParticipantSection? {
     let value = text.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
-    if value.contains("プロフィール") { return nil }
-    if value.range(of: #"^(参加者|参加予定者?|参加メンバー|エントリー者?|出場者)([（(]|[0-9０-９]|一覧|リスト|[:：]|$)"#, options: .regularExpression) != nil { return .participants }
-    if value.hasPrefix("興味あり") || value.hasPrefix("気になる") { return .interested }
-    if value.hasPrefix("不参加") || value.hasPrefix("キャンセル待ち") || value.hasPrefix("補欠") { return .other }
+    guard value.count <= 24, !value.contains("プロフィール") else { return nil }
+    let tail = #"([（(［\[]|[0-9０-９]|一覧|リスト|[:：]|$)"#
+    if value.range(of: #"^(参加者|参加予定者?|参加メンバー|エントリー者?|出場者)"# + tail, options: .regularExpression) != nil { return .participants }
+    if value.range(of: #"^(興味あり|気になる)"# + tail, options: .regularExpression) != nil { return .interested }
+    if value.range(of: #"^(不参加|キャンセル待ち|補欠)"# + tail, options: .regularExpression) != nil { return .other }
     return nil
 }
 
@@ -981,9 +1015,19 @@ func giriIsParticipantNoise(_ text: String) -> Bool {
     let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
     if value.isEmpty { return true }
     if value.count == 1, let scalar = value.unicodeScalars.first, !CharacterSet.letters.contains(scalar) || scalar.isASCII { return true }
+    // 名前としては長すぎる行（説明文・案内文）。
+    if value.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression).count > 24 { return true }
     let patterns = [#"^[0-9０-９]{1,2}[:：][0-9０-９]{2}$"#, #"(?i)^(https?://|www\.)"#, #"(?i)[a-z0-9-]+\.(jp|com|net|me|org)(/|$)"#,
                     #"^[（(]?[0-9０-９]+\s*人[)）]?$"#, #"(?i)(^|\s)[345]G(\s|$)|LTE|Wi-?Fi"#,
-                    #"ログイン|ツイート|フォロー|ありません|しますか|定員|参加する$"#]
+                    #"ログイン|ツイート|フォロー|ありません|しますか|定員|参加する$"#,
+                    // 日付・時刻の範囲・金額・人数（「2025/11/18」「18:00〜21:15」「500円」「15名」）
+                    #"[0-9０-９]{4}\s*[年/／.]\s*[0-9０-９]{1,2}|[0-9０-９]{1,2}\s*月\s*[0-9０-９]{1,2}\s*日"#,
+                    #"[0-9０-９]{1,2}[:：][0-9０-９]{2}\s*[〜~～\-－−ー]"#, #"[0-9０-９,，]+\s*円|[0-9０-９]+\s*名"#,
+                    // 「《日時》」「【場所】」のような見出し、「場所：」のような項目名
+                    #"^[《【\[［〈<].*[》】\]］〉>]$"#, #"^(日時|日程|場所|会場|定員|参加費|料金|持ち物|開場|開演|内容|概要|注意事項|ルール)\s*[:：]"#,
+                    // 交通案内・案内文・広告・ページのボタン
+                    #"徒歩\s*[0-9０-９]|駅\s*(から|より)?\s*徒歩|「[^」]+」駅"#, #"(します|しません|ください|ません|ました|でした|します。)$|。$"#,
+                    #"(?i)インストール|キャンペーン|今すぐ|詳しくはこちら|カレンダー登録|で送る|でシェア|\bviews?\b"#]
     return patterns.contains { value.range(of: $0, options: .regularExpression) != nil }
 }
 
@@ -995,7 +1039,7 @@ func giriCleanParticipantText(_ raw: String) -> (name: String, truncated: Bool) 
         value.removeSubrange(range)
         truncated = true
     }
-    value = value.replacingOccurrences(of: #"^[\s・･•●○◎◆◇■□▲△▼▽★☆※＊*\-－—―~〜凸(（\[［「『【①-⓿❶-➓]+"#, with: "", options: .regularExpression)
+    value = value.replacingOccurrences(of: #"^[\s・･•●○◎◆◇■□▲△▼▽★☆※＊*\-－—―~〜～凸(（\[［「『【①-⓿❶-➓]+"#, with: "", options: .regularExpression)
     // アイコンが英数字1文字に読まれて、空白をはさんで名前が続く（「1 3104」「G しゅにく」）。
     if let range = value.range(of: #"^[A-Za-z0-9Ａ-Ｚａ-ｚ０-９]\s+(?=\S)"#, options: .regularExpression) { value.removeSubrange(range) }
     if !value.contains("(") && !value.contains("（") {
@@ -1010,7 +1054,8 @@ func giriParticipantCandidates(entries: [(text: String, section: GiriParticipant
     var output: [GiriParticipantCandidate] = []
     for entry in entries {
         let source = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !giriIsParticipantNoise(source), giriParticipantHeader(source) == nil else { continue }
+        // 見出し・一覧の終わりのボタン（「名前をID表示に」など）は名前にしない。
+        guard !giriIsParticipantNoise(source), giriParticipantHeader(source) == nil, !giriParticipantListEnds(source) else { continue }
         let cleaned = giriCleanParticipantText(source)
         guard !cleaned.name.isEmpty, !giriIsParticipantNoise(cleaned.name) else { continue }
         let registered = giriMatchRegisteredName(cleaned.name, truncated: cleaned.truncated, known: known)
@@ -1038,7 +1083,9 @@ func giriParticipantCandidates(text: String, known: [String]) -> [GiriParticipan
     }
     var section: GiriParticipantSection? = nil
     var entries: [(text: String, section: GiriParticipantSection)] = []
-    for line in lines {
+    // 「参加者」の見出しがあれば、そこから読む（上の説明文・ボタンは使わない）。
+    let start = lines.firstIndex { giriParticipantHeader($0) == .participants } ?? 0
+    for line in lines[start...] {
         if let header = giriParticipantHeader(line) { section = header; continue }
         if giriParticipantListEnds(line) { section = nil; continue }
         if let section { entries.append((line, section)) }
@@ -1050,10 +1097,13 @@ func giriParticipantCandidates(text: String, known: [String]) -> [GiriParticipan
 /// 見出しがない画像は、上から順に全部を参加者として読む。
 func giriParticipantCandidates(lines: [GiriOCRLine], known: [String]) -> [GiriParticipantCandidate] {
     let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }
-    let headers = sorted.compactMap { line in giriParticipantHeader(line.text).map { (line: line, section: $0) } }
-    guard let firstHeader = headers.first else {
+    let allHeaders = sorted.compactMap { line in giriParticipantHeader(line.text).map { (line: line, section: $0) } }
+    // 「参加者」の見出しから読む。それより上（説明文・「興味あり」「不参加」のボタンなど）は使わない。
+    guard let firstHeader = allHeaders.first(where: { $0.section == .participants }) ?? allHeaders.first else {
         return giriParticipantCandidates(entries: sorted.map { ($0.text, .participants) }, known: known)
     }
+    let rowTolerance = max(0.006, firstHeader.line.height * 0.7)
+    let headers = allHeaders.filter { $0.line.midY >= firstHeader.line.midY - rowTolerance }
     let end = sorted.first { $0.midY > firstHeader.line.midY && giriParticipantListEnds($0.text) }?.midY ?? .infinity
     var entries: [(text: String, section: GiriParticipantSection)] = []
     for line in sorted where line.midY > firstHeader.line.midY && line.midY < end && giriParticipantHeader(line.text) == nil {
@@ -1063,4 +1113,253 @@ func giriParticipantCandidates(lines: [GiriOCRLine], known: [String]) -> [GiriPa
         entries.append((line.text, column.section))
     }
     return giriParticipantCandidates(entries: entries, known: known)
+}
+
+// MARK: - イベントページの読み取り（生大喜利）
+
+/// 時刻（日付なし）。会の日付と組み合わせて使う。
+struct GiriClock: Equatable {
+    var hour: Int
+    var minute: Int
+}
+
+/// イベントページの画面から読み取った基本情報と参加者。反映する前に確認する。
+struct GiriEventPageDraft: Equatable, Identifiable {
+    var id = UUID().uuidString
+    var title = ""
+    var date: Date? = nil
+    var opens: GiriClock? = nil
+    var start: GiriClock? = nil
+    var end: GiriClock? = nil
+    var venue = ""
+    var venueRoom = ""
+    var organizer = ""
+    var fee: Int? = nil
+    var participants: [GiriParticipantCandidate] = []
+    var recognizedText = ""
+
+    var hasBasicInfo: Bool {
+        !title.isEmpty || date != nil || opens != nil || start != nil || end != nil || !venue.isEmpty || !organizer.isEmpty || fee != nil
+    }
+}
+
+func giriClockDate(_ clock: GiriClock, on day: Date, calendar: Calendar = .current) -> Date? {
+    calendar.date(bySettingHour: clock.hour, minute: clock.minute, second: 0, of: day)
+}
+
+/// 全角の数字・コロン・スラッシュを半角にする（ほかの文字は変えない）。
+func giriHalfwidthDigits(_ text: String) -> String {
+    String(text.map { character -> Character in
+        guard character.unicodeScalars.count == 1, let scalar = character.unicodeScalars.first else { return character }
+        switch scalar.value {
+        case 0xFF10...0xFF19: return UnicodeScalar(scalar.value - 0xFEE0).map(Character.init) ?? character
+        case 0xFF1A: return ":"
+        case 0xFF0F: return "/"
+        default: return character
+        }
+    })
+}
+
+private func giriRegexGroups(_ pattern: String, in text: String) -> [[String]] {
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+    let range = NSRange(text.startIndex..., in: text)
+    return regex.matches(in: text, range: range).map { match in
+        (0..<match.numberOfRanges).map { index in
+            Range(match.range(at: index), in: text).map { String(text[$0]) } ?? ""
+        }
+    }
+}
+
+/// 行の最初の日付。年がない時は、今日から見て近い年（60日以上前なら来年）にする。
+func giriEventPageDate(_ raw: String, now: Date, calendar: Calendar = .current) -> Date? {
+    let text = giriHalfwidthDigits(raw)
+    if let groups = giriRegexGroups(#"(20[0-9]{2})\s*[年/.\-]\s*([0-9]{1,2})\s*[月/.\-]\s*([0-9]{1,2})"#, in: text).first,
+       let year = Int(groups[1]), let month = Int(groups[2]), let day = Int(groups[3]) {
+        return calendar.date(from: DateComponents(year: year, month: month, day: day))
+    }
+    let monthDay = giriRegexGroups(#"([0-9]{1,2})\s*月\s*([0-9]{1,2})\s*日"#, in: text).first
+        ?? giriRegexGroups(#"(?<![0-9/])([0-9]{1,2})/([0-9]{1,2})(?=\s*[(（\[［])"#, in: text).first
+    guard let groups = monthDay, let month = Int(groups[1]), let day = Int(groups[2]), (1...12).contains(month), (1...31).contains(day) else { return nil }
+    let year = calendar.component(.year, from: now)
+    guard let candidate = calendar.date(from: DateComponents(year: year, month: month, day: day)) else { return nil }
+    if candidate < now.addingTimeInterval(-60 * 86400) {
+        return calendar.date(from: DateComponents(year: year + 1, month: month, day: day))
+    }
+    return candidate
+}
+
+private let giriClockPattern = #"([0-9]{1,2})\s*(?::\s*([0-9]{2})|時\s*(?:([0-9]{1,2})\s*分|(半))?)"#
+
+private func giriClock(_ groups: [String], offset: Int) -> GiriClock? {
+    guard let hour = Int(groups[offset]), (0...29).contains(hour) else { return nil }
+    let minute: Int
+    if let value = Int(groups[offset + 1]) { minute = value }
+    else if let value = Int(groups[offset + 2]) { minute = value }
+    else if !groups[offset + 3].isEmpty { minute = 30 }
+    else { minute = 0 }
+    guard (0...59).contains(minute) else { return nil }
+    return GiriClock(hour: hour, minute: minute)
+}
+
+/// 1行の時刻の読み取り。「18:15開場」「開場 18:15」「18:45〜21:00」の形に対応する。
+struct GiriEventPageTimes: Equatable {
+    var opens: GiriClock? = nil
+    var start: GiriClock? = nil
+    var end: GiriClock? = nil
+    var teardown: GiriClock? = nil
+    var rangeStart: GiriClock? = nil
+    var rangeEnd: GiriClock? = nil
+    var lone: [GiriClock] = []
+}
+
+func giriEventPageTimes(_ raw: String) -> GiriEventPageTimes {
+    var text = giriHalfwidthDigits(raw)
+    var output = GiriEventPageTimes()
+    let labels = #"(開場|開演|開始|終了|終演|撤収|(?i:\bopen\b|\bstart\b|\bend\b))"#
+    func assign(_ label: String, _ clock: GiriClock) {
+        switch label.lowercased() {
+        case "開場", "open": if output.opens == nil { output.opens = clock }
+        case "開演", "開始", "start": if output.start == nil { output.start = clock }
+        case "終了", "終演", "end": if output.end == nil { output.end = clock }
+        default: if output.teardown == nil { output.teardown = clock }
+        }
+    }
+    // 項目名が先（「開場 18:00 開演 18:30」）か、時刻が先（「18:15開場 21:15撤収」）かを、行の最初で決める。
+    let firstLabel = text.range(of: labels, options: .regularExpression)?.lowerBound
+    let firstClock = text.range(of: giriClockPattern, options: .regularExpression)?.lowerBound
+    let labelFirst = firstLabel.map { label in firstClock.map { label < $0 } ?? false } ?? false
+    let labeled = labelFirst ? labels + #"\s*[:：/]?\s*"# + giriClockPattern : giriClockPattern + #"\s*"# + labels
+    for groups in giriRegexGroups(labeled, in: text) {
+        if labelFirst, let clock = giriClock(groups, offset: 2) { assign(groups[1], clock) }
+        if !labelFirst, let clock = giriClock(groups, offset: 1) { assign(groups[5], clock) }
+    }
+    text = text.replacingOccurrences(of: labeled, with: " ", options: .regularExpression)
+    let range = giriClockPattern + #"\s*[〜~～\-－−ー―]\s*"# + giriClockPattern
+    if let groups = giriRegexGroups(range, in: text).first {
+        output.rangeStart = giriClock(groups, offset: 1)
+        output.rangeEnd = giriClock(groups, offset: 5)
+        text = text.replacingOccurrences(of: range, with: " ", options: .regularExpression)
+    }
+    for groups in giriRegexGroups(giriClockPattern, in: text) {
+        if let clock = giriClock(groups, offset: 1) { output.lone.append(clock) }
+    }
+    return output
+}
+
+/// 「福島区民センター 306」「豊中市庄内公民館205会議室2（…）」を、会場と部屋に分ける。
+/// 登録済みの会場の名前で始まる時はその名前を会場にする。
+func giriSplitVenueRoom(_ raw: String, venues: [String]) -> (venue: String, room: String) {
+    var text = raw.replacingOccurrences(of: #"[（(][^）)]*[）)]?"#, with: " ", options: .regularExpression)
+    text = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return ("", "") }
+    let compact = playerSearchKey(text)
+    let registered = venues.filter { !$0.isEmpty && compact.hasPrefix(playerSearchKey($0)) }.max { $0.count < $1.count }
+    if let registered {
+        let rest = String(text.dropFirst(min(text.count, registered.count))).trimmingCharacters(in: .whitespacesAndNewlines)
+        if playerSearchKey(String(text.prefix(registered.count))) == playerSearchKey(registered) { return (registered, rest) }
+    }
+    // 施設名の終わり（センター・公民館・会館など）の後ろを部屋にする。部屋は空白の後か、
+    // 番号・「室」「階」などで始まる・終わる時だけ（「カフェ＆バー」を分けない）。
+    let facility = #"^(.*(センター|公民館|会館|市民館|区民館|コミュニティ|プラザ|ホール|会議所|ビル|カフェ|スタジオ|劇場|図書館|学習館|交流館))(\s*)(\S.*)?$"#
+    if let groups = giriRegexGroups(facility, in: text).first, !groups[4].isEmpty {
+        let room = groups[4].trimmingCharacters(in: .whitespaces)
+        let roomLike = !groups[3].isEmpty || room.first?.isNumber == true
+            || room.range(of: #"室|ルーム|階|ホール|スペース|ステージ|[0-9]F$"#, options: .regularExpression) != nil
+        if roomLike { return (groups[1].trimmingCharacters(in: .whitespaces), room) }
+    }
+    // 「会場 306」のように、最後の語が部屋番号・部屋名。
+    if let groups = giriRegexGroups(#"^(.+?)\s+([0-9]{2,4}[A-Za-z号]?室?|\S*(室|ルーム|ホール|階))$"#, in: text).first {
+        return (groups[1], groups[2])
+    }
+    return (text, "")
+}
+
+/// 項目名（「場所：」「《場所》」「【参加費】」）。値が同じ行にあれば返す。
+private func giriEventPageLabel(_ raw: String, names: String) -> (matched: Bool, value: String) {
+    let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    let pattern = #"^[《【\[［〈<(（]?\s*"# + names + #"\s*[》】\]］〉>)）]?\s*(?:[:：]\s*(.*)|\s+(.*)|$)"#
+    guard let groups = giriRegexGroups(pattern, in: text).first else { return (false, "") }
+    let value = (groups[2].isEmpty ? groups[3] : groups[2]).trimmingCharacters(in: .whitespacesAndNewlines)
+    return (true, value)
+}
+
+private func giriIsEventPageNoise(_ text: String) -> Bool {
+    let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.count < 2 { return true }
+    return value.range(of: #"(?i)\bviews?\b|シェア|で送る|カレンダー登録|ログイン|^https?://|\.(jp|com|net)\b|^[0-9:\s]+$|LTE|[345]G$"#, options: .regularExpression) != nil
+}
+
+/// イベントページの画面（ツイプラなど）から、会の名前・日付・時刻・会場・主催・参加費・参加者を読む。
+/// 特定のサイトの決まった位置ではなく、日付の近くの大きい文字・項目名・時刻の書き方から判断する。
+func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String], organizers: [String] = [],
+                        now: Date = Date(), calendar: Calendar = .current) -> GiriEventPageDraft {
+    let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }
+    var draft = GiriEventPageDraft()
+    draft.recognizedText = sorted.map(\.text).joined(separator: "\n")
+    draft.participants = giriParticipantCandidates(lines: lines, known: known)
+    // 基本情報は参加者の欄より上だけから読む（下のコメント欄の時刻などを使わない）。
+    let listTop = sorted.first { giriParticipantHeader($0.text) == .participants }?.midY ?? .infinity
+    let info = sorted.filter { $0.midY < listTop }
+
+    // 日付：最初に出てくる日付（ページの見出しの日付）。
+    let dateIndex = info.firstIndex { giriEventPageDate($0.text, now: now, calendar: calendar) != nil }
+    if let dateIndex { draft.date = giriEventPageDate(info[dateIndex].text, now: now, calendar: calendar) }
+
+    // 会の名前：日付のすぐ後の行のうち、いちばん大きい文字（タグ・ボタンは小さい）。
+    let titleIndex: Int? = {
+        let window: [Int]
+        if let dateIndex { window = Array((dateIndex + 1)..<min(info.count, dateIndex + 6)) }
+        else { window = Array(0..<min(info.count, 8)) }
+        let candidates = window.filter { index in
+            let text = info[index].text
+            return !giriIsEventPageNoise(text) && giriEventPageDate(text, now: now, calendar: calendar) == nil
+                && text.unicodeScalars.contains { !$0.isASCII } && giriParticipantHeader(text) == nil
+        }
+        guard let tallest = candidates.map({ info[$0].height }).max() else { return nil }
+        return candidates.first { info[$0].height >= tallest * 0.9 }
+    }()
+    if let titleIndex { draft.title = info[titleIndex].text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    // 項目名のある行（同じ行か次の行の値）。
+    func labeledValue(_ names: String) -> String? {
+        for (index, line) in info.enumerated() {
+            let label = giriEventPageLabel(line.text, names: names)
+            guard label.matched else { continue }
+            if !label.value.isEmpty { return label.value }
+            if let next = info[(index + 1)...].first(where: { !giriIsEventPageNoise($0.text) }) { return next.text }
+        }
+        return nil
+    }
+    if let place = labeledValue(#"(場所|会場|開催場所|会場名)"#) {
+        let split = giriSplitVenueRoom(place, venues: venues)
+        draft.venue = split.venue; draft.venueRoom = split.room
+    }
+    if let fee = labeledValue(#"(参加費|料金|入場料|参加料|エントリー費)"#) {
+        let text = giriHalfwidthDigits(fee)
+        if let groups = giriRegexGroups(#"([0-9][0-9,]*)\s*円"#, in: text).first { draft.fee = Int(groups[1].replacingOccurrences(of: ",", with: "")) }
+        else if text.contains("無料") { draft.fee = 0 }
+    }
+    if let host = labeledValue(#"(主催|主催者|運営)"#) {
+        draft.organizer = giriMatchRegisteredName(host, known: organizers) ?? host
+    } else if let titleIndex {
+        // 項目名がない時は、会の名前のすぐ下の短い名前（ツイプラなどの主催者の表示）。
+        let following = info[(titleIndex + 1)...].prefix(3).first { line in
+            let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !giriIsEventPageNoise(text) && text.count <= 16 && giriEventPageDate(text, now: now, calendar: calendar) == nil
+                && !giriIsParticipantNoise(text) && text.range(of: #"[。、：:]"#, options: .regularExpression) == nil
+        }
+        if let following {
+            let cleaned = giriCleanParticipantText(following.text).name
+            draft.organizer = giriMatchRegisteredName(cleaned, known: organizers) ?? cleaned
+        }
+    }
+
+    // 時刻：項目名つき → 「18:45〜21:00」の範囲 → 日付の行の時刻。撤収は終了が分からない時だけ。
+    var times: [GiriEventPageTimes] = []
+    for line in info { times.append(giriEventPageTimes(line.text)) }
+    draft.opens = times.compactMap(\.opens).first
+    draft.start = times.compactMap(\.start).first ?? times.compactMap(\.rangeStart).first
+        ?? dateIndex.flatMap { times[$0].lone.first }
+    draft.end = times.compactMap(\.end).first ?? times.compactMap(\.rangeEnd).first ?? times.compactMap(\.teardown).first
+    return draft
 }

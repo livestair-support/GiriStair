@@ -482,6 +482,11 @@ final class GiriStore: ObservableObject {
                 }
             }
             if settings.ruleRevisionID == nil { settings.ruleRevisionID = previousSettings?.ruleRevisionID ?? UUID().uuidString }
+            // 次のお題を待っていた間のルールは、再開した回より後ろに残さない（再開した回が隠れないように）。
+            if !settings.waitingForNext {
+                let resumed = settings.anchorStart
+                site.ruleHistory.removeAll { $0.settings.waitingForNext && $0.effectiveFrom >= resumed }
+            }
             site.cycleSettings = settings
         }
         try site.validate()
@@ -639,6 +644,7 @@ final class GiriStore: ObservableObject {
         guard var site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
         var settings = site.cycleSettings ?? SiteCycleSettings()
         settings.specialPeriods.append(siteIrregularPeriod(site, deadline: deadline, votingEnd: votingEnd))
+        settings.waitingForNext = false
         site.cycleSettings = settings
         try saveOnlineSite(site)
     }
@@ -646,6 +652,12 @@ final class GiriStore: ObservableObject {
     func startNextSiteSeason(_ siteID: String, firstDeadline: Date) throws {
         guard var site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
         site.cycleSettings = siteNextSeasonSettings(site, firstDeadline: firstDeadline)
+        try saveOnlineSite(site)
+    }
+    /// 次のお題を待っている間（シーズンの合間など）から、次の回の投稿締切で再開する。
+    func resumeSiteCycle(_ siteID: String, firstDeadline: Date, cycleNumber: Int?) throws {
+        guard var site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
+        site.cycleSettings = siteResumeSettings(site, firstDeadline: firstDeadline, cycleNumber: cycleNumber)
         try saveOnlineSite(site)
     }
     func exportBackup() throws -> Data { guard loaded else { throw GiriDataError.notLoaded }; return try GiriJSON.encode(document) }

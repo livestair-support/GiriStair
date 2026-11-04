@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Vision
 
 enum GiriParticipantReadError: LocalizedError {
@@ -41,7 +42,7 @@ enum GiriParticipantOCR {
             let lines = (request.results ?? []).compactMap { observation -> GiriOCRLine? in
                 guard let text = observation.topCandidates(1).first?.string else { return nil }
                 let box = observation.boundingBox
-                return GiriOCRLine(text: text, midX: Double(box.midX), midY: Double(1 - box.midY))
+                return GiriOCRLine(text: text, midX: Double(box.midX), midY: Double(1 - box.midY), height: Double(box.height))
             }
             guard !lines.isEmpty else { throw GiriParticipantReadError.noText }
             return lines
@@ -59,31 +60,29 @@ struct GiriParticipantImport: View {
     @State private var previewing = false
     @State private var loaded = false
     private let lines: [GiriOCRLine]?
+    /// 今の参加者。同じ人は「追加済み」にして、重ならないようにする。
+    private let existing: [String]
     let onAdd: ([String]) -> Void
 
-    init(source: String = "", lines: [GiriOCRLine]? = nil, onAdd: @escaping ([String]) -> Void) {
+    init(source: String = "", lines: [GiriOCRLine]? = nil, existing: [String] = [], onAdd: @escaping ([String]) -> Void) {
         _source = State(initialValue: source)
         self.lines = lines
+        self.existing = existing
         self.onAdd = onAdd
     }
 
     /// 照合に使う名前：プレイヤー一覧（自分・別名義を含む）。
-    private var knownNames: [String] {
-        [store.preferences.selfName] + store.preferences.selfAliases + store.playerDirectory.map(\.name)
-    }
-    private var selectedNames: [String] {
-        var seen = Set<String>()
-        return candidates.filter(\.included).map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && seen.insert(giriOCRNameKey($0)).inserted }
+    private var knownNames: [String] { giriParticipantKnownNames(store) }
+    private var selectedNames: [String] { giriSelectedParticipantNames(candidates) }
+
+    private func read(_ text: String) -> [GiriParticipantCandidate] {
+        giriMarkingAlreadyAdded(giriParticipantCandidates(text: text, known: knownNames), existing: existing)
     }
 
     var body: some View {
         Form {
             if previewing {
-                ForEach([GiriParticipantSection.participants, .interested, .other], id: \.self) { section in
-                    let indices = candidates.indices.filter { candidates[$0].section == section }
-                    if !indices.isEmpty || section == .participants { candidateSection(section, indices: indices) }
-                }
+                GiriParticipantCandidateSections(candidates: $candidates, knownNames: knownNames)
                 Section {
                     DisclosureGroup("読み取った原文") {
                         Text(source).font(.footnote.monospaced()).textSelection(.enabled).padding(.vertical, 6)
@@ -98,7 +97,7 @@ struct GiriParticipantImport: View {
                         .font(.subheadline).foregroundStyle(.secondary)
                     TextEditor(text: $source).frame(minHeight: 220).scrollContentBackground(.hidden)
                     Button("名前を確認") {
-                        candidates = giriParticipantCandidates(text: source, known: knownNames)
+                        candidates = read(source)
                         previewing = true
                     }.disabled(source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
@@ -111,7 +110,7 @@ struct GiriParticipantImport: View {
             ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button(previewing ? "\(selectedNames.count)人を追加" : "追加") {
-                    if !previewing { candidates = giriParticipantCandidates(text: source, known: knownNames) }
+                    if !previewing { candidates = read(source) }
                     let names = selectedNames
                     guard !names.isEmpty else { return }
                     onAdd(names)
@@ -127,9 +126,38 @@ struct GiriParticipantImport: View {
             if let lines {
                 // 画面の読み取りは、文字の位置から欄を分けてから確認に進む。
                 source = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }.map(\.text).joined(separator: "\n")
-                candidates = giriParticipantCandidates(lines: lines, known: knownNames)
+                candidates = giriMarkingAlreadyAdded(giriParticipantCandidates(lines: lines, known: knownNames), existing: existing)
                 previewing = true
             }
+        }
+    }
+}
+
+/// 照合に使う名前：プレイヤー一覧（自分・別名義を含む）。
+@MainActor
+func giriParticipantKnownNames(_ store: GiriStore) -> [String] {
+    var names = [store.preferences.selfName]
+    names.append(contentsOf: store.preferences.selfAliases)
+    names.append(contentsOf: store.playerDirectory.map(\.name))
+    return names
+}
+
+/// 選んだ名前（同じ人は1回だけ）。
+func giriSelectedParticipantNames(_ candidates: [GiriParticipantCandidate]) -> [String] {
+    var seen = Set<String>()
+    return candidates.filter(\.included).map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && seen.insert(giriOCRNameKey($0)).inserted }
+}
+
+/// 読み取った参加者の確認（参加者・興味あり・不参加などの欄ごと）。参加者の一括追加とイベントページの読み取りで共通。
+struct GiriParticipantCandidateSections: View {
+    @Binding var candidates: [GiriParticipantCandidate]
+    let knownNames: [String]
+
+    var body: some View {
+        ForEach([GiriParticipantSection.participants, .interested, .other], id: \.self) { section in
+            let indices = candidates.indices.filter { candidates[$0].section == section }
+            if !indices.isEmpty || section == .participants { candidateSection(section, indices: indices) }
         }
     }
 
@@ -170,15 +198,12 @@ struct GiriParticipantImport: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     TextField("名前", text: nameBinding(index))
-                    Text(candidate.registered != nil ? "登録済み" : "新規")
+                    Text(candidate.alreadyAdded ? "追加済み" : candidate.registered != nil ? "登録済み" : "新規")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(candidate.registered != nil ? AppSectionAccent.artist : Color.secondary)
+                        .foregroundStyle(candidate.registered != nil && !candidate.alreadyAdded ? AppSectionAccent.artist : Color.secondary)
                         .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background((candidate.registered != nil ? AppSectionAccent.artist : Color.secondary).opacity(0.12))
+                        .background((candidate.registered != nil && !candidate.alreadyAdded ? AppSectionAccent.artist : Color.secondary).opacity(0.12))
                         .clipShape(Capsule())
-                }
-                if !candidate.source.isEmpty && candidate.source != candidate.name {
-                    Text("読み取り：" + candidate.source).font(.caption).foregroundStyle(.secondary)
                 }
                 if candidate.truncated {
                     Text("名前が途中で切れています。続きを入れてください。").font(.caption).foregroundStyle(AppSectionAccent.ticket)
@@ -222,5 +247,88 @@ func giriParseParticipantNames(_ source: String) -> [String] {
               name.range(of: #"^(?:参加者(?:一覧)?|参加予定(?:者)?|参加(?:する)?人|参加者名|名前|参加者リスト|キャンセル待ち)(?:\s*(?:[（(]\s*[0-9０-９]+\s*人?[)）]|[0-9０-９]+\s*人))?\s*[:：]?$"#, options: .regularExpression) == nil,
               seen.insert(giriEditorNameKey(name)).inserted else { return nil }
         return name
+    }
+}
+
+/// イベントページの読み取り結果の確認（LiveStair EventOCRReviewSheet と同じく、反映する前に確認する）。
+/// 参加者は当日まで変わるので、今の参加者と重なる人は「追加済み」にして追加しない。
+struct GiriEventPageReview: View {
+    @EnvironmentObject private var store: GiriStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: GiriEventPageDraft
+    @State private var replaceExisting = false
+    @State private var copied = false
+    let onApply: (GiriEventPageDraft, Bool) -> Void
+
+    init(draft: GiriEventPageDraft, onApply: @escaping (GiriEventPageDraft, Bool) -> Void) {
+        _draft = State(initialValue: draft)
+        self.onApply = onApply
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                AppCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live)
+                    .listRowSeparator(.hidden)
+                valueRow("会の名前", draft.title)
+                valueRow("日付", draft.date.map { GiriDateText.day($0) } ?? "")
+                valueRow("開場", clockText(draft.opens))
+                valueRow("開始", clockText(draft.start))
+                valueRow("終了", clockText(draft.end))
+                valueRow("会場", draft.venue)
+                if !draft.venueRoom.isEmpty { valueRow("部屋", draft.venueRoom) }
+                valueRow("主催", draft.organizer)
+                valueRow("参加費", draft.fee.map { "\($0)円" } ?? "")
+            }.appSectionCardStyle(accentColor: AppSectionAccent.live)
+            GiriParticipantCandidateSections(candidates: $draft.participants, knownNames: giriParticipantKnownNames(store))
+            Section {
+                Toggle("入力済みの内容も置き換える", isOn: $replaceExisting).tint(AppSectionAccent.scan)
+                Text(replaceExisting ? "読み取った内容を優先して反映します。読み取れなかった項目は、今の入力が残ります。"
+                                     : "空欄への入力と、重ならない参加者の追加を中心に反映します。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.appSectionCardStyle(accentColor: AppSectionAccent.scan)
+            Section {
+                DisclosureGroup("読み取った原文") {
+                    Text(draft.recognizedText).font(.footnote.monospaced()).textSelection(.enabled).padding(.vertical, 6)
+                    Button {
+                        UIPasteboard.general.string = draft.recognizedText
+                        copied = true
+                    } label: {
+                        Label(copied ? "コピーしました" : "読み取り結果をコピー", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+        }
+        .appEditorFormStyle()
+        .navigationTitle("イベントページOCR")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("反映") {
+                    onApply(draft, replaceExisting)
+                    dismiss()
+                }
+                .fontWeight(.bold)
+            }
+        }
+    }
+
+    /// LiveStair reviewValueRow：読み取れなかった項目は灰色で出す。
+    private func valueRow(_ title: String, _ value: String) -> some View {
+        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+            Text(text.isEmpty ? "読み取れませんでした" : text)
+                .foregroundStyle(text.isEmpty ? Color.secondary : Color.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func clockText(_ clock: GiriClock?) -> String {
+        guard let clock else { return "" }
+        return "\(clock.hour):" + String(format: "%02d", clock.minute)
     }
 }

@@ -1512,31 +1512,25 @@ struct OptionalDateRow: View {
 struct GiriEventTimeRow: View {
     @Binding var startsAt: Date?
     @Binding var endsAt: Date?
-    /// 開場（生大喜利）。nil の時は行を出さない。
+    /// 開場（生大喜利）。ある時は開場・開始・終了を1行に並べる。
     var opensAt: Binding<Date?>? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let opensAt {
-                HStack(spacing: 0) {
-                    // 開場は開始の30分前から選び始める。
-                    timePair("開場", selection: opensAt, fallback: startsAt.map { $0.addingTimeInterval(-30 * 60) })
-                        .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
-                    Spacer(minLength: 4)
-                }
-            }
-            timeRow
-        }
-    }
-
-    private var timeRow: some View {
         HStack(alignment: .center, spacing: 0) {
-            timePair("開始", selection: $startsAt, fallback: opensAt?.wrappedValue.map { $0.addingTimeInterval(30 * 60) })
-                .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
-            Spacer(minLength: 4)
-            // 終了は開始より後（開始の2時間後）から選び始める。
-            timePair("終了", selection: $endsAt, fallback: startsAt.map { $0.addingTimeInterval(2 * 60 * 60) })
-                .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
+            if let opensAt {
+                stackedPair("開場", selection: opensAt) { startsAt.map { $0.addingTimeInterval(-30 * 60) } ?? timeOfDay(18, 0) }
+                Spacer(minLength: 4)
+                stackedPair("開始", selection: $startsAt) { opensAt.wrappedValue.map { $0.addingTimeInterval(30 * 60) } ?? timeOfDay(19, 0) }
+                Spacer(minLength: 4)
+                stackedPair("終了", selection: $endsAt) { startsAt.map { $0.addingTimeInterval(2 * 60 * 60) } ?? timeOfDay(21, 0) }
+            } else {
+                timePair("開始", selection: $startsAt) { timeOfDay(19, 0) }
+                    .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 4)
+                // 終了は開始より後（開始の2時間後）から選び始める。
+                timePair("終了", selection: $endsAt) { startsAt.map { $0.addingTimeInterval(2 * 60 * 60) } ?? timeOfDay(21, 0) }
+                    .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
+            }
             Spacer(minLength: 4)
             Divider()
                 .overlay(appSeparatorColor)
@@ -1559,16 +1553,56 @@ struct GiriEventTimeRow: View {
         .padding(.vertical, 4)
     }
 
-    private func timePair(_ title: String, selection: Binding<Date?>, fallback: Date? = nil) -> some View {
+    private func timePair(_ title: String, selection: Binding<Date?>, initial: @escaping () -> Date) -> some View {
         HStack(spacing: 10) {
             Text(title)
                 .font(.subheadline.weight(.medium))
                 .foregroundColor(.secondary)
                 .fixedSize()
-            OptionalCompactTimePicker(selection: selection, fallback: fallback)
+            timeControl(title, selection: selection, initial: initial)
+        }
+    }
+
+    /// 3つ並べる時は、項目名を上に小さく出す。
+    private func stackedPair(_ title: String, selection: Binding<Date?>, initial: @escaping () -> Date) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundColor(.secondary)
+                .fixedSize()
+            timeControl(title, selection: selection, initial: initial)
+        }
+    }
+
+    /// LiveStair EventEditorTimePickerButton：「--:--」を押すとその時刻が入り、もう一度押して変えられる。
+    @ViewBuilder private func timeControl(_ title: String, selection: Binding<Date?>, initial: @escaping () -> Date) -> some View {
+        if selection.wrappedValue != nil {
+            OptionalCompactTimePicker(selection: selection)
                 .frame(width: 70, height: 32)
                 .accessibilityLabel(title)
+        } else {
+            Button { selection.wrappedValue = roundedToFiveMinutes(initial()) } label: {
+                Text("--:--")
+                    .font(.body)
+                    .monospacedDigit()
+                    .foregroundColor(.primary)
+                    .frame(width: 70, height: 32)
+                    .background(Capsule().fill(Color(.systemGray5)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title + "を入れる")
         }
+    }
+
+    private func timeOfDay(_ hour: Int, _ minute: Int) -> Date {
+        Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: Date()) ?? Date()
+    }
+
+    private func roundedToFiveMinutes(_ date: Date) -> Date {
+        let calendar = Calendar.current
+        var parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        parts.minute = (parts.minute ?? 0) / 5 * 5
+        return calendar.date(from: parts) ?? date
     }
 }
 

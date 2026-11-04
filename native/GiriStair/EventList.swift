@@ -20,6 +20,8 @@ struct GiriListView: View {
     @State private var stage = "all"
     /// 生大喜利のシリーズ（同じ名前・回数違いの会）で絞り込む。
     @State private var seriesFilter = "all"
+    /// 通常サイトの詳細・編集・結果入力（このタブの中で遷移する）。
+    @State private var siteRoute: GiriSiteRoute?
     @State private var ascending: Bool?
     @State private var isCollapsed = false
     @State private var destinationID: String?
@@ -193,6 +195,7 @@ struct GiriListView: View {
         .navigationDestination(isPresented: Binding(get: { destinationID != nil }, set: { if !$0 { destinationID = nil } })) {
             if let id = destinationID { GiriEventDetail(eventID: id) }
         }
+        .navigationDestination(item: $siteRoute) { GiriSiteRouteView(route: $0) }
         .giriDeleteAlert("記録を削除しますか？", isPresented: Binding(get: { deletingEvent != nil }, set: { if !$0 { deletingEvent = nil } }),
                          message: "「\(deletingEvent?.title ?? "")」を削除します。お題と回答のメモは残ります。") {
             guard let event = deletingEvent else { return }
@@ -206,7 +209,7 @@ struct GiriListView: View {
         // replace the collection view while UIKit is handling that selection.
         List {
             ForEach(visibleSites) { record in
-                GiriSiteStatusCard(site: record, now: now)
+                GiriSiteStatusCard(site: record, now: now, onRoute: { siteRoute = $0 })
                     .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets(top: record.id == visibleSites.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
                     .listRowSeparator(.hidden).listRowBackground(Color.clear)
@@ -784,8 +787,24 @@ struct GiriEventCard: View {
             .foregroundStyle(date.map { GiriCalendarRules.dayColor($0, ordinary: .secondary) } ?? .secondary)
             .lineLimit(1).allowsTightening(true)
     }
+    /// 主催（共催があれば「・」で続ける）。
+    private var organizerLine: String {
+        var names: [String] = []
+        if !event.organizer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { names.append(event.organizer) }
+        names += event.coOrganizers.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return names.joined(separator: "・")
+    }
     private var liveDetails: some View {
         VStack(alignment: .leading, spacing: 7) {
+            // タイトルと会場の間に「主催：〇〇」。
+            if !organizerLine.isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Image(systemName: "person.crop.circle").font(.caption2.weight(.semibold))
+                        .foregroundStyle(accent).frame(width: 15)
+                    Text("主催：" + organizerLine).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
             HStack(alignment: .firstTextBaseline, spacing: 7) {
                 Image(systemName: "mappin").font(.caption2.weight(.semibold))
                     .foregroundStyle(accent).frame(width: 15)

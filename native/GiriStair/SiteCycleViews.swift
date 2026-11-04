@@ -1,16 +1,46 @@
 import SwiftUI
 
+/// サイトの詳細・編集・結果入力は、下から出すシートではなく、そのタブの中で遷移する。
+enum GiriSiteRoute: Hashable, Identifiable {
+    case detail(String)
+    case editor(String)
+    case cycleResult(String)
+    var id: String {
+        switch self {
+        case .detail(let id): return "detail:" + id
+        case .editor(let id): return "editor:" + id
+        case .cycleResult(let id): return "result:" + id
+        }
+    }
+}
+
+struct GiriSiteRouteView: View {
+    @EnvironmentObject private var store: GiriStore
+    let route: GiriSiteRoute
+    var body: some View {
+        switch route {
+        case .detail(let id): GiriSiteDetail(siteID: id)
+        case .editor(let id):
+            if let site = store.onlineSiteById(id) { GiriSiteEditor(site: site) }
+            else { CenteredEmptyMessage(systemImage: "globe", title: "サイトが見つかりません") }
+        case .cycleResult(let id): GiriCycleResultEditor(eventID: id)
+        }
+    }
+}
+
 /// Site status has one card boundary and one disclosure. Posting and voting
 /// can refer to different cycles, so neither is reduced to an ambiguous week.
 struct GiriSiteStatusCard: View {
     @EnvironmentObject private var navigation: GiriNavigation
     let site: OnlineSite
     let now: Date
+    /// 一覧のタブで詳細などへ遷移する（一覧側の NavigationStack に積む）。
+    var onRoute: ((GiriSiteRoute) -> Void)? = nil
     @State private var showingSite = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button { showingSite = true } label: {
+            Button { if let onRoute { onRoute(.detail(site.id)) } else { showingSite = true } } label: {
                 HStack(spacing: 9) {
                     Image(systemName: "globe").foregroundStyle(AppSectionAccent.artist)
                     Text(site.name).font(.headline).foregroundStyle(.primary)
@@ -22,7 +52,7 @@ struct GiriSiteStatusCard: View {
             if site.hasAffiliations && !league.isEmpty {
                 Text(league).font(.subheadline).foregroundStyle(.secondary)
             }
-            GiriSitePeriodActions(site: site, now: now)
+            GiriSitePeriodActions(site: site, now: now, onRoute: onRoute)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -53,6 +83,8 @@ struct GiriSitePeriodActions: View {
     @EnvironmentObject private var navigation: GiriNavigation
     let site: OnlineSite
     let now: Date
+    /// 日程の設定・結果の入力をタブの中で開く。ない時は従来どおりシートで開く。
+    var onRoute: ((GiriSiteRoute) -> Void)? = nil
     @State private var showingSetup = false
     @State private var resultEvent: GiriEvent?
     @State private var deadlineRequest: GiriSiteDeadlineRequest?
@@ -108,9 +140,13 @@ struct GiriSitePeriodActions: View {
             if posting.isEmpty && voting.isEmpty && !seasonEnded {
                 if site.cycleSettings == nil {
                     Text("投稿・投票の日程を設定してください").font(.subheadline).foregroundStyle(.secondary)
-                    Button("日程を設定", systemImage: "calendar.badge.clock") { showingSetup = true }
+                    Button("日程を設定", systemImage: "calendar.badge.clock") { openSetup() }
                         .font(.subheadline.weight(.semibold)).buttonStyle(.borderless).tint(accentActionColor)
+                } else if site.cycleSettings?.waitingForNext == true {
+                    Text("次のお題を待っています").font(.subheadline).foregroundStyle(.secondary)
                 } else if let next = values.filter({ ($0.round.submissionStart ?? .distantPast) > now }).min(by: { ($0.round.submissionStart ?? .distantFuture) < ($1.round.submissionStart ?? .distantFuture) }), let date = next.round.submissionStart {
+                    Text("次のお題　" + GiriDateText.dateTime(date) + " から").font(.subheadline).foregroundStyle(.secondary)
+                } else if let date = site.cycleSettings?.notBefore, date > now {
                     Text("次のお題　" + GiriDateText.dateTime(date) + " から").font(.subheadline).foregroundStyle(.secondary)
                 } else {
                     Text("今は投稿・投票の期間外です").font(.subheadline).foregroundStyle(.secondary)
@@ -118,18 +154,24 @@ struct GiriSitePeriodActions: View {
             }
             if site.recurrence == .irregular && posting.isEmpty {
                 actionButton("次の回の締切を入れる", systemImage: "calendar.badge.plus") { deadlineRequest = .nextCycle }
+            } else if site.cycleSettings?.waitingForNext == true && posting.isEmpty && !seasonEnded {
+                // シーズンの合間など：次のお題が分かったら締切を入れて再開する。
+                HStack(spacing: 16) {
+                    actionButton("次のお題の締切を入れる", systemImage: "calendar.badge.plus") { deadlineRequest = .resume }
+                    if usesSeasons { actionButton("次のシーズンを始める", systemImage: "arrow.right.circle") { deadlineRequest = .nextSeason } }
+                }
             }
             if seasonEnded {
                 Text((site.cycleSettings?.seasonName.isEmpty == false ? site.cycleSettings?.seasonName ?? "" : "シーズン") + "の通常回が終わりました")
                     .font(.subheadline).foregroundStyle(.secondary)
                 HStack(spacing: 16) {
                     actionButton("次のシーズンを始める", systemImage: "arrow.right.circle") { deadlineRequest = .nextSeason }
-                    actionButton("特別週を追加", systemImage: "plus.circle") { showingSetup = true }
+                    actionButton("特別週を追加", systemImage: "plus.circle") { openSetup() }
                 }
             }
             if let pending = pendingResult(now: now) {
                 Divider().overlay(appSeparatorColor)
-                Button { resultEvent = pending } label: {
+                Button { if let onRoute { onRoute(.cycleResult(pending.id)) } else { resultEvent = pending } } label: {
                     HStack {
                         Image(systemName: "square.and.pencil")
                         Text("終わった回の結果を記録")
@@ -140,6 +182,11 @@ struct GiriSitePeriodActions: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var usesSeasons: Bool {
+        guard let settings = site.cycleSettings else { return false }
+        return settings.seasonID != nil || !settings.seasonName.isEmpty || settings.trackSeasonTotals
     }
 
     private var currentSeasonLabel: String? {
@@ -157,6 +204,10 @@ struct GiriSitePeriodActions: View {
     private func pendingResult(now: Date) -> GiriEvent? {
         store.events.filter { $0.onlineSiteId == site.id && $0.isActualParticipant && $0.hasEnded(now: now) && !$0.hasCycleResult && !$0.promptedResultKeys.contains("cycle-result-skipped") }
             .max { ($0.participationEndDate ?? .distantPast) < ($1.participationEndDate ?? .distantPast) }
+    }
+
+    private func openSetup() {
+        if let onRoute { onRoute(.editor(site.id)) } else { showingSetup = true }
     }
 
     private func actionButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
@@ -241,7 +292,8 @@ struct GiriSitePeriodActions: View {
 
 /// 一覧のカードから入れる日付の種類。
 enum GiriSiteDeadlineRequest: String, Identifiable {
-    case nextCycle, nextSeason
+    /// resume：次のお題を待っている間（シーズンの合間など）から再開する。
+    case nextCycle, nextSeason, resume
     var id: String { rawValue }
 }
 
@@ -253,11 +305,28 @@ struct GiriSiteDeadlineSheet: View {
     let request: GiriSiteDeadlineRequest
     @State private var deadline: Date? = nil
     @State private var votingEnd: Date? = nil
+    @State private var cycleNumber = 1
+
+    private var pageTitle: String {
+        switch request {
+        case .nextSeason: return "次のシーズン"
+        case .resume: return "次のお題"
+        case .nextCycle: return "次の回"
+        }
+    }
+
+    private var sectionTitle: String {
+        switch request {
+        case .nextSeason: return "第\(nextSeasonNumber)シーズン"
+        case .resume: return "次のお題"
+        case .nextCycle: return "次の回"
+        }
+    }
 
     var body: some View {
         Form {
             Section {
-                AppCardSectionTitle(title: request == .nextSeason ? "第\(nextSeasonNumber)シーズン" : "次の回", systemImage: "calendar.badge.plus", accentColor: AppSectionAccent.artist,
+                AppCardSectionTitle(title: sectionTitle, systemImage: "calendar.badge.plus", accentColor: AppSectionAccent.artist,
                                     infoTitle: "締切について",
                                     infoMessage: "サイトに書いてある投稿の締切を入れます。投票の締切は投票期間から自動で入ります。")
                     .listRowSeparator(.hidden)
@@ -268,10 +337,19 @@ struct GiriSiteDeadlineSheet: View {
                 if request == .nextCycle {
                     OptionalDateRow(title: "投票の締切", selection: $votingEnd)
                 }
+                if request == .resume {
+                    Stepper(value: $cycleNumber, in: 1...max(9999, cycleNumber)) {
+                        HStack {
+                            GiriEditorLabel("回")
+                            Spacer()
+                            Text("第\(cycleNumber)回").font(.body.weight(.semibold))
+                        }
+                    }
+                }
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
         }
         .appEditorFormStyle()
-        .navigationTitle(request == .nextSeason ? "次のシーズン" : "次の回").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle(pageTitle).navigationBarTitleDisplayMode(.inline)
         .giriNavigationBarStyle()
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
@@ -279,6 +357,7 @@ struct GiriSiteDeadlineSheet: View {
         }
         .onAppear {
             guard deadline == nil else { return }
+            cycleNumber = siteSuggestedResumeCycleNumber(site, events: store.events)
             let start = fiveMinuteSelection(Date())
             deadline = addCalendarDays(start, site.submissionDays)
             votingEnd = deadline.map { addCalendarDays($0, site.votingDays) }
@@ -292,6 +371,8 @@ struct GiriSiteDeadlineSheet: View {
         store.run {
             if request == .nextSeason {
                 try store.startNextSiteSeason(site.id, firstDeadline: deadline)
+            } else if request == .resume {
+                try store.resumeSiteCycle(site.id, firstDeadline: deadline, cycleNumber: cycleNumber)
             } else {
                 if let votingEnd, votingEnd < deadline { throw GiriEditorValidationError.schedule("投票の締切を投稿の締切より後にしてください。") }
                 try store.addSiteIrregularCycle(site.id, deadline: deadline, votingEnd: votingEnd)
@@ -304,14 +385,22 @@ struct GiriSiteDeadlineSheet: View {
 }
 
 private enum SiteSetupPhase: String, CaseIterable, Identifiable {
-    case posting, voting
+    /// waiting：投稿中でも投票中でもない（シーズンの合間など）。
+    case posting, voting, waiting
     var id: String { rawValue }
-    var title: String { self == .posting ? "投稿中" : "投票中" }
+    var title: String {
+        switch self {
+        case .posting: return "投稿中"
+        case .voting: return "投票中"
+        case .waiting: return "次のお題待ち"
+        }
+    }
 }
 
 /// 登録と設定で共通の、通常サイトのかんたん設定。必要なのは「今の状態と締切」と
 /// 「次のお題の出方」だけで、次の回からは自動で進める。リーグとシーズンは使うサイトだけ。
 struct GiriSiteCycleSettingsForm: View {
+    @EnvironmentObject private var store: GiriStore
     @Binding var site: OnlineSite
     var isNew = false
     @State private var initialized = false
@@ -324,6 +413,10 @@ struct GiriSiteCycleSettingsForm: View {
     @State private var specialExpanded = false
     @State private var editingSpecial: SiteSpecialPeriod?
     @State private var initialPeriodID = UUID().uuidString
+    /// 次のお題待ち：分かっていれば次のお題の開始。
+    @State private var nextStart: Date?
+    /// 次のお題待ちにした時、前の決まりで作る回をここまでにする（今の回より前）。
+    @State private var waitingCutoff = Date()
 
     private var settings: Binding<SiteCycleSettings> {
         Binding(get: { site.cycleSettings ?? SiteCycleSettings() }, set: { site.cycleSettings = $0 })
@@ -356,12 +449,17 @@ struct GiriSiteCycleSettingsForm: View {
                                 infoMessage: "投稿締切＝投票開始、投票締切＝結果発表として扱い、次の回からは自動で進めます。")
                 .listRowSeparator(.hidden)
             if editsCurrentDeadline {
-                Picker(selection: Binding(get: { phase }, set: { phase = $0; updateSchedule() })) {
+                Picker(selection: Binding(get: { phase }, set: changePhase)) {
                     ForEach(SiteSetupPhase.allCases) { Text($0.title).tag($0) }
                 } label: { GiriEditorLabel("今の状態") }
                 .pickerStyle(.menu).tint(.primary)
-                OptionalDateRow(title: phase == .posting ? "投稿の締切" : "投票の締切",
-                                selection: Binding(get: { deadline }, set: { if let date = $0 { deadline = date; updateSchedule() } }))
+                if phase == .waiting {
+                    OptionalDateRow(title: "次のお題の開始",
+                                    selection: Binding(get: { nextStart }, set: { nextStart = $0; updateSchedule() }))
+                } else {
+                    OptionalDateRow(title: phase == .posting ? "投稿の締切" : "投票の締切",
+                                    selection: Binding(get: { deadline }, set: { if let date = $0 { deadline = date; updateSchedule() } }))
+                }
             }
             Picker(selection: Binding(get: { timing }, set: { timing = $0; updateSchedule() })) {
                 ForEach(SiteNextPromptTiming.allCases) { Text($0.title).tag($0) }
@@ -383,6 +481,10 @@ struct GiriSiteCycleSettingsForm: View {
     }
 
     private var summaryText: String {
+        if phase == .waiting && editsCurrentDeadline {
+            if let nextStart { return "次のお題 " + GiriDateText.dateTime(nextStart) + " から、次の回からは自動で進めます。" }
+            return "次のお題が分かったら、一覧のカードから締切を入れます。"
+        }
         if timing == .irregular {
             return "締切が過ぎたら、一覧のカードから次の回の締切を入れます。"
         }
@@ -463,7 +565,7 @@ struct GiriSiteCycleSettingsForm: View {
                 if timing != .irregular {
                     Stepper(value: Binding(get: { currentCycle }, set: { currentCycle = $0; updateSchedule() }), in: 1...max(9999, currentCycle)) {
                         HStack {
-                            GiriEditorLabel("今のお題")
+                            GiriEditorLabel(phase == .waiting ? "次のお題" : "今のお題")
                             Spacer()
                             Text("第\(currentCycle)回").font(.body.weight(.semibold))
                         }
@@ -548,13 +650,22 @@ struct GiriSiteCycleSettingsForm: View {
         currentCycle = value.anchorCycleNumber
         specialExpanded = timing == .irregular || !value.specialPeriods.isEmpty
         // 今の回から、締切と状態を読み直す（開くだけでは保存内容を変えない）。
-        let descriptors = siteCycleDescriptors(site)
+        let now = Date()
+        let allDescriptors = siteCycleDescriptors(site, around: now)
+        let activeStarts = allDescriptors.filter { !$0.cycleKey.hasPrefix("special:") && $0.isActive(now) }.compactMap(\.start)
+        waitingCutoff = min(activeStarts.min() ?? now, now)
+        let descriptors = allDescriptors
             .filter { site.recurrence == .irregular || ($0.ruleRevisionID == value.ruleRevisionID && !$0.cycleKey.hasPrefix("special:")) }
             .sorted { ($0.round.submissionStart ?? .distantPast) > ($1.round.submissionStart ?? .distantPast) }
-        if let active = descriptors.first(where: { $0.round.isSubmissionOpen(Date()) }), let end = active.round.submissionEnd {
+        if value.waitingForNext {
+            phase = .waiting; nextStart = nil
+        } else if let active = descriptors.first(where: { $0.round.isSubmissionOpen(Date()) }), let end = active.round.submissionEnd {
             phase = .posting; deadline = end; currentCycle = active.cycleNumber ?? value.anchorCycleNumber
         } else if let active = descriptors.first(where: { $0.round.isVotingOpen(Date()) }), let end = active.round.votingEnd {
             phase = .voting; deadline = end; currentCycle = active.cycleNumber ?? value.anchorCycleNumber
+        } else if let start = value.notBefore, start > now, site.recurrence != .irregular {
+            // 次のお題の開始だけ分かっている間。
+            phase = .waiting; nextStart = start
         } else {
             var round = EventRound(); round.submissionStart = value.anchorStart
             round = completeRoundSchedule(round, submissionDays: site.submissionDays, votingDays: site.votingDays)
@@ -572,12 +683,26 @@ struct GiriSiteCycleSettingsForm: View {
         }
     }
 
+    private func changePhase(_ value: SiteSetupPhase) {
+        // 次のお題待ちにする時は、記録した回の続きを次の番号の候補にする。
+        if value == .waiting && phase != .waiting { currentCycle = siteSuggestedResumeCycleNumber(site, events: store.events) }
+        phase = value
+        updateSchedule()
+    }
+
     /// 今の状態・締切・出方を、日程の計算に使う保存項目へ反映する。
     private func updateSchedule() {
         applySiteTiming(timing, to: &site, intervalDays: intervalDays)
         var value = settings.wrappedValue
+        if phase == .waiting && editsCurrentDeadline {
+            applyWaiting(to: &value)
+            settings.wrappedValue = value
+            return
+        }
         let anchor = siteAnchorStart(posting: phase == .posting, deadline: deadline,
                                      submissionDays: site.submissionDays, votingDays: site.votingDays)
+        if editsCurrentDeadline { value.waitingForNext = false }
+        if let limit = value.notBefore, anchor < limit { value.notBefore = nil }
         if timing == .irregular {
             // 新しく作る時だけ、今の回を1件用意する。既存の回の日程は個別に編集する。
             if isNew || value.specialPeriods.isEmpty || value.specialPeriods.contains(where: { $0.id == initialPeriodID }) {
@@ -605,6 +730,30 @@ struct GiriSiteCycleSettingsForm: View {
         site.startHour = Calendar.current.component(.hour, from: anchor)
         site.startMinute = Calendar.current.component(.minute, from: anchor)
         site.weekday = Calendar.current.component(.weekday, from: anchor)
+    }
+
+    /// 投稿中でも投票中でもない（シーズンの合間など）。次のお題の開始が分かれば、そこから自動で進める。
+    /// 分からない間は通常の回を作らず、前の決まりの回は今の回より前で止める。
+    private func applyWaiting(to value: inout SiteCycleSettings) {
+        if timing == .irregular {
+            value.specialPeriods.removeAll { $0.id == initialPeriodID }
+            value.waitingForNext = true
+            return
+        }
+        if let nextStart {
+            value.anchorStart = nextStart
+            value.notBefore = nextStart
+            value.waitingForNext = false
+            site.startHour = Calendar.current.component(.hour, from: nextStart)
+            site.startMinute = Calendar.current.component(.minute, from: nextStart)
+            site.weekday = Calendar.current.component(.weekday, from: nextStart)
+        } else {
+            if !value.waitingForNext { value.anchorStart = waitingCutoff }
+            value.waitingForNext = true
+            value.notBefore = nil
+        }
+        value.anchorCycleNumber = currentCycle
+        if let last = value.regularCycleCount, last < currentCycle { value.regularCycleCount = nil }
     }
 
     private func changeSeason(_ enabled: Bool) {

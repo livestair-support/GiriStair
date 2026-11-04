@@ -94,7 +94,7 @@ struct GiriEventDetail: View {
                 else { navigation.openResultEntry(eventID, roundID: promptRoundID) }
             }
         } message: { Text(resultPromptMessage) }
-        .sheet(isPresented: $showCycleEditor) { NavigationStack { GiriCycleResultEditor(eventID: eventID) } }
+        .navigationDestination(isPresented: $showCycleEditor) { GiriCycleResultEditor(eventID: eventID) }
         .sheet(item: $nextDraft) { action in
             NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
         }

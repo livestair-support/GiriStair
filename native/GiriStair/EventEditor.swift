@@ -30,6 +30,10 @@ struct GiriEventEditor: View {
     @State private var lastSelfStaff = false
     /// トーナメント表（生大喜利・個人戦）の読み取り結果の確認。
     @State private var bracketDraft: GiriBracketDraft?
+    /// イベントページ（ツイプラなど）の読み取り：基本情報と参加者を確認してから反映する。
+    @State private var eventPagePhoto: PhotosPickerItem?
+    @State private var readingEventPage = false
+    @State private var eventPageDraft: GiriEventPageDraft?
 
     init(event: GiriEvent? = nil, onSaved: (() -> Void)? = nil) {
         self.event = event
@@ -51,6 +55,14 @@ struct GiriEventEditor: View {
         if isTeamTournament { return draft.impromptuTeams }
         if isKnockoutBracket { return true }
         return !(draft.meetingType == .tournament && (draft.eventFormat == .onlineLong || draft.eventFormat == .onlineShort))
+    }
+    /// 参加者が2人以上の時だけ並び替えを付ける（1人の時は「≡」を出さない）。
+    private var participantMoveAction: ((IndexSet, Int) -> Void)? {
+        guard canReorderParticipants else { return nil }
+        return { source, destination in participants.move(fromOffsets: source, toOffset: destination) }
+    }
+    private var canReorderParticipants: Bool {
+        showsParticipantSection && participants.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count > 1
     }
     /// まだどのチームにも入っていない参加者（即席チーム）。
     private var unassignedNames: [String] {
@@ -85,6 +97,7 @@ struct GiriEventEditor: View {
 
     var body: some View {
         Form {
+            if isLive { eventReadSection }
             basicSection
             if isSite { siteSection }
             if !isSite {
@@ -100,6 +113,8 @@ struct GiriEventEditor: View {
         }
         .appEditorFormStyle()
         .environment(\.defaultMinListRowHeight, 48)
+        // LiveStair EventBasicEditor と同じく、参加者が2人以上の時は「≡」を長押しして並び替える。
+        .environment(\.editMode, .constant(canReorderParticipants ? EditMode.active : EditMode.inactive))
         .navigationTitle(event == nil ? "" : "編集")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(event != nil && isDirty)
@@ -180,13 +195,22 @@ struct GiriEventEditor: View {
         }
         .sheet(isPresented: $showImport) {
             NavigationStack {
-                GiriParticipantImport(source: importText, lines: importLines) { names in
+                GiriParticipantImport(source: importText, lines: importLines, existing: participants) { names in
                     let existing = Set(participants.map(giriEditorNameKey))
                     let added = names.filter { !existing.contains(giriEditorNameKey($0)) }
                     participants.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                     participants.append(contentsOf: added)
                     participants.append("")
                 }
+            }
+        }
+        .onChange(of: eventPagePhoto) { _, item in
+            guard let item else { return }
+            readEventPage(item)
+        }
+        .sheet(item: $eventPageDraft) { page in
+            NavigationStack {
+                GiriEventPageReview(draft: page) { reviewed, replace in applyEventPage(reviewed, replace: replace) }
             }
         }
         .sheet(item: $bracketDraft) { draft in
@@ -218,6 +242,98 @@ struct GiriEventEditor: View {
             .overlay(Capsule().stroke(Color.primary.opacity(0.10), lineWidth: 1))
             .disabled(!isValid || saving)
             .opacity(isValid && !saving ? 1 : 0.55)
+    }
+
+    /// LiveStair EventBasicEditor ocrReadRow：イベントページの画像から基本情報・参加者を読み取る。
+    private var eventReadSection: some View {
+        Section {
+            PhotosPicker(selection: $eventPagePhoto, matching: .images) {
+                HStack(spacing: 12) {
+                    Image(systemName: "text.viewfinder")
+                        .font(.system(size: appFontSize(17), weight: .semibold))
+                        .foregroundStyle(AppSectionAccent.scan)
+                        .frame(width: 30, height: 30)
+                        .background(AppSectionAccent.scan.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("画像からOCR読み取り").font(.body.weight(.semibold)).foregroundStyle(.primary)
+                        Text("イベントページから基本情報・参加者を入力").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if readingEventPage { ProgressView().controlSize(.small) }
+                    else { Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(readingEventPage)
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.scan)
+    }
+
+    private func readEventPage(_ item: PhotosPickerItem) {
+        readingEventPage = true
+        let known = giriParticipantKnownNames(store)
+        let venues = store.venueDirectory.map(\.name)
+        var organizers = store.playerDirectory.map(\.name)
+        organizers.append(contentsOf: store.groupDirectory.map(\.name))
+        let current = participants
+        Task {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
+                let lines = try await GiriParticipantOCR.recognizeLines(data)
+                var page = giriEventPageDraft(lines: lines, known: known, venues: venues, organizers: organizers)
+                page.participants = giriMarkingAlreadyAdded(page.participants, existing: current)
+                guard page.hasBasicInfo || !page.participants.isEmpty else { throw GiriParticipantReadError.noText }
+                eventPageDraft = page
+            } catch { store.errorMessage = error.localizedDescription }
+            readingEventPage = false
+            eventPagePhoto = nil
+        }
+    }
+
+    /// 読み取った内容を入力に反映する。置き換えない時は空欄だけに入れ、参加者は重ならない人だけ足す。
+    private func applyEventPage(_ page: GiriEventPageDraft, replace: Bool) {
+        func fill(_ value: String, _ keyPath: WritableKeyPath<GiriEvent, String>) {
+            let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            guard replace || draft[keyPath: keyPath].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            draft[keyPath: keyPath] = text
+        }
+        fill(page.title, \.title)
+        fill(page.venue, \.venue)
+        fill(page.venueRoom, \.venueRoom)
+        fill(page.organizer, \.organizer)
+        if let fee = page.fee, replace || draft.entryFee == nil { draft.entryFee = fee }
+        let calendar = Calendar.current
+        if let date = page.date, replace || draft.eventDate == nil {
+            let previous = draft.eventDate
+            let day = calendar.startOfDay(for: date)
+            lastEventDay = day
+            draft.eventDate = day
+            moveDay(from: previous, to: day)
+        }
+        let day = draft.eventDate ?? calendar.startOfDay(for: Date())
+        func time(_ clock: GiriClock?, _ keyPath: WritableKeyPath<GiriEvent, Date?>) {
+            guard let clock, replace || draft[keyPath: keyPath] == nil, let value = giriClockDate(clock, on: day) else { return }
+            draft[keyPath: keyPath] = value
+        }
+        time(page.opens, \.opensAt)
+        time(page.start, \.startsAt)
+        time(page.end, \.endsAt)
+        if let start = draft.startsAt, let end = draft.endsAt, end < start {
+            draft.endsAt = calendar.date(byAdding: .day, value: 1, to: end)
+        }
+        if draft.eventDate == nil && (draft.startsAt != nil || draft.opensAt != nil) {
+            lastEventDay = day
+            draft.eventDate = day
+        }
+        let existing = Set(participants.map(giriEditorNameKey))
+        let added = giriSelectedParticipantNames(page.participants).filter { !existing.contains(giriEditorNameKey($0)) }
+        if !added.isEmpty {
+            participants.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            participants.append(contentsOf: added)
+            participants.append("")
+        }
     }
 
     private var basicSection: some View {
@@ -265,7 +381,6 @@ struct GiriEventEditor: View {
                         Text("横並び・その他").tag(false)
                         Text("トーナメント（1対1）").tag(true)
                     } label: { GiriEditorLabel("対戦形式") }.pickerStyle(.menu).tint(.primary)
-                    GiriJudgingField(text: $draft.judging)
                 }
             }
             if !isSite {
@@ -282,7 +397,6 @@ struct GiriEventEditor: View {
             }
             TextField(isSite ? "サイト名 *" : "会・大会名 *", text: $draft.title, axis: .vertical)
                 .lineLimit(1...5)
-            if isLive { GiriSeriesField(text: $draft.series, eventTitle: draft.title) }
             if !isSite {
                 // 主催団体一覧に登録した団体は、名前を入れると団体の主催として保存する。
                 GiriEditorPlayerField(title: "主催者", text: $draft.organizer, preferHosts: true)
@@ -350,7 +464,6 @@ struct GiriEventEditor: View {
                     }
                     GiriEditorPlayerField(title: "参加者名", text: participantBinding(index), compact: true)
                     if isTeamTournament { assignMenu(index) }
-                    if isKnockoutBracket { orderMenu(index) }
                     Button(role: .destructive) {
                         participants.remove(at: index)
                         if participants.isEmpty { participants = [""] }
@@ -359,6 +472,7 @@ struct GiriEventEditor: View {
                 }.listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 12))
                     .environment(\.defaultMinListRowHeight, 36)
             }
+            .onMove(perform: participantMoveAction)
             Button { participants.append("") } label: { Label("参加者を追加", systemImage: "plus.circle") }.tint(accentActionColor)
             if isKnockoutBracket {
                 Button { bracketDraft = GiriBracketDraft(names: participants.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }) } label: {
@@ -412,17 +526,6 @@ struct GiriEventEditor: View {
                 Button { appendOtherTeam() } label: { Label("他のチームを追加", systemImage: "plus.circle") }
             }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
         }
-    }
-
-    /// トーナメント表の並びを入れ替える。
-    private func orderMenu(_ index: Int) -> some View {
-        Menu {
-            if index > 0 { Button("上へ", systemImage: "arrow.up") { participants.swapAt(index, index - 1) } }
-            if index + 1 < participants.count { Button("下へ", systemImage: "arrow.down") { participants.swapAt(index, index + 1) } }
-            Button("この下に追加", systemImage: "plus") { participants.insert("", at: index + 1) }
-        } label: { Image(systemName: "arrow.up.arrow.down") }
-        .tint(accentActionColor)
-        .accessibilityLabel("並びを変える")
     }
 
     /// 生大喜利の共催・MC・審査員（MC・審査員は大会だけ）。

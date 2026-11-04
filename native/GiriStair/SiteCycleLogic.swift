@@ -63,6 +63,10 @@ struct SiteCycleSettings: Codable, Equatable {
     var legacyInferredSeasonStart: Date? = nil
     /// 「第○シーズン」の番号。シーズンの最後の回が終わったら、次の番号で始める。
     var seasonNumber: Int? = nil
+    /// 0.11：投稿中でも投票中でもない（シーズンの合間など）。次のお題が分かるまで通常の回を作らない。
+    var waitingForNext: Bool = false
+    /// 0.11：この日時より前の通常の回は作らない（次のお題の開始が分かっている時など）。
+    var notBefore: Date? = nil
 
     var inferredSeasonStart: Date {
         // Compatibility alias for old call sites; never reconstruct unknown
@@ -101,7 +105,7 @@ struct SiteCycleSettings: Codable, Equatable {
 }
 
 extension SiteCycleSettings {
-    private enum CodingKeys: String, CodingKey { case pattern, anchorStart, intervalDays, anchorCycleNumber, seasonName, seasonStart, seasonLengthDays, regularCycleCount, leagues, specialPeriods, leagueChangesPerSeason, seasonID, seasonEndsAt, trackSeasonTotals, ruleRevisionID, legacyInferredSeasonStart, seasonNumber }
+    private enum CodingKeys: String, CodingKey { case pattern, anchorStart, intervalDays, anchorCycleNumber, seasonName, seasonStart, seasonLengthDays, regularCycleCount, leagues, specialPeriods, leagueChangesPerSeason, seasonID, seasonEndsAt, trackSeasonTotals, ruleRevisionID, legacyInferredSeasonStart, seasonNumber, waitingForNext, notBefore }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         pattern = try c.decodeIfPresent(SiteCyclePattern.self, forKey: .pattern) ?? .alternating
@@ -121,6 +125,8 @@ extension SiteCycleSettings {
         ruleRevisionID = try c.decodeIfPresent(String.self, forKey: .ruleRevisionID)
         legacyInferredSeasonStart = try c.giriDate(forKey: .legacyInferredSeasonStart, required: false, calendarOnly: false)
         seasonNumber = try c.decodeIfPresent(Int.self, forKey: .seasonNumber)
+        waitingForNext = try c.decodeIfPresent(Bool.self, forKey: .waitingForNext) ?? false
+        notBefore = try c.giriDate(forKey: .notBefore, required: false, calendarOnly: false)
         // 0.6 filled this date by counting backwards with today's rule. Clear
         // only that recognizable generated value, preserving explicit dates.
         if seasonID == nil && ruleRevisionID == nil && anchorCycleNumber > 1,
@@ -150,6 +156,8 @@ extension SiteCycleSettings {
         try c.encode(ruleRevisionID, forKey: .ruleRevisionID)
         try c.encode(legacyInferredSeasonStart.map(GiriDates.timestamp), forKey: .legacyInferredSeasonStart)
         try c.encode(seasonNumber, forKey: .seasonNumber)
+        try c.encode(waitingForNext, forKey: .waitingForNext)
+        try c.encode(notBefore.map(GiriDates.timestamp), forKey: .notBefore)
     }
 }
 
@@ -256,10 +264,13 @@ private func siteRevisionDescriptors(siteID: String, block: String, revision: Si
     let hasSeason = settings.seasonID != nil || !settings.seasonName.isEmpty || settings.trackSeasonTotals
     // A known current period is an anchor, not evidence about all previous
     // seasons. A changed rule is always forward-only, even with known dates.
-    let lower = hasPreviousRevision ? settings.anchorStart : settings.seasonStart ?? (hasSeason ? settings.anchorStart : nil)
+    let baseLower = hasPreviousRevision ? settings.anchorStart : settings.seasonStart ?? (hasSeason ? settings.anchorStart : nil)
+    // 次のお題の開始が分かっている時は、それより前の回を作らない。
+    let lower: Date? = [baseLower, settings.notBefore].compactMap { $0 }.max()
     let validCap = settings.regularCycleCount.flatMap { $0 >= settings.anchorCycleNumber ? $0 : nil }
     var output: [SiteCycleDescriptor] = []
-    if revision.recurrence == .weekly {
+    // 投稿中でも投票中でもない間（シーズンの合間など）は、通常の回を作らない（特別な日程は出す）。
+    if revision.recurrence == .weekly && !settings.waitingForNext {
         for offset in (approximateIndex - span)...(approximateIndex + 1) {
             let number = settings.anchorCycleNumber + offset
             guard !hasSeason || number >= 1, validCap.map({ number <= $0 }) ?? true else { continue }
@@ -398,6 +409,8 @@ func siteNextSeasonSettings(_ site: OnlineSite, firstDeadline: Date, calendar: C
     value.seasonEndsAt = nil
     value.seasonLengthDays = nil
     value.specialPeriods = []
+    value.waitingForNext = false
+    value.notBefore = nil
     return value
 }
 
@@ -420,4 +433,31 @@ func siteIrregularPeriod(_ site: OnlineSite, deadline: Date, votingEnd: Date? = 
     round.votingEnd = votingEnd ?? addCalendarDays(deadline, site.votingDays, calendar: calendar)
     period.round = round
     return period
+}
+
+/// 次のお題を待っている間から、次の回の投稿締切で通常の回を再開する。
+/// 回の番号は、これまでに記録した回の続き（画面で変えられる）。
+func siteResumeSettings(_ site: OnlineSite, firstDeadline: Date, cycleNumber: Int?, calendar: Calendar = .current) -> SiteCycleSettings {
+    var value = site.cycleSettings ?? SiteCycleSettings()
+    let start = addCalendarDays(firstDeadline, -site.submissionDays, calendar: calendar)
+    value.anchorStart = start
+    value.notBefore = start
+    value.waitingForNext = false
+    if let cycleNumber { value.anchorCycleNumber = max(1, cycleNumber) }
+    if let cap = value.regularCycleCount, cap < value.anchorCycleNumber { value.regularCycleCount = nil }
+    return value
+}
+
+/// 再開する回の番号の候補：今のシーズンで参加・見送り・結果を記録した通常の回の続き。
+/// 記録がなければ今の番号のまま。
+func siteSuggestedResumeCycleNumber(_ site: OnlineSite, events: [GiriEvent]) -> Int {
+    let settings = site.cycleSettings ?? SiteCycleSettings()
+    var latest: Int? = nil
+    for event in events where event.onlineSiteId == site.id && event.sitePeriodKind == .regular {
+        guard let number = event.siteCycleNumber else { continue }
+        guard event.isActualParticipant || event.siteSkipped || event.hasCycleResult else { continue }
+        if let season = settings.seasonID, let eventSeason = event.siteSeasonID, eventSeason != season { continue }
+        latest = max(latest ?? number, number)
+    }
+    return latest.map { $0 + 1 } ?? max(1, settings.anchorCycleNumber)
 }
