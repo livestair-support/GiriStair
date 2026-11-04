@@ -825,7 +825,11 @@ private struct GiriThoughtCard: View {
         }
         let own = note.ownAnswerRecords
         if let featured = own.first(where: \.isSubmitted) ?? own.first, featured.text != thoughtTitle(note) {
-            Text(featured.text).font(.subheadline).foregroundStyle(.primary).lineLimit(3)
+            if note.effectivePromptStyle == .fill {
+                GiriFilledPromptText(prompt: note.prompt, answer: featured.text).font(.subheadline).lineLimit(3)
+            } else {
+                Text(featured.text).font(.subheadline).foregroundStyle(.primary).lineLimit(3)
+            }
         }
         let others = note.otherAnswerRecords
         if let first = others.first {
@@ -912,7 +916,14 @@ private struct GiriThoughtNoteRows: View {
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel(record.isSubmitted ? "提出した回答の印を外す" : "提出した回答にする")
-                Text(record.text).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                if !record.mark.isEmpty {
+                    Text(record.mark).font(.subheadline.weight(.bold)).foregroundStyle(AppSectionAccent.ticket)
+                }
+                Group {
+                    if note.effectivePromptStyle == .fill { GiriFilledPromptText(prompt: note.prompt, answer: record.text) }
+                    else { Text(record.text) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
                 if record.isSubmitted {
                     Text(isLong ? "採用" : "出した").font(.caption.weight(.semibold)).foregroundStyle(accentActionColor)
                 }
@@ -991,6 +1002,8 @@ struct GiriThoughtEditor: View {
     @State private var otherAnswers: [AnswerRecord]
     @State private var initialOwn: [AnswerRecord]
     @State private var initialOthers: [AnswerRecord]
+    /// 回答案をメモのように1行に1つで書く（印は先頭に △・〇 など）。
+    @State private var answerMemo: String
     @State private var selectedFormat: EventFormat
     @State private var relationInitialized = false
     @State private var showingAllEvents = false
@@ -1022,6 +1035,7 @@ struct GiriThoughtEditor: View {
         _otherAnswers = State(initialValue: records.filter { !$0.isOwn })
         _initialOwn = State(initialValue: records.filter(\.isOwn))
         _initialOthers = State(initialValue: records.filter { !$0.isOwn })
+        _answerMemo = State(initialValue: giriAnswerMemo(records.filter(\.isOwn)))
         _selectedFormat = State(initialValue: preferredFormat ?? value.format ?? (value.answerCategory == "long" ? .onlineLong : .live))
     }
 
@@ -1115,6 +1129,13 @@ struct GiriThoughtEditor: View {
                     .foregroundStyle(AppSectionAccent.artist)
                 GiriThoughtPeriodRow(title: "投稿", start: round.submissionStart, end: round.submissionEnd, enabled: round.submissionEnabled, accent: AppSectionAccent.artist)
                 GiriThoughtPeriodRow(title: "投票", start: round.votingStart, end: round.votingEnd, enabled: round.votingRequired, accent: AppSectionAccent.memo)
+                // 戦績で入れたこの回の結果。
+                if let stage = event.tournamentResult?.stages.last(where: { $0.roundId == round.id }) {
+                    let summary = thoughtStageSummary(stage)
+                    if !summary.isEmpty {
+                        Text("この回の結果　" + summary).font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.ticket)
+                    }
+                }
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
         }
     }
@@ -1136,14 +1157,41 @@ struct GiriThoughtEditor: View {
         }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
     }
 
+    /// 長考の回答を考える時だけ、お題の種類（通常・画像・穴埋め）を選ぶ。
+    private var choosesPromptStyle: Bool { draft.kind == .answers && isLong }
+    private var promptStyle: GiriPromptStyle { choosesPromptStyle ? draft.effectivePromptStyle : (draft.imageDataBase64.isEmpty ? .plain : .image) }
+    private var promptPlaceholder: String {
+        if draft.kind == .free { return "タイトル（任意）" }
+        guard choosesPromptStyle else { return draft.kind == .answers ? "お題（画像だけでも可）" : "お題を入力" }
+        switch promptStyle {
+        case .plain: return "お題"
+        case .image: return "お題の文（任意）"
+        case .fill: return "お題（〇〇の部分を回答で埋めます）"
+        }
+    }
+
     private var promptSection: some View {
         Section {
             AppCardSectionTitle(title: draft.kind == .free ? "タイトル" : "お題", systemImage: draft.kind == .free ? "square.and.pencil" : "lightbulb", accentColor: AppSectionAccent.memo)
                 .listRowSeparator(.hidden)
-            TextField(draft.kind == .free ? "タイトル（任意）" : draft.kind == .answers ? "お題（画像だけでも可）" : "お題を入力", text: $primaryText, axis: .vertical)
+            if choosesPromptStyle {
+                Picker(selection: Binding(get: { promptStyle }, set: { draft.promptStyle = $0.rawValue })) {
+                    ForEach(GiriPromptStyle.allCases) { Text($0.title).tag($0) }
+                } label: { GiriEditorLabel("お題の種類") }
+                .pickerStyle(.menu).tint(.primary)
+            }
+            TextField(promptPlaceholder, text: $primaryText, axis: .vertical)
                 .lineLimit(1...10)
-            GiriThoughtImagePicker(base64: $draft.imageDataBase64, reading: $readingImage, error: $error)
-            if !draft.imageDataBase64.isEmpty {
+            if choosesPromptStyle && promptStyle == .fill {
+                let blanks = giriPromptBlankCount(primaryText)
+                Text(blanks == 0 ? "埋める所を〇〇・△△・××で書いてください" : blanks == 1 ? "回答は〇〇に入る言葉だけを書きます" : "回答は\(blanks)か所を「／」で区切って書きます")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            // 通常お題は画像を付けない。
+            if !(choosesPromptStyle && promptStyle == .plain) {
+                GiriThoughtImagePicker(base64: $draft.imageDataBase64, reading: $readingImage, error: $error)
+            }
+            if !draft.imageDataBase64.isEmpty && !(choosesPromptStyle && promptStyle == .plain) {
                 Button {
                     recognizeImage()
                 } label: {
@@ -1160,32 +1208,76 @@ struct GiriThoughtEditor: View {
         }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
     }
 
+    /// 回答案はメモのように1行に1つ。最後に提出した回答を選び、△・〇などの印や点数は行の先頭に書く。
     private var ownSection: some View {
         Section {
             AppCardSectionTitle(title: isLong ? "回答案" : "自分の回答", systemImage: "text.bubble", accentColor: AppSectionAccent.memo,
                                 infoTitle: isLong ? "回答案について" : "自分の回答について",
-                                infoMessage: isLong ? "考えた回答案を並べ、提出した回答に「採用」を付けます。採用していない案はボツ案として残ります。"
-                                                    : "出した回答に「出した」を付けます。考えただけの回答と区別して残せます。")
+                                infoMessage: "1行に1つ書きます。行の先頭に △ や 〇、「3・」のような点数を付けると印になります。" + (isLong ? "最後に採用した回答を選びます。" : "最後に出した回答を選びます。"))
                 .listRowSeparator(.hidden)
-            ForEach(ownAnswers) { record in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .top, spacing: 8) {
-                        TextField(isLong ? "回答案" : "回答", text: ownBinding(record.id).text, axis: .vertical)
-                            .lineLimit(1...8)
-                        Button(role: .destructive) { ownAnswers.removeAll { $0.id == record.id } } label: {
-                            Image(systemName: "minus.circle").frame(minWidth: 28, minHeight: 32)
-                        }.buttonStyle(.borderless).accessibilityLabel("この回答を外す")
-                    }
-                    Toggle(isLong ? "採用（提出した回答）" : "出した回答", isOn: ownBinding(record.id).isSubmitted)
-                        .tint(accentActionColor)
-                }.padding(.vertical, 4)
+            ZStack(alignment: .topLeading) {
+                if answerMemo.isEmpty {
+                    Text("・回答案\n△・迷っている案").font(.body).foregroundStyle(.tertiary)
+                        .padding(.top, 8).padding(.leading, 5).allowsHitTesting(false)
+                }
+                TextEditor(text: Binding(get: { answerMemo }, set: { text in
+                    answerMemo = text
+                    ownAnswers = giriReconcileAnswers(giriAnswerLines(text), previous: ownAnswers)
+                }))
+                .frame(minHeight: 150)
+                .scrollContentBackground(.hidden)
             }
-            Button(isLong ? "回答案を追加" : "回答を追加", systemImage: "plus.circle") { ownAnswers.append(AnswerRecord()) }
+            if !ownAnswers.isEmpty {
+                Menu {
+                    ForEach(ownAnswers) { record in
+                        Button { toggleSubmitted(record.id) } label: {
+                            if record.isSubmitted { Label(answerDisplay(record), systemImage: "checkmark") }
+                            else { Text(answerDisplay(record)) }
+                        }
+                    }
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        GiriEditorLabel(isLong ? "採用した回答" : "出した回答")
+                        Spacer(minLength: 8)
+                        Text(submittedSummary).font(.subheadline.weight(.semibold))
+                            .foregroundStyle(ownAnswers.contains(where: \.isSubmitted) ? Color.primary : Color.secondary)
+                            .multilineTextAlignment(.trailing).lineLimit(3)
+                        Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.primary)
+            }
+            // 穴埋めは、お題に入れた形で確かめられる。
+            if choosesPromptStyle && promptStyle == .fill && !ownAnswers.isEmpty {
+                ForEach(ownAnswers) { record in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        if !record.mark.isEmpty { Text(record.mark).font(.subheadline.weight(.bold)).foregroundStyle(AppSectionAccent.ticket) }
+                        GiriFilledPromptText(prompt: primaryText, answer: record.text).font(.subheadline)
+                    }
+                }
+            }
             Button("貼り付けた文章から追加", systemImage: "doc.on.clipboard") {
-                guard let text = UIPasteboard.general.string else { return }
-                ownAnswers.append(contentsOf: thoughtLines(text).map { AnswerRecord(text: $0) })
+                guard let text = UIPasteboard.general.string, !text.isEmpty else { return }
+                answerMemo = answerMemo.isEmpty ? text : answerMemo + "\n" + text
+                ownAnswers = giriReconcileAnswers(giriAnswerLines(answerMemo), previous: ownAnswers)
             }
         }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+    }
+
+    private func answerDisplay(_ record: AnswerRecord) -> String {
+        let text = choosesPromptStyle && promptStyle == .fill ? giriFilledPromptText(prompt: primaryText, answer: record.text) : record.text
+        return record.mark.isEmpty ? text : record.mark + " " + text
+    }
+
+    private var submittedSummary: String {
+        let submitted = ownAnswers.filter(\.isSubmitted)
+        guard !submitted.isEmpty else { return "選ぶ" }
+        return submitted.map(\.text).joined(separator: "\n")
+    }
+
+    private func toggleSubmitted(_ id: String) {
+        guard let index = ownAnswers.firstIndex(where: { $0.id == id }) else { return }
+        ownAnswers[index].isSubmitted.toggle()
     }
 
     private var othersSection: some View {
@@ -1349,9 +1441,14 @@ struct GiriThoughtEditor: View {
             return
         }
         var saved = draft
+        // 長考で通常お題を選んだ時は画像を付けない。長考以外は種類を保存しない（以前の版と同じ）。
+        if choosesPromptStyle {
+            saved.promptStyle = promptStyle.rawValue
+            if promptStyle == .plain { saved.imageDataBase64 = "" }
+        }
         let firstAnswer = (own + others).first?.text
         let fallbackTitle = firstAnswer ?? (body.components(separatedBy: .newlines).first ?? "メモ")
-        saved.title = String((!primary.isEmpty ? primary : !draft.imageDataBase64.isEmpty ? "画像のお題" : fallbackTitle).prefix(120))
+        saved.title = String((!primary.isEmpty ? primary : !saved.imageDataBase64.isEmpty ? "画像のお題" : fallbackTitle).prefix(120))
         saved.prompt = draft.kind == .free ? "" : primary
         saved.promptAuthor = draft.promptAuthor.trimmingCharacters(in: .whitespacesAndNewlines)
         if saved.promptAuthor.isEmpty { saved.promptRevised = false }
@@ -1482,7 +1579,7 @@ private struct GiriThoughtImagePicker: View {
             if !base64.isEmpty { GiriThoughtImage(base64: base64) }
             HStack {
                 PhotosPicker(selection: $selection, matching: .images, photoLibrary: .shared()) {
-                    Label(reading ? "読み込み中" : "画像のお題", systemImage: "photo")
+                    Label(reading ? "読み込み中" : base64.isEmpty ? "画像を追加" : "画像を変更", systemImage: "photo")
                 }
                 .disabled(reading)
                 Spacer()
@@ -1630,7 +1727,8 @@ private func thoughtLines(_ value: String) -> [String] {
 private func thoughtRoundLabel(event: GiriEvent, round: EventRound) -> String {
     var parts: [String]
     if event.meetingType == .tournament {
-        parts = [round.name, "\(round.promptNumber)回目"]
+        parts = [round.name]
+        if let number = giriRoundNumberText(round, in: event.effectiveRounds) { parts.append(number) }
     } else {
         parts = [event.siteSeason, event.siteCycleNumber.map { "第\($0)回" } ?? "投稿・投票"].filter { !$0.isEmpty }
         if event.sitePeriodKind != .regular { parts.append(event.sitePeriodKind.title) }
@@ -1796,7 +1894,12 @@ private func thoughtShareText(_ note: ThoughtNote, event: GiriEvent?, record: An
             let submitted = note.submittedAnswers
             records = !others.isEmpty ? others : (submitted.isEmpty ? note.ownAnswerRecords : submitted)
         }
-        let lines = records.filter { !$0.text.isEmpty }.map { $0.isOwn ? $0.text : "\($0.answerer)「\($0.text)」" }
+        // 穴埋めはお題に入れた文で共有する。
+        let fill = note.effectivePromptStyle == .fill
+        let lines = records.filter { !$0.text.isEmpty }.map { record -> String in
+            let text = fill ? giriFilledPromptText(prompt: note.prompt, answer: record.text) : record.text
+            return record.isOwn ? text : "\(record.answerer)「\(text)」"
+        }
         parts.append(lines.joined(separator: "\n"))
     } else {
         parts.append(thoughtTitle(note))
@@ -1805,3 +1908,26 @@ private func thoughtShareText(_ note: ThoughtNote, event: GiriEvent?, record: An
     if !hashtag.isEmpty { parts.append("#" + hashtag) }
     return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
 }
+
+/// 穴埋めのお題を回答で埋めた表示（お題の文は薄く、回答で埋めた所は太く）。
+struct GiriFilledPromptText: View {
+    let prompt: String
+    let answer: String
+    var body: some View { Text(attributed) }
+
+    private var attributed: AttributedString {
+        var value = AttributedString()
+        for segment in giriFilledPromptSegments(prompt: prompt, answer: answer) {
+            var part = AttributedString(segment.text)
+            if segment.isFill {
+                part.inlinePresentationIntent = .stronglyEmphasized
+                part.foregroundColor = Color.primary
+            } else {
+                part.foregroundColor = Color.secondary
+            }
+            value += part
+        }
+        return value
+    }
+}
+

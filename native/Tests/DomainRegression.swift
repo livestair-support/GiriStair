@@ -1159,6 +1159,67 @@ struct DomainRegression {
             try check(aliasStore.preferences.mergesSelfAliases && !aliasStore.playerDirectory.contains { $0.name == "わたし別名" } && aliasStore.nameKeys(for: "わたし").contains(playerSearchKey("わたし別名")), "self aliases can be shown together")
         }
 
+        // 0.13 parallel prompts in a stage, next stage blocks, prompt styles, fill-in prompts and memo-style answers.
+        do {
+            var first = EventRound(); first.name = "予選1回戦"; first.block = "Bブロック"
+            try check(giriRoundNumberText(first, in: [first]) == nil && !giriNextRoundIsParallel([first]), "a single prompt stage has no round number")
+            var parallelFirst = first; parallelFirst.promptCount = 2
+            try check(giriRoundNumberText(parallelFirst, in: [parallelFirst]) == "1回目" && giriNextRoundIsParallel([parallelFirst]), "1回目 with a total marks parallel prompts")
+            let second = addNextRound(parallelFirst, sameStage: true, defaultStart: Date())
+            try check(second.block == "Bブロック" && second.promptNumber == 2 && second.promptCount == nil && !giriNextRoundIsParallel([parallelFirst, second]), "the parallel round keeps the block until the total is reached")
+            let nextStage = addNextRound(second, sameStage: false, defaultStart: Date())
+            try check(nextStage.block.isEmpty && nextStage.promptNumber == 1 && nextStage.effectiveStageId != second.effectiveStageId, "a next stage starts with a new block")
+            let casual = addNextRound(first, sameStage: false, tournament: false, defaultStart: Date())
+            try check(casual.block == "Bブロック", "casual site rounds keep their block")
+            try check(giriRoundNumberText(second, in: [parallelFirst, second]) == "2回目", "parallel rounds are numbered")
+            var roundJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(parallelFirst)) as? [String: Any] ?? [:]
+            roundJSON.removeValue(forKey: "promptCount")
+            try check(try JSONDecoder().decode(EventRound.self, from: JSONSerialization.data(withJSONObject: roundJSON)).promptCount == nil, "older rounds decode without a prompt total")
+
+            var note = ThoughtNote(); note.kind = .answers
+            try check(note.effectivePromptStyle == .plain, "notes without an image are plain prompts")
+            note.imageDataBase64 = "AAAA"
+            try check(note.effectivePromptStyle == .image, "older notes with an image are image prompts")
+            note.promptStyle = "fill"
+            try check(note.effectivePromptStyle == .fill, "the chosen prompt style is kept")
+            var noteJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(note)) as? [String: Any] ?? [:]
+            noteJSON.removeValue(forKey: "promptStyle")
+            try check(try JSONDecoder().decode(ThoughtNote.self, from: JSONSerialization.data(withJSONObject: noteJSON)).promptStyle.isEmpty, "older notes decode without a prompt style")
+            var markJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(AnswerRecord(text: "案", mark: "△"))) as? [String: Any] ?? [:]
+            try check(markJSON["mark"] as? String == "△", "answer marks are saved")
+            markJSON.removeValue(forKey: "mark")
+            try check(try JSONDecoder().decode(AnswerRecord.self, from: JSONSerialization.data(withJSONObject: markJSON)).mark.isEmpty, "older answers decode without a mark")
+
+            let prompt = "明日転校する予定の女子「ちょっと男子！〇〇〇」"
+            try check(giriPromptBlankCount(prompt) == 1 && giriPromptBlankCount("〇〇が××した") == 2 && giriPromptBlankCount("○を付ける") == 0, "blanks are two or more marks")
+            try check(giriFilledPromptText(prompt: prompt, answer: "そのカバンの膨らみは？") == "明日転校する予定の女子「ちょっと男子！そのカバンの膨らみは？」", "a fill-in answer is shown inside the prompt")
+            let twoBlanks = giriFilledPromptSegments(prompt: "〇〇が××した", answer: "犬／走")
+            try check(twoBlanks.map { $0.text } == ["犬", "が", "走", "した"] && twoBlanks.map { $0.isFill } == [true, false, true, false], "two blanks are filled in order")
+            try check(giriFilledPromptText(prompt: "〇〇が××した", answer: "犬") == "犬が××した", "missing parts keep the blank")
+
+            let memo = "・そのカバンの膨らみは何を示してるんだろうね\n△・外国人がカタコトとかじゃなく水って言ってた\n\n3・一番動いたやつが次の柱になる\n○新聞紙を開いた瞬間に全員の嘘がバレた\n3人で行った"
+            let lines = giriAnswerLines(memo)
+            try check(lines.map(\.mark) == ["", "△", "3", "〇", ""] && lines[1].text == "外国人がカタコトとかじゃなく水って言ってた" && lines[4].text == "3人で行った", "memo lines keep marks and plain answers")
+            var submitted = AnswerRecord(text: "一番動いたやつが次の柱になる", isSubmitted: true, points: 12)
+            let kept = giriReconcileAnswers(lines, previous: [AnswerRecord(text: "そのカバンの膨らみは何を示してるんだろうね"), submitted])
+            try check(kept.count == 5 && kept[2].id == submitted.id && kept[2].isSubmitted && kept[2].points == 12 && kept[2].mark == "3", "rewriting the memo keeps the submitted answer and its result")
+            submitted.text = "古い文"
+            let edited = giriReconcileAnswers([GiriAnswerLine(mark: "", text: "直した文")], previous: [submitted])
+            try check(edited.first?.id == submitted.id && edited.first?.isSubmitted == true, "an edited line keeps its place")
+            try check(giriAnswerMemo(kept).components(separatedBy: "\n")[1] == "△・外国人がカタコトとかじゃなく水って言ってた", "answers return to the memo with their marks")
+
+            let tiled = giriMergeTileLines([GiriOCRLine(text: "参加者 (3人)", midX: 0.2, midY: 0.400, height: 0.004),
+                                            GiriOCRLine(text: "参加者 (3人)", midX: 0.2, midY: 0.401, height: 0.004),
+                                            GiriOCRLine(text: "参加者 (3人)", midX: 0.2, midY: 0.700, height: 0.004)])
+            try check(tiled.count == 2, "lines read twice in overlapping parts are merged")
+            func row(_ text: String, _ y: Double, h: Double = 0.006) -> GiriOCRLine { GiriOCRLine(text: text, midX: 0.3, midY: y, height: h) }
+            let noHeader = giriEventPageDraft(lines: [row("2026年10月18日[日] 13:00", 0.02, h: 0.010), row("ひかり杯", 0.04, h: 0.010), row("詳細", 0.10),
+                                                      row("印象形式の大会！", 0.12, h: 0.012), row("【参加費】", 0.20), row("1000円(中高生500円)", 0.21)],
+                                              known: [], venues: [])
+            try check(noHeader.participants.isEmpty && noHeader.title == "ひかり杯" && noHeader.fee == 1000, "without a participants header nothing is read as a participant")
+            try check(giriIsEventPageSectionStart("【第一回優勝者】") && giriIsEventPageSectionStart("詳細") && !giriIsEventPageSectionStart("ひかり杯"), "description headings end the title search")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

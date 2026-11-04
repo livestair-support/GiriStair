@@ -49,7 +49,11 @@ func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, sites
                 let prefix = event.rounds.isEmpty ? "" : "round:\(escapedID):"
                 var labels: [String] = []
                 if event.meetingType == .tournament && !event.rounds.isEmpty && !round.name.isEmpty { labels.append(round.name) }
-                if !event.rounds.isEmpty { labels.append("\(round.promptNumber)回目") }
+                // 大会は並列のお題がある段階だけ「N回目」を付ける。
+                if !event.rounds.isEmpty {
+                    if event.meetingType != .tournament { labels.append("\(round.promptNumber)回目") }
+                    else if let number = giriRoundNumberText(round, in: event.effectiveRounds) { labels.append(number) }
+                }
                 for label in [event.affiliation, event.block, round.block] where !label.isEmpty && !labels.contains(label) { labels.append(label) }
                 let label = labels.isEmpty ? "" : labels.joined(separator: "・") + "・"
                 if round.submissionEnabled, let deadline = round.submissionEnd {

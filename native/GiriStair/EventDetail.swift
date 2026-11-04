@@ -34,10 +34,11 @@ struct GiriEventDetail: View {
                             roundSection(event, round: round)
                         }
                         if event.meetingType == .tournament {
+                            // 1回目に「全N回」を入れた段階は次の回、それ以外は次の段階を追加する。
+                            let parallel = giriNextRoundIsParallel(event.effectiveRounds)
                             Section {
-                                Button { nextDraft = .nextStage } label: { Label("次の段階を追加", systemImage: "plus.circle") }
-                                if !event.effectiveRounds.isEmpty {
-                                    Button { nextDraft = .sameStage } label: { Label("同じ段階の次回を追加", systemImage: "plus.square.on.square") }
+                                Button { nextDraft = parallel ? .sameStage : .nextStage } label: {
+                                    Label(parallel ? "同じ段階の次の回を追加" : "次の段階を追加", systemImage: "plus.circle")
                                 }
                             }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
                         }
@@ -406,7 +407,10 @@ struct GiriEventDetail: View {
         })
     }
 
-    private func roundTitle(_ round: EventRound) -> String { "\(round.name) \(round.promptNumber)回目" }
+    private func roundTitle(_ round: EventRound) -> String {
+        guard let number = giriRoundNumberText(round, in: event?.effectiveRounds ?? []) else { return round.name }
+        return "\(round.name) \(number)"
+    }
 
     private func thoughtsLink(_ event: GiriEvent) -> some View {
         Section {

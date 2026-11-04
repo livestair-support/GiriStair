@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import Vision
+import ImageIO
 
 enum GiriParticipantReadError: LocalizedError {
     case unreadable
@@ -30,23 +31,75 @@ enum GiriParticipantOCR {
     }
 
     /// 文字と位置（トーナメント表の並びを決めるため）。位置は 0〜1、上が 0。
+    /// ページ全体のような縦長の画面は、小さい文字（参加者の名前など）が読めるように縦に分けて読み取る。
     static func recognizeLines(_ data: Data) async throws -> [GiriOCRLine] {
         try await Task.detached(priority: .userInitiated) {
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.recognitionLanguages = ["ja-JP", "en-US"]
-            request.usesLanguageCorrection = false
-            request.automaticallyDetectsLanguage = true
-            let handler = VNImageRequestHandler(data: data, options: [:])
-            try handler.perform([request])
-            let lines = (request.results ?? []).compactMap { observation -> GiriOCRLine? in
-                guard let text = observation.topCandidates(1).first?.string else { return nil }
-                let box = observation.boundingBox
-                return GiriOCRLine(text: text, midX: Double(box.midX), midY: Double(1 - box.midY), height: Double(box.height))
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+                return try GiriParticipantOCR.recognizeWholeImage(data)
             }
-            guard !lines.isEmpty else { throw GiriParticipantReadError.noText }
-            return lines
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            let orientation = (properties?[kCGImagePropertyOrientation] as? UInt32).flatMap(CGImagePropertyOrientation.init(rawValue:)) ?? .up
+            let width = image.width, height = image.height
+            let tileHeight = max(1, Int(Double(width) * 1.5))
+            // 回転している写真や、縦長ではない画面はそのまま読む。
+            guard orientation == .up, width > 0, height > tileHeight * 5 / 4 else { return try GiriParticipantOCR.recognizeWholeImage(data) }
+            let step = max(1, tileHeight * 4 / 5)
+            var lines: [GiriOCRLine] = []
+            var top = 0
+            while top < height {
+                let tileTop = min(top, max(0, height - tileHeight))
+                let tileRect = CGRect(x: 0, y: tileTop, width: width, height: min(tileHeight, height - tileTop))
+                if let tile = image.cropping(to: tileRect) {
+                    let isFirst = tileTop == 0, isLast = tileTop + Int(tileRect.height) >= height
+                    for observation in try GiriParticipantOCR.observations(in: tile) {
+                        guard let text = observation.topCandidates(1).first?.string else { continue }
+                        let box = observation.boundingBox
+                        // 切れ目にかかった行は、重なっている隣の部分で読む。
+                        let fromTop = 1 - box.maxY, fromBottom = box.minY
+                        if !isFirst && fromTop < 0.02 { continue }
+                        if !isLast && fromBottom < 0.02 { continue }
+                        let tileH = Double(tileRect.height)
+                        let midY = (Double(tileTop) + (1 - Double(box.midY)) * tileH) / Double(height)
+                        lines.append(GiriOCRLine(text: text, midX: Double(box.midX), midY: midY, height: Double(box.height) * tileH / Double(height)))
+                    }
+                }
+                if tileTop + tileHeight >= height { break }
+                top += step
+            }
+            let merged = giriMergeTileLines(lines)
+            guard !merged.isEmpty else { throw GiriParticipantReadError.noText }
+            return merged
         }.value
+    }
+
+    private static func textRequest() -> VNRecognizeTextRequest {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["ja-JP", "en-US"]
+        request.usesLanguageCorrection = false
+        request.automaticallyDetectsLanguage = true
+        // 既定（画像の高さの1/32）より小さい文字も読む。
+        request.minimumTextHeight = 0.01
+        return request
+    }
+
+    private static func observations(in image: CGImage) throws -> [VNRecognizedTextObservation] {
+        let request = textRequest()
+        try VNImageRequestHandler(cgImage: image, orientation: .up, options: [:]).perform([request])
+        return request.results ?? []
+    }
+
+    private static func recognizeWholeImage(_ data: Data) throws -> [GiriOCRLine] {
+        let request = textRequest()
+        try VNImageRequestHandler(data: data, options: [:]).perform([request])
+        let lines = (request.results ?? []).compactMap { observation -> GiriOCRLine? in
+            guard let text = observation.topCandidates(1).first?.string else { return nil }
+            let box = observation.boundingBox
+            return GiriOCRLine(text: text, midX: Double(box.midX), midY: Double(1 - box.midY), height: Double(box.height))
+        }
+        guard !lines.isEmpty else { throw GiriParticipantReadError.noText }
+        return lines
     }
 }
 
