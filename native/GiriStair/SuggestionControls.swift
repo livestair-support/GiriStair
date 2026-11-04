@@ -135,6 +135,44 @@ struct GiriPlayerSuggestionField: View {
     }
 }
 
+/// 団体の主催者。団体名はプレイヤー一覧に入れないので、これまで団体として入れた名前から候補を出す。
+struct GiriGroupOrganizerField: View {
+    @EnvironmentObject private var store: GiriStore
+    @Binding var text: String
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("主催者").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                .fixedSize().padding(.top, 2)
+            GiriSuggestionTextField(placeholder: "団体名", text: $text,
+                suggestions: groupNames, textAlignment: .trailing)
+        }
+    }
+    private var groupNames: [String] {
+        var seen = Set<String>()
+        return store.events.filter(\.organizerIsGroup).sorted { $0.createdAt > $1.createdAt }
+            .map { $0.organizer.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    }
+}
+
+/// 大会の審査方法（段階ごとの審査方法が空の時に使う）。候補は段階の入力と同じ。
+struct GiriJudgingField: View {
+    @Binding var text: String
+    var body: some View {
+        HStack(spacing: 8) {
+            GiriEditorLabel("審査方法")
+            TextField("挙手・加点など", text: $text).multilineTextAlignment(.trailing)
+            Menu {
+                ForEach(GiriStageEditor.judgings, id: \.self) { value in Button(value) { text = value } }
+            } label: {
+                Image(systemName: "chevron.up.chevron.down").font(.caption.weight(.medium))
+            }
+            .tint(.primary)
+            .accessibilityLabel("審査方法の候補")
+        }
+    }
+}
+
 /// チーム名の入力。左に項目名、右に入力（ライブ登録の会場名と同じ形）。
 /// この大会で登録したチームを先に出し、空欄のままでも選べる。
 struct GiriTeamNameField: View {

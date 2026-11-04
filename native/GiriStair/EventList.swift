@@ -733,6 +733,10 @@ struct GiriEventCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 4) {
                     GiriListBadge(text: event.meetingType.title, color: accent)
+                    // 生大喜利で、プレイヤーとして出ない立場（主催・観覧・リザーバー）。
+                    if event.eventFormat == .live && event.selfRole != .player {
+                        GiriListBadge(text: event.selfRole.shortTitle(tournament: event.meetingType == .tournament), color: accent)
+                    }
                     if event.participationState() != .completed {
                         GiriListBadge(text: event.participationState().title, color: accent)
                     }
@@ -759,11 +763,12 @@ struct GiriEventCard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).layoutPriority(2)
             }
-            if !event.participants.isEmpty {
+            // チーム戦はチームのメンバーも出す（参加者ではなくチームとして入力するため）。
+            if !event.everyone.isEmpty {
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "person.2").font(.caption2.weight(.semibold))
                         .foregroundStyle(accent).frame(width: 15).padding(.top, 2)
-                    Text(event.participants.joined(separator: " / ")).font(.caption)
+                    Text(event.everyone.joined(separator: " / ")).font(.caption)
                         .foregroundStyle(.primary).lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)

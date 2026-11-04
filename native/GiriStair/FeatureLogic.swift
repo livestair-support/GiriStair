@@ -384,7 +384,7 @@ extension EventRound {
 
 extension GiriEvent {
     func endedRoundsNeedingResult(now: Date = Date()) -> [EventRound] {
-        guard isActualParticipant, eventFormat.hasOnlineRounds else { return [] }
+        guard isActualParticipant, isSelfPlayer, eventFormat.hasOnlineRounds else { return [] }
         return effectiveRounds.filter { round in
             guard let end = round.votingEnd, end <= now else { return false }
             return !hasRecordedResult(for: round) && !promptedResultKeys.contains(round.resultPromptKey)
@@ -560,7 +560,7 @@ struct GiriTournamentSummary: Equatable {
 
 func giriTournamentSummary(_ events: [GiriEvent], now: Date = Date()) -> GiriTournamentSummary {
     var value = GiriTournamentSummary()
-    for event in events where event.meetingType == .tournament && event.isCountableParticipation(now: now) {
+    for event in events where event.meetingType == .tournament && event.isSelfPlayer && event.isCountableParticipation(now: now) {
         let team = event.tournamentFormat != .individual
         value.completed += 1
         if team { value.teamCount += 1 } else { value.individualCount += 1 }
@@ -596,12 +596,13 @@ func giriRateText(_ passed: Int, _ total: Int) -> String {
 }
 
 /// 段階の形式・審査方法などごとの勝ち抜き率（通過・優勝 ÷ 結果を入れた段階）。
-func giriStagePassRates(_ events: [GiriEvent], now: Date = Date(), by key: (ResultStage) -> String) -> [GiriRateRow] {
+/// key は大会と段階から分類名を返す（段階が空なら大会の審査方法・対戦形式を使うなど）。
+func giriStagePassRates(_ events: [GiriEvent], now: Date = Date(), by key: (GiriEvent, ResultStage) -> String) -> [GiriRateRow] {
     var counts: [String: (label: String, passed: Int, total: Int)] = [:]
-    for event in events where event.meetingType == .tournament && event.isCountableParticipation(now: now) {
+    for event in events where event.meetingType == .tournament && event.isSelfPlayer && event.isCountableParticipation(now: now) {
         for stage in event.stageResults {
             guard let passed = stage.passed else { continue }
-            let label = key(stage).trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = key(event, stage).trimmingCharacters(in: .whitespacesAndNewlines)
             let id = playerSearchKey(label)
             guard !id.isEmpty else { continue }
             var row = counts[id] ?? (label, 0, 0)
@@ -625,7 +626,7 @@ struct GiriOrganizerRow: Identifiable, Equatable {
 
 func giriOrganizerResults(_ events: [GiriEvent], now: Date = Date()) -> [GiriOrganizerRow] {
     var rows: [String: GiriOrganizerRow] = [:]
-    for event in events where event.meetingType == .tournament && event.isCountableParticipation(now: now) {
+    for event in events where event.meetingType == .tournament && event.isSelfPlayer && event.isCountableParticipation(now: now) {
         let name = event.organizer.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = playerSearchKey(name)
         guard !key.isEmpty else { continue }
@@ -769,3 +770,52 @@ func giriBracketOpponents(_ bracket: [String], round: Int, isSelf: (String) -> B
     guard start < bracket.count else { return [] }
     return Array(bracket[start..<min(bracket.count, start + half)])
 }
+
+extension GiriEvent {
+    /// 参加者とチームのメンバー（読みで重複を除く）。チーム戦は参加者ではなくチームとして入力する。
+    var everyone: [String] {
+        var seen = Set<String>()
+        return (participants + teams.flatMap(\.members))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    }
+    /// まだどのチームにも入っていない参加者（即席チームのチーム分け前）。
+    var unassignedParticipants: [String] {
+        let assigned = Set(teams.flatMap(\.members).map(playerSearchKey))
+        var seen = Set<String>()
+        return participants.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !assigned.contains(playerSearchKey($0)) && seen.insert(playerSearchKey($0)).inserted }
+    }
+}
+
+extension GiriEvent {
+    /// 自分がプレイヤーとして出た（出る）会。戦績・結果の入力案内はこれだけを対象にする。
+    var isSelfPlayer: Bool { selfRole == .player }
+    /// 戦績に数える大会（参加して、プレイヤーとして出たもの）。
+    var countsForResults: Bool { meetingType == .tournament && isActualParticipant && isSelfPlayer }
+}
+
+extension GiriEvent {
+    /// 主催（個人）・共催・MC・審査員として名前がある人。
+    var staffNames: [String] { (organizerIsGroup ? [] : [organizer]) + coOrganizers + mcs + judges }
+    /// 主催者の表示（団体は「（団体）」を添える）。
+    var organizerText: String {
+        let name = organizer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return "" }
+        return organizerIsGroup ? name + "（団体）" : name
+    }
+}
+
+extension GiriEvent {
+    /// 主催（個人）または共催としてこの人の名前がある。
+    func isHosted(byKey key: String) -> Bool {
+        guard !key.isEmpty else { return false }
+        return (!organizerIsGroup && playerSearchKey(organizer) == key) || coOrganizers.contains { playerSearchKey($0) == key }
+    }
+    /// MC・審査員としてこの人の名前がある。
+    func isMCOrJudge(byKey key: String) -> Bool {
+        guard !key.isEmpty else { return false }
+        return (mcs + judges).contains { playerSearchKey($0) == key }
+    }
+}
+

@@ -332,13 +332,11 @@ struct TournamentResult: Codable, Equatable {
     /// 0.10：最終結果「決勝進出」（outcome は placed）。順位は任意で placement、決勝の人数は finalEntrants。
     var finalist: Bool = false
     var finalEntrants: Int? = nil
-    /// 0.10：トーナメント表の並び（上から順。読み取り・手入力）。自分の山の対戦相手の候補に使う。
-    var bracket: [String] = []
 }
 
 extension TournamentResult {
     private enum CodingKeys: String, CodingKey {
-        case format, outcome, teamName, members, stages, memo, bestOf, finalist, finalEntrants, bracket
+        case format, outcome, teamName, members, stages, memo, bestOf, finalist, finalEntrants
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -358,7 +356,6 @@ extension TournamentResult {
         bestOf = try c.decodeIfPresent(Int.self, forKey: .bestOf)
         finalist = try c.decodeIfPresent(Bool.self, forKey: .finalist) ?? false
         finalEntrants = try c.decodeIfPresent(Int.self, forKey: .finalEntrants)
-        bracket = try c.decodeIfPresent([String].self, forKey: .bracket) ?? []
 
         try validate()
     }
@@ -380,7 +377,6 @@ extension TournamentResult {
         try c.encode(bestOf, forKey: .bestOf)
         try c.encode(finalist, forKey: .finalist)
         try c.encode(finalEntrants, forKey: .finalEntrants)
-        try c.encode(bracket, forKey: .bracket)
     }
 }
 
@@ -442,11 +438,51 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var hashtag: String = ""
     /// 通常サイトの回を「今回は見送る」にした（参加回数・通知・結果入力の対象外）。
     var siteSkipped: Bool = false
+    /// 0.10：チーム戦で、当日にチームを分ける（参加者を先に入れ、後からチームへ振り分ける）。
+    var impromptuTeams: Bool = false
+    /// 0.10：大会の対戦形式がトーナメント（1対1の勝ち抜き）。個人戦では参加者の並びをトーナメント表の順に使う。
+    var knockout: Bool = false
+    /// 0.10：大会の審査方法（段階ごとの審査方法が空の時に使う）。
+    var judging: String = ""
+    /// 0.10（生大喜利）：共催・MC・審査員。主催者と同じく、プレイヤーとは別に記録する。MC・審査員は大会だけ。
+    var coOrganizers: [String] = []
+    var mcs: [String] = []
+    var judges: [String] = []
+    /// 0.10（生大喜利）：主催が団体（個人ではない）。団体名はプレイヤー一覧に入れない。
+    var organizerIsGroup: Bool = false
+    /// 0.10（生大喜利）：自分の立場（プレイヤー／主催・MCなど／観覧／リザーバー）。プレイヤー以外は戦績・結果の案内の対象外。
+    /// 知らない値（新しい版の値）はプレイヤーとして読む。
+    var selfRole: GiriSelfRole = .player
+}
+
+/// その会での自分の立場。主催・共催・MCの名前は主催者・共催・MCの欄に入れ、ここでは「出たかどうか」を表す。
+enum GiriSelfRole: String, CaseIterable, Identifiable {
+    case player, staff, spectator, reserve
+    var id: String { rawValue }
+    /// 通常の会は主催がMCを兼ねることが多いので「主催」、大会は「主催・MC・審査員」。リザーバーは大会だけ。
+    static func choices(tournament: Bool) -> [GiriSelfRole] { tournament ? allCases : [.player, .staff, .spectator] }
+    func title(tournament: Bool) -> String {
+        switch self {
+        case .player: return "プレイヤー"
+        case .staff: return tournament ? "主催・MC・審査員（出ない）" : "主催（出ない）"
+        case .spectator: return "観覧"
+        case .reserve: return "リザーバー（当日キャンセルに備えて観覧）"
+        }
+    }
+    /// 一覧・詳細の短い表示。
+    func shortTitle(tournament: Bool) -> String {
+        switch self {
+        case .player: return "プレイヤー"
+        case .staff: return tournament ? "運営" : "主催"
+        case .spectator: return "観覧"
+        case .reserve: return "リザーバー"
+        }
+    }
 }
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -544,6 +580,14 @@ extension GiriEvent {
         entryFee = try c.decodeIfPresent(Int.self, forKey: .entryFee)
         hashtag = try c.decodeIfPresent(String.self, forKey: .hashtag) ?? ""
         siteSkipped = try c.decodeIfPresent(Bool.self, forKey: .siteSkipped) ?? false
+        impromptuTeams = try c.decodeIfPresent(Bool.self, forKey: .impromptuTeams) ?? false
+        knockout = try c.decodeIfPresent(Bool.self, forKey: .knockout) ?? false
+        judging = try c.decodeIfPresent(String.self, forKey: .judging) ?? ""
+        coOrganizers = try c.decodeIfPresent([String].self, forKey: .coOrganizers) ?? []
+        mcs = try c.decodeIfPresent([String].self, forKey: .mcs) ?? []
+        judges = try c.decodeIfPresent([String].self, forKey: .judges) ?? []
+        organizerIsGroup = try c.decodeIfPresent(Bool.self, forKey: .organizerIsGroup) ?? false
+        selfRole = (try c.decodeIfPresent(String.self, forKey: .selfRole)).flatMap(GiriSelfRole.init(rawValue:)) ?? .player
 
         try validate()
     }
@@ -637,6 +681,14 @@ extension GiriEvent {
         try c.encode(entryFee, forKey: .entryFee)
         try c.encode(hashtag, forKey: .hashtag)
         try c.encode(siteSkipped, forKey: .siteSkipped)
+        try c.encode(impromptuTeams, forKey: .impromptuTeams)
+        try c.encode(knockout, forKey: .knockout)
+        try c.encode(judging, forKey: .judging)
+        try c.encode(coOrganizers, forKey: .coOrganizers)
+        try c.encode(mcs, forKey: .mcs)
+        try c.encode(judges, forKey: .judges)
+        try c.encode(organizerIsGroup, forKey: .organizerIsGroup)
+        try c.encode(selfRole.rawValue, forKey: .selfRole)
 
     }
 }

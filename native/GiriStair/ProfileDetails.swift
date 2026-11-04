@@ -740,7 +740,7 @@ struct GiriPlayerDetail: View {
     private func basicPage(_ player: GiriPlayer) -> some View {
         let key = playerSearchKey(player.name)
         let together = store.events.filter { $0.isActualParticipant && giriEventPeople($0).contains { playerSearchKey($0) == key } }
-        let hosted = store.events.filter { $0.isActualParticipant && playerSearchKey($0.organizer) == key }
+        let hosted = store.events.filter { $0.isActualParticipant && $0.isHosted(byKey: key) }
         let favorites = store.notes.flatMap(\.otherAnswerRecords).filter { playerSearchKey($0.answerer) == key }
         let authored = store.notes.filter { playerSearchKey($0.promptAuthor) == key }
         return ScrollView {
@@ -776,7 +776,7 @@ struct GiriPlayerDetail: View {
                         GiriProfileShortcutRow(title: "主催した会", systemImage: "person.crop.circle", accentColor: AppSectionAccent.live,
                                                countText: "\(hosted.count)件") {
                             GiriProfileRecordsPage(title: "\(player.name)の主催") { event in
-                                playerSearchKey(event.organizer) == key
+                                event.isHosted(byKey: key)
                             }
                         }
                     }
@@ -893,7 +893,9 @@ struct GiriPlayerDetail: View {
             year == "all" || giriAnalyticsDate(event).map { String(Calendar(identifier: .gregorian).component(.year, from: $0)) } == year
         }
         let period = completed.filter(inYear)
-        let hosted = store.events.filter { $0.isCountableParticipation(now: now) && playerSearchKey($0.organizer) == key && inYear($0) }
+        // 主催は共催も含める。MC・審査員は別に数える。
+        let hosted = store.events.filter { $0.isCountableParticipation(now: now) && $0.isHosted(byKey: key) && inYear($0) }
+        let staffed = store.events.filter { $0.isCountableParticipation(now: now) && $0.isMCOrJudge(byKey: key) && inYear($0) }
         let ordered = completed.filter { giriAnalyticsDate($0) != nil }.sorted { (giriAnalyticsDate($0) ?? .distantPast) < (giriAnalyticsDate($1) ?? .distantPast) }
         let upcoming = together.filter { [.upcoming, .ongoing].contains($0.participationState(now: now)) }
             .sorted { (giriAnalyticsDate($0) ?? .distantFuture) < (giriAnalyticsDate($1) ?? .distantFuture) }
@@ -919,9 +921,16 @@ struct GiriPlayerDetail: View {
                                         total: mine.filter(inYear).count, caption: "一緒に参加", accentColor: accent)
                     }
                     HStack {
-                        Text("主催した会").font(.subheadline).foregroundStyle(.secondary)
+                        Text("主催した会（共催を含む）").font(.subheadline).foregroundStyle(.secondary)
                         Spacer()
                         Text("\(hosted.count)回").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    }
+                    if !staffed.isEmpty {
+                        HStack {
+                            Text("MC・審査員").font(.subheadline).foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(staffed.count)回").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                        }
                     }
                     Divider().overlay(appSeparatorColor)
                     GiriProfileDateRow(title: "初めて一緒に参加した日", event: ordered.first)

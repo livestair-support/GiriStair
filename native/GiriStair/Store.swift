@@ -76,7 +76,8 @@ final class GiriStore: ObservableObject {
     }
 
     private func referencedNames(_ event: GiriEvent) -> [String] {
-        [event.organizer] + event.participants + event.teams.flatMap(\.members) + (event.tournamentResult?.members ?? []) + event.standings.flatMap(\.playerNames)
+        // 団体の主催はプレイヤー一覧に入れない。
+        (event.organizerIsGroup ? [] : [event.organizer]) + event.coOrganizers + event.mcs + event.judges + event.participants + event.teams.flatMap(\.members) + (event.tournamentResult?.members ?? []) + event.standings.flatMap(\.playerNames)
     }
 
     var playerDirectory: [GiriPlayer] {
@@ -123,7 +124,8 @@ final class GiriStore: ObservableObject {
     func suggestPlayers(_ query: String, organizer: Bool = false) -> [GiriPlayer] {
         var counts: [String: Int] = [:]
         for event in events where event.status != .canceled {
-            for name in organizer ? [event.organizer] : Array(Set(event.participants)) { counts[playerSearchKey(name), default: 0] += 1 }
+            // 主催の候補は共催も含め、参加者の候補はチームのメンバーも数える。
+            for name in organizer ? (event.organizerIsGroup ? [] : [event.organizer]) + event.coOrganizers : event.everyone { counts[playerSearchKey(name), default: 0] += 1 }
         }
         let key = playerSearchKey(query)
         return playerDirectory.filter { key.isEmpty || playerSearchKey($0.name).contains(key) || playerSearchKey($0.furigana).contains(key) }.sorted {
@@ -291,10 +293,17 @@ final class GiriStore: ObservableObject {
         func rename(_ value: String) -> String { playerSearchKey(value) == key ? name : value }
         for index in next.events.indices {
             next.events[index].organizer = rename(next.events[index].organizer)
+            next.events[index].coOrganizers = next.events[index].coOrganizers.map(rename)
+            next.events[index].mcs = next.events[index].mcs.map(rename)
+            next.events[index].judges = next.events[index].judges.map(rename)
             next.events[index].participants = next.events[index].participants.map(rename)
             for team in next.events[index].teams.indices { next.events[index].teams[team].members = next.events[index].teams[team].members.map(rename) }
             for standing in next.events[index].standings.indices { next.events[index].standings[standing].playerNames = next.events[index].standings[standing].playerNames.map(rename) }
-            if var result = next.events[index].tournamentResult { result.members = result.members.map(rename); next.events[index].tournamentResult = result }
+            if var result = next.events[index].tournamentResult {
+                result.members = result.members.map(rename)
+                for stage in result.stages.indices { result.stages[stage].opponents = result.stages[stage].opponents.map(rename) }
+                next.events[index].tournamentResult = result
+            }
         }
         for index in next.notes.indices {
             if next.notes[index].isOthersAnswer { next.notes[index].answerer = rename(next.notes[index].answerer) }

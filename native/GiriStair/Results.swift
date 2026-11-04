@@ -21,7 +21,7 @@ struct GiriResultsView: View {
     private var accent: Color { GiriEventPresentation.accent(selectedFormat) }
     private var tournaments: [GiriEvent] {
         store.events.filter {
-            $0.meetingType == .tournament && $0.isActualParticipant && $0.eventFormat == selectedFormat &&
+            $0.meetingType == .tournament && $0.isActualParticipant && $0.isSelfPlayer && $0.eventFormat == selectedFormat &&
             (year == "all" || String(Calendar(identifier: .gregorian).component(.year, from: GiriEventPresentation.date($0) ?? $0.createdAt)) == year)
         }
     }
@@ -103,12 +103,16 @@ struct GiriResultsView: View {
             }
             // ネット大喜利（長考）は段階の形式がほぼ1つなので、形式・審査方法ごとは出さない。
             if selectedFormat != .onlineLong {
-                let lineups = giriStagePassRates(tournaments) { $0.lineup }
+                let lineups = giriStagePassRates(tournaments) { event, stage in
+                    stage.lineup.isEmpty && event.knockout ? "タイマン" : stage.lineup
+                }
                 if !lineups.isEmpty {
                     rateListCard("形式ごとの勝ち抜き", systemImage: "person.3.sequence", rows: lineups)
                         .padding(.horizontal, 18).padding(.vertical, 6)
                 }
-                let judgings = giriStagePassRates(tournaments) { $0.judging }
+                let judgings = giriStagePassRates(tournaments) { event, stage in
+                    stage.judging.isEmpty ? event.judging : stage.judging
+                }
                 if !judgings.isEmpty {
                     rateListCard("審査方法ごとの勝ち抜き", systemImage: "hand.raised", rows: judgings)
                         .padding(.horizontal, 18).padding(.vertical, 6)

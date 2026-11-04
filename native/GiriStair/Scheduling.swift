@@ -81,7 +81,7 @@ func nextEventRound(rounds: [EventRound], id: String = UUID().uuidString, prefer
     addNextRound(rounds.last, id: id, sameStage: sameStage, tournament: tournament, defaultStart: defaultSubmissionStart(referenceDate, preferences: preferences, calendar: calendar), submissionDays: preferences.submissionDays, votingDays: preferences.votingDays, calendar: calendar)
 }
 func eventNeedsResult(_ event: GiriEvent, now: Date = Date()) -> Bool {
-    guard event.eventFormat == .live, event.meetingType == .tournament, event.isActualParticipant, !event.hasFinalResult else { return false }
+    guard event.eventFormat == .live, event.meetingType == .tournament, event.isActualParticipant, event.isSelfPlayer, !event.hasFinalResult else { return false }
     if let end = event.endsAt { return now >= end }
     guard let day = event.eventDate ?? event.startsAt else { return false }
     let next = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: day)) ?? day

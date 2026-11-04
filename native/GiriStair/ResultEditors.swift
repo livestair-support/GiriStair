@@ -1,5 +1,4 @@
 import SwiftUI
-import PhotosUI
 
 /// Date dependencies match TicketScheduleViews: only untouched derived fields move.
 struct GiriRoundFields: View {
@@ -177,9 +176,6 @@ struct GiriResultEntry: View {
     @State private var nextDraft: GiriRoundDraftAction?
     @State private var resultSaved = false
     @State private var editingStageID: String?
-    @State private var bracketPhoto: PhotosPickerItem?
-    @State private var readingBracket = false
-    @State private var bracketDraft: GiriBracketDraft?
 
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
@@ -190,8 +186,16 @@ struct GiriResultEntry: View {
         Form {
             if let event {
                 eventSection(event)
-                stageListSection(event)
-                finalSection(event)
+                if event.isSelfPlayer {
+                    stageListSection(event)
+                    finalSection(event)
+                } else {
+                    // 主催・観覧などで出ていない大会は、上位成績だけを残す（戦績には数えない）。
+                    Section {
+                        Text("この大会には「\(event.selfRole.shortTitle(tournament: true))」として参加しているため、自分の結果は記録しません。優勝・準優勝などは下に残せます。")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+                }
                 standingSections(event)
             } else {
                 Text("この会は削除されています。").foregroundStyle(.secondary)
@@ -240,48 +244,32 @@ struct GiriResultEntry: View {
         .sheet(item: $nextDraft, onDismiss: { if resultSaved { dismiss() } }) { action in
             NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
         }
-        .sheet(item: $bracketDraft) { draft in
-            NavigationStack { GiriBracketEditor(names: draft.names, onApply: applyBracket) }
-        }
-        .onChange(of: bracketPhoto) { _, item in
-            guard let item else { return }
-            readingBracket = true
-            Task {
-                do {
-                    guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
-                    let lines = try await GiriParticipantOCR.recognizeLines(data)
-                    bracketDraft = GiriBracketDraft(names: giriBracketOrder(lines))
-                } catch { store.errorMessage = error.localizedDescription }
-                readingBracket = false
-                bracketPhoto = nil
-            }
-        }
+    }
+
+    /// 登録したトーナメント表（生大喜利・個人戦のトーナメントは参加者の並び）。
+    private func bracket(_ event: GiriEvent) -> [String] {
+        guard event.knockout, event.tournamentFormat == .individual else { return [] }
+        return event.participants.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 
     /// 対戦相手の候補：トーナメント表があれば、その回戦で当たりうる隣の山を先に出す。
     private func stageNamePriority(_ stageID: String, event: GiriEvent) -> [String] {
         let others = otherPlayerNames(event)
         let wide = result.stages.filter { $0.roundId == nil }
-        guard !result.bracket.isEmpty, let index = wide.firstIndex(where: { $0.id == stageID }) else { return others }
-        let candidates = giriBracketOpponents(result.bracket, round: index + 1, isSelf: store.preferences.isSelf)
-        return candidates + others
+        let names = bracket(event)
+        guard !names.isEmpty, let index = wide.firstIndex(where: { $0.id == stageID }) else { return others }
+        return giriBracketOpponents(names, round: index + 1, isSelf: store.preferences.isSelf) + others
     }
 
-    /// 読み取ったトーナメント表を保存し、段階がなければ「1回戦〜決勝」を作る（1回戦の相手も入れる）。
-    private func applyBracket(_ names: [String]) {
-        result.bracket = names
-        let isSelf = store.preferences.isSelf
-        let firstOpponents = giriBracketOpponents(names, round: 1, isSelf: isSelf)
-        if result.stages.contains(where: { $0.roundId == nil }) {
-            if let index = result.stages.firstIndex(where: { $0.roundId == nil }), result.stages[index].opponents.isEmpty {
-                result.stages[index].opponents = firstOpponents
-            }
-            return
-        }
+    /// トーナメント表から「1回戦〜決勝」の段階を作る（1回戦の相手も入れる）。
+    private func addBracketStages(_ event: GiriEvent) {
+        let names = bracket(event)
+        let firstOpponents = giriBracketOpponents(names, round: 1, isSelf: store.preferences.isSelf)
         for (offset, name) in giriBracketStageNames(names.count).enumerated() {
             var stage = ResultStage()
             stage.name = name
             stage.lineup = "タイマン"
+            stage.judging = event.judging
             if offset == 0 { stage.opponents = firstOpponents }
             result.stages.append(stage)
             existing.insert(stage.id)
@@ -362,12 +350,15 @@ struct GiriResultEntry: View {
                 }
                 .tint(accentActionColor)
             }
-            if !(event.eventFormat.hasOnlineRounds && !event.effectiveRounds.isEmpty) {
-                bracketRow
+            if bracket(event).count >= 2 {
+                bracketRow(event, hasStages: !wide.isEmpty)
             }
             Button {
                 var stage = ResultStage()
                 stage.name = wide.isEmpty ? "予選" : giriEditorNextStage(wide.last?.name ?? "")
+                // 基本情報の審査方法・対戦形式を初期値にする（段階ごとに変えられる）。
+                stage.judging = event.judging
+                if event.knockout { stage.lineup = "タイマン" }
                 result.stages.append(stage)
                 existing.insert(stage.id)
                 editingStageID = stage.id
@@ -381,34 +372,30 @@ struct GiriResultEntry: View {
         return [source.title, names].filter { !$0.isEmpty }.joined(separator: "：")
     }
 
-    /// トーナメント表（画像の文字を読み取り、上から順の名前にする）。
-    @ViewBuilder private var bracketRow: some View {
-        if result.bracket.isEmpty {
-            PhotosPicker(selection: $bracketPhoto, matching: .images) {
-                HStack {
-                    Label("トーナメント表を読み取る", systemImage: "text.viewfinder")
-                    Spacer()
-                    if readingBracket { ProgressView() }
-                }
+    /// トーナメント表（登録の参加者の並び）。段階がなければ回戦を作れる。
+    @ViewBuilder private func bracketRow(_ event: GiriEvent, hasStages: Bool) -> some View {
+        let names = bracket(event)
+        if hasStages {
+            HStack {
+                Label("トーナメント表", systemImage: "list.number").foregroundStyle(.secondary)
+                Spacer()
+                Text(bracketCaption(names)).font(.subheadline).foregroundStyle(.secondary)
             }
-            .disabled(readingBracket)
-            .tint(accentActionColor)
         } else {
-            Button { bracketDraft = GiriBracketDraft(names: result.bracket) } label: {
-                HStack {
-                    Label("トーナメント表", systemImage: "list.number")
-                    Spacer()
-                    Text(bracketCaption).font(.subheadline).foregroundStyle(.secondary)
+            Button { addBracketStages(event) } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("トーナメント表から回戦を作る", systemImage: "list.number")
+                    Text(bracketCaption(names) + "・" + giriBracketStageNames(names.count).joined(separator: "→"))
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .tint(accentActionColor)
         }
     }
 
-    private var bracketCaption: String {
-        let count = result.bracket.count
-        guard let position = result.bracket.firstIndex(where: store.preferences.isSelf) else { return "\(count)人" }
-        return "\(count)人・自分は\(position + 1)番目"
+    private func bracketCaption(_ names: [String]) -> String {
+        guard let position = names.firstIndex(where: store.preferences.isSelf) else { return "\(names.count)人" }
+        return "\(names.count)人・自分は\(position + 1)番目"
     }
 
     private func stageRow(_ stage: ResultStage, nested: Bool) -> some View {

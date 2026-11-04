@@ -95,7 +95,7 @@ struct GiriStatisticsView: View {
             }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
             ranking("会場別の参加回数", "mappin.and.ellipse", .venue, giriRanks(records.filter { $0.eventFormat.hasLiveTiming }.map(\.venue))) { entry in records.filter { $0.eventFormat.hasLiveTiming && $0.venue == entry.name } }
             ranking("主催者別の参加回数", "person.crop.circle", .memo, giriRanks(records.map(\.organizer))) { entry in records.filter { $0.organizer == entry.name } }
-            ranking("一緒に参加した人", "person.2", .artist, giriRanks(records.flatMap { Array(Set($0.participants.filter { !store.preferences.isSelf($0) })) })) { entry in records.filter { $0.participants.contains(entry.name) } }
+            ranking("一緒に参加した人", "person.2", .artist, giriRanks(records.flatMap { $0.everyone.filter { !store.preferences.isSelf($0) } })) { entry in records.filter { $0.everyone.contains(entry.name) } }
             ranking("サイト別の参加回数", "globe", .artist, giriRanks(records.filter { $0.eventFormat.hasOnlineRounds }.map { giriSiteName($0, sites: store.onlineSites) })) { entry in records.filter { $0.eventFormat.hasOnlineRounds && giriSiteName($0, sites: store.onlineSites) == entry.name } }
         }.appIndexListStyle().giriNavigationBarStyle().navigationTitle("集計").navigationBarTitleDisplayMode(.inline)
     }
@@ -502,7 +502,7 @@ struct GiriSharingView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 12) {
                     if showOrganizers { paperRanking("主催者", giriRanks(records.map(\.organizer))) }
-                    if showParticipants { paperRanking("一緒に参加した人", giriRanks(records.flatMap { Array(Set($0.participants.filter { !store.preferences.isSelf($0) })) })) }
+                    if showParticipants { paperRanking("一緒に参加した人", giriRanks(records.flatMap { $0.everyone.filter { !store.preferences.isSelf($0) } })) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -598,7 +598,7 @@ struct GiriSharingView: View {
                             }
                         }
                         if showOrganizers && !event.organizer.isEmpty { Text("主催　" + event.organizer).font(.system(size: 12)).opacity(0.7) }
-                        if showParticipants && !event.participants.isEmpty { Text(event.participants.joined(separator: " / ")).font(.system(size: 12)).lineLimit(2).opacity(0.7) }
+                        if showParticipants && !event.everyone.isEmpty { Text(event.everyone.joined(separator: " / ")).font(.system(size: 12)).lineLimit(2).opacity(0.7) }
                         if showResults && event.isCountableParticipation() {
                             if let rank = event.effectivePlacement { Text(rank == 1 ? "優勝" : rank == 2 ? "準優勝" : "\(rank)位").font(.system(size: 13, weight: .bold)).foregroundStyle(AppSectionAccent.ticket) }
                             else if !event.resultText.isEmpty { Text(event.resultText).font(.system(size: 12)).lineLimit(2) }

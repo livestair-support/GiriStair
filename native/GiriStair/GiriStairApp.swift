@@ -132,7 +132,7 @@ private struct GiriRootView: View {
         let now = Date()
         let candidate = store.events.filter { event in
             event.eventFormat == .live && event.meetingType == .tournament &&
-            event.isActualParticipant && !event.hasFinalResult && event.hasEnded(now: now)
+            event.isActualParticipant && event.isSelfPlayer && !event.hasFinalResult && event.hasEnded(now: now)
         }.sorted { ($0.eventDate ?? $0.startsAt ?? $0.createdAt) > ($1.eventDate ?? $1.startsAt ?? $1.createdAt) }.first
         if let candidate {
             var preferences = store.preferences

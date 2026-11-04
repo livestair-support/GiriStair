@@ -799,9 +799,9 @@ struct DomainRegression {
             try check(summary.completed == 4 && summary.champions == 1 && summary.teamChampions == 1 && summary.individualChampions == 0 && summary.finalists == 2, "the summary counts finished tournaments, finalists and the team split")
             try check(summary.qualifierKnown == 4 && summary.qualifierPassed == 3 && giriRateText(summary.qualifierPassed, summary.qualifierKnown) == "75%" && giriRateText(0, 0) == "—", "qualifier pass rate uses tournaments whose first stage is known")
             try check(summary.furthest[.final] == 2 && summary.furthest[.quarterfinal] == 1 && summary.furthest[.qualifier] == 1, "furthest stage compares tournaments with different structures by depth")
-            let lineups = giriStagePassRates([sixth, quarter, qualifierOut], now: summaryNow) { $0.lineup }
+            let lineups = giriStagePassRates([sixth, quarter, qualifierOut], now: summaryNow) { $1.lineup }
             try check(lineups.first { $0.label == "横並び5人" }.map { $0.passed == 2 && $0.total == 3 } == true && lineups.first { $0.label == "タイマン" }.map { $0.passed == 1 && $0.total == 2 } == true, "stage pass rates group by lineup")
-            let judgings = giriStagePassRates([sixth], now: summaryNow) { $0.judging }
+            let judgings = giriStagePassRates([sixth], now: summaryNow) { $1.judging }
             try check(judgings.contains { $0.label == "その他" && $0.total == 1 }, "the other judging method is counted as its own row")
             let organizers = giriOrganizerResults([sixth, quarter, qualifierOut, teamWin], now: summaryNow)
             try check(organizers.first.map { $0.name == "主催A" && $0.entries == 2 && $0.finals == 1 && $0.champions == 0 } == true && organizers.count == 2, "organizer rows count entries, finals and titles")
@@ -833,11 +833,54 @@ struct DomainRegression {
             legacyStage["kind"] = "a-future-kind"
             try check(try JSONDecoder().decode(ResultStage.self, from: JSONSerialization.data(withJSONObject: legacyStage)).kind == nil, "an unknown kind does not stop loading")
             var legacyResult = try JSONSerialization.jsonObject(with: JSONEncoder().encode(sixth.tournamentResult ?? TournamentResult())) as? [String: Any] ?? [:]
-            for key in ["finalist", "finalEntrants", "bracket"] { legacyResult.removeValue(forKey: key) }
+            for key in ["finalist", "finalEntrants"] { legacyResult.removeValue(forKey: key) }
             let decodedResult = try JSONDecoder().decode(TournamentResult.self, from: JSONSerialization.data(withJSONObject: legacyResult))
-            try check(!decodedResult.finalist && decodedResult.finalEntrants == nil && decodedResult.bracket.isEmpty, "older results decode as not a finalist without a bracket")
-            var withBracket = sixth.tournamentResult ?? TournamentResult(); withBracket.bracket = bracket
-            try check(try JSONDecoder().decode(TournamentResult.self, from: JSONEncoder().encode(withBracket)) == withBracket, "finalist, final size and bracket roundtrip")
+            try check(!decodedResult.finalist && decodedResult.finalEntrants == nil, "older results decode as not a finalist")
+            let finalistResult = sixth.tournamentResult ?? TournamentResult()
+            try check(try JSONDecoder().decode(TournamentResult.self, from: JSONEncoder().encode(finalistResult)) == finalistResult, "finalist and final size roundtrip")
+        }
+
+        // 0.10 live events: the basic info decides who plays. Team tournaments
+        // list teams, impromptu teams assign participants later, and hosts,
+        // MCs, judges, spectators and reserves are not counted as playing.
+        do {
+            var team = GiriEvent(title: "チーム大会")
+            team.eventFormat = .live; team.meetingType = .tournament; team.tournamentFormat = .team; team.teamSize = 2
+            team.impromptuTeams = true
+            team.participants = ["自分", "やまだ", "すずき", "たなか"]
+            var mine = GiriTeam(); mine.isMine = true; mine.members = ["自分", "ヤマダ"]
+            var other = GiriTeam(); other.members = ["すずき", ""]
+            team.teams = [mine, other]; team.myTeamId = mine.id
+            try check(team.unassignedParticipants == ["たなか"], "impromptu participants not yet in a team are listed by reading")
+            try check(team.everyone == ["自分", "やまだ", "すずき", "たなか"], "everyone merges participants and team members once each")
+            var teamOnly = team; teamOnly.participants = []; teamOnly.impromptuTeams = false
+            try check(teamOnly.everyone == ["自分", "ヤマダ", "すずき"] && teamOnly.unassignedParticipants.isEmpty, "a team tournament without participants still counts its members")
+
+            var hosted = GiriEvent(title: "主催の会")
+            hosted.eventFormat = .live; hosted.organizer = "大喜利団体"; hosted.organizerIsGroup = true
+            hosted.coOrganizers = ["きょうさい"]; hosted.mcs = ["しかい"]; hosted.judges = ["しんさ"]
+            try check(hosted.staffNames == ["きょうさい", "しかい", "しんさ"] && hosted.organizerText == "大喜利団体（団体）", "a group organizer is not a person among the staff")
+            try check(hosted.isHosted(byKey: playerSearchKey("キョウサイ")) && !hosted.isHosted(byKey: playerSearchKey("大喜利団体")) && hosted.isMCOrJudge(byKey: playerSearchKey("シンサ")), "co-hosts count as hosting, and MCs and judges separately")
+            try check(GiriSelfRole.choices(tournament: false) == [.player, .staff, .spectator] && GiriSelfRole.choices(tournament: true).contains(.reserve), "reserves exist only for tournaments")
+            try check(GiriSelfRole.staff.title(tournament: false) == "主催（出ない）" && GiriSelfRole.staff.shortTitle(tournament: true) == "運営", "the staff role reads as host for casual events and operations for tournaments")
+
+            let base = GiriDates.parse("2026-07-01T10:00:00Z") ?? Date()
+            var played = GiriEvent(title: "出た大会"); played.eventFormat = .live; played.meetingType = .tournament; played.eventDate = base
+            var playedResult = TournamentResult(); playedResult.outcome = .champion; played.tournamentResult = playedResult; played.placement = 1
+            var watched = played; watched.id = UUID().uuidString; watched.selfRole = .spectator
+            var reserve = played; reserve.id = UUID().uuidString; reserve.selfRole = .reserve
+            let roleSummary = giriTournamentSummary([played, watched, reserve], now: addCalendarDays(base, 3))
+            try check(roleSummary.completed == 1 && roleSummary.champions == 1 && played.countsForResults && !watched.countsForResults, "only tournaments where you played are counted as results")
+            try check(!watched.isSelfPlayer && watched.endedRoundsNeedingResult(now: addCalendarDays(base, 3)).isEmpty, "non-players are not asked for their results")
+
+            var legacyJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(hosted)) as? [String: Any] ?? [:]
+            for key in ["impromptuTeams", "knockout", "judging", "coOrganizers", "mcs", "judges", "organizerIsGroup", "selfRole"] { legacyJSON.removeValue(forKey: key) }
+            let legacy = try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
+            try check(!legacy.impromptuTeams && !legacy.knockout && legacy.judging.isEmpty && legacy.coOrganizers.isEmpty && legacy.mcs.isEmpty && legacy.judges.isEmpty && !legacy.organizerIsGroup && legacy.selfRole == .player, "older events decode as a player with no staff")
+            legacyJSON["selfRole"] = "a-future-role"
+            try check(try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: legacyJSON)).selfRole == .player, "an unknown role reads as a player")
+            var knockout = hosted; knockout.createdAt = base; knockout.knockout = true; knockout.judging = "拍手"; knockout.selfRole = .reserve; knockout.impromptuTeams = true
+            try check(try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(knockout)) == knockout, "roles, staff, format and judging roundtrip")
         }
 
         print("Native domain regressions passed: \(passed)")
