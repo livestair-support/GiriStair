@@ -147,12 +147,8 @@ struct GiriGroupOrganizerField: View {
                 suggestions: groupNames, textAlignment: .trailing)
         }
     }
-    private var groupNames: [String] {
-        var seen = Set<String>()
-        return store.events.filter(\.organizerIsGroup).sorted { $0.createdAt > $1.createdAt }
-            .map { $0.organizer.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
-    }
+    /// 主催団体一覧の団体（保存した団体と、団体として主催者に入れた名前）。
+    private var groupNames: [String] { store.groupDirectory.map(\.name) }
 }
 
 /// 大会の審査方法（段階ごとの審査方法が空の時に使う）。候補は段階の入力と同じ。

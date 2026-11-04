@@ -147,7 +147,11 @@ struct GiriEventDetail: View {
                 }
             }
             if !event.organizer.isEmpty && event.organizerIsGroup {
-                detailValue("主催者", event.organizerText)
+                if let group = store.groupByName(event.organizer) {
+                    NavigationLink { GiriGroupDetail(groupID: group.id) } label: {
+                        HStack { Text("主催者").foregroundStyle(.secondary); Spacer(); detailValueText(event.organizerText) }
+                    }
+                } else { detailValue("主催者", event.organizerText) }
             } else if !event.organizer.isEmpty {
                 if let player = store.playerByName(event.organizer) {
                     NavigationLink { GiriPlayerDetail(playerID: player.id) } label: {

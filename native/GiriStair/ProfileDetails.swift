@@ -689,6 +689,8 @@ struct GiriPlayerDetail: View {
     @State private var photo: PhotosPickerItem?
     @State private var deletingIcon = false
     @State private var loadingIcon = false
+    @State private var convertingToGroup = false
+    @State private var convertedGroupID: String?
 
     private var player: GiriPlayer? { store.playerDirectory.first { $0.id == (resolvedID ?? playerID) } }
 
@@ -722,6 +724,10 @@ struct GiriPlayerDetail: View {
                     Button("キャンセル", role: .cancel) {}
                     Button("削除", role: .destructive) { removeIcon(player) }
                 } message: { Text("このプレイヤーのアイコンを削除します。") }
+                .alert("団体にしますか？", isPresented: $convertingToGroup) {
+                    Button("キャンセル", role: .cancel) {}
+                    Button("団体にする") { convertToGroup(player) }
+                } message: { Text("「\(player.name)」が主催した会を、団体の主催にします。参加者などとして使われていなければ、プレイヤー一覧から外れて主催団体一覧に入ります。") }
             } else {
                 CenteredEmptyMessage(systemImage: "person", title: "プレイヤーが見つかりません")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -729,6 +735,7 @@ struct GiriPlayerDetail: View {
         }
         .navigationTitle("プレイヤー詳細")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $convertedGroupID) { GiriGroupDetail(groupID: $0) }
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(appBackgroundColor, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
@@ -778,6 +785,21 @@ struct GiriPlayerDetail: View {
                             GiriProfileRecordsPage(title: "\(player.name)の主催") { event in
                                 event.isHosted(byKey: key)
                             }
+                        }
+                        // 所属している団体（主催団体一覧のメンバー）。
+                        let memberships = store.groupDirectory.filter { $0.members.contains { playerSearchKey($0) == key } }
+                        ForEach(memberships) { group in
+                            Divider().overlay(appSeparatorColor)
+                            GiriProfileShortcutRow(title: "所属：" + group.name, systemImage: "person.3", accentColor: AppSectionAccent.artist) {
+                                GiriGroupDetail(groupID: group.id)
+                            }
+                        }
+                        // 以前プレイヤーとして入れた団体名を、主催団体に移す。
+                        if !store.preferences.selfKeys.contains(key) && store.events.contains(where: { !$0.organizerIsGroup && playerSearchKey($0.organizer) == key }) {
+                            Divider().overlay(appSeparatorColor)
+                            Button { convertingToGroup = true } label: {
+                                GiriProfileShortcutLabel(title: "この名前を団体にする", systemImage: "person.3.sequence", accentColor: accentActionColor)
+                            }.buttonStyle(.plain)
                         }
                     }
                 }
@@ -867,6 +889,14 @@ struct GiriPlayerDetail: View {
             resolvedID = store.playerByName(updated.name)?.id ?? resolvedID
             playLiveStairSaveFeedback()
         } catch { store.errorMessage = error.localizedDescription }
+    }
+
+    private func convertToGroup(_ player: GiriPlayer) {
+        store.run {
+            let group = try store.convertPlayerToGroup(player.name)
+            convertedGroupID = store.groupByName(group.name)?.id
+            playLiveStairSaveFeedback()
+        }
     }
 
     private func removeIcon(_ player: GiriPlayer) {

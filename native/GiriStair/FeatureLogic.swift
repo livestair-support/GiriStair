@@ -797,7 +797,13 @@ extension GiriEvent {
 
 extension GiriEvent {
     /// 主催（個人）・共催・MC・審査員として名前がある人。
-    var staffNames: [String] { (organizerIsGroup ? [] : [organizer]) + coOrganizers + mcs + judges }
+    var staffNames: [String] {
+        var names: [String] = organizerIsGroup ? [] : [organizer]
+        names += coOrganizers
+        names += mcs
+        names += judges
+        return names
+    }
     /// 主催者の表示（団体は「（団体）」を添える）。
     var organizerText: String {
         let name = organizer.trimmingCharacters(in: .whitespacesAndNewlines)

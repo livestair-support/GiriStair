@@ -1215,11 +1215,46 @@ struct GiriDocument: Codable, Equatable {
     var venues: [GiriVenue] = []
     var preferences: AppPreferences = AppPreferences()
     var lastBackupAt: Date? = nil
+    /// 0.10：主催する団体（プレイヤーとは別）。旧データにはないため空で読む。
+    var groups: [GiriGroup] = []
+}
+
+/// 主催する団体。所属メンバーはプレイヤーの名前で持つ。
+struct GiriGroup: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    var name: String = ""
+    var furigana: String = ""
+    var members: [String] = []
+    var url: String = ""
+    var memo: String = ""
+}
+
+extension GiriGroup {
+    private enum CodingKeys: String, CodingKey { case id, name, furigana, members, url, memo }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        furigana = try c.decodeIfPresent(String.self, forKey: .furigana) ?? ""
+        members = try c.decodeIfPresent([String].self, forKey: .members) ?? []
+        url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
+        memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
+        try validate()
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(furigana, forKey: .furigana)
+        try c.encode(members, forKey: .members)
+        try c.encode(url, forKey: .url)
+        try c.encode(memo, forKey: .memo)
+    }
 }
 
 extension GiriDocument {
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, events, notes, players, onlineSites, venues, preferences, lastBackupAt
+        case schemaVersion, events, notes, players, onlineSites, venues, preferences, lastBackupAt, groups
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1239,6 +1274,8 @@ extension GiriDocument {
         preferences = try c.decodeIfPresent(AppPreferences.self, forKey: .preferences) ?? AppPreferences()
 
         lastBackupAt = try c.giriDate(forKey: .lastBackupAt, required: false, calendarOnly: false)
+
+        groups = try c.decodeIfPresent([GiriGroup].self, forKey: .groups) ?? []
 
         try validate()
     }
@@ -1261,6 +1298,7 @@ extension GiriDocument {
 
         try c.encode(lastBackupAt.map(GiriDates.timestamp), forKey: .lastBackupAt)
 
+        try c.encode(groups, forKey: .groups)
     }
 }
 
@@ -1484,6 +1522,7 @@ extension ThoughtNote {
     }
 }
 extension GiriPlayer { func validate() throws { try validID(id); try require(!name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "プレイヤー名がありません。") } }
+extension GiriGroup { func validate() throws { try validID(id); try require(!name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "団体名がありません。") } }
 extension GiriTeam { func validate() throws { try validID(id) } }
 extension TournamentStanding { func validate() throws { try validID(id); try positive(placement, "順位") } }
 extension OnlineSite {
@@ -1514,6 +1553,8 @@ extension GiriDocument {
         try require(schemaVersion == 1, "この保存形式には対応していません。")
         try uniqueIDs(events); try uniqueIDs(notes); try uniqueIDs(players); try uniqueIDs(onlineSites); try uniqueIDs(venues)
         try require(Set(players.map { playerSearchKey($0.name) }).count == players.count, "プレイヤー名が重複しています。")
+        try uniqueIDs(groups); try groups.forEach { try $0.validate() }
+        try require(Set(groups.map { playerSearchKey($0.name) }).count == groups.count, "団体名が重複しています。")
         try events.forEach { try $0.validate() }; try notes.forEach { try $0.validate() }; try players.forEach { try $0.validate() }; try onlineSites.forEach { try $0.validate() }; try venues.forEach { try $0.validate() }; try preferences.validate()
     }
 }

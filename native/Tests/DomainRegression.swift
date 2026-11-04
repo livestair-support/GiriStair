@@ -876,11 +876,53 @@ struct DomainRegression {
             var legacyJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(hosted)) as? [String: Any] ?? [:]
             for key in ["impromptuTeams", "knockout", "judging", "coOrganizers", "mcs", "judges", "organizerIsGroup", "selfRole"] { legacyJSON.removeValue(forKey: key) }
             let legacy = try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
-            try check(!legacy.impromptuTeams && !legacy.knockout && legacy.judging.isEmpty && legacy.coOrganizers.isEmpty && legacy.mcs.isEmpty && legacy.judges.isEmpty && !legacy.organizerIsGroup && legacy.selfRole == .player, "older events decode as a player with no staff")
+            let legacyFlags = !legacy.impromptuTeams && !legacy.knockout && !legacy.organizerIsGroup
+            let legacyStaff = legacy.coOrganizers.isEmpty && legacy.mcs.isEmpty && legacy.judges.isEmpty
+            try check(legacyFlags && legacyStaff && legacy.judging.isEmpty, "older events decode without staff or tournament options")
+            try check(legacy.selfRole == .player, "older events decode as a player")
             legacyJSON["selfRole"] = "a-future-role"
             try check(try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: legacyJSON)).selfRole == .player, "an unknown role reads as a player")
             var knockout = hosted; knockout.createdAt = base; knockout.knockout = true; knockout.judging = "拍手"; knockout.selfRole = .reserve; knockout.impromptuTeams = true
             try check(try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(knockout)) == knockout, "roles, staff, format and judging roundtrip")
+        }
+
+        // 0.10 host groups are kept apart from players: a group directory with
+        // members and host history, renames, and converting an old organizer.
+        do {
+            let groupDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriGroups-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: groupDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: groupDirectory) }
+            let groupStore = GiriStore(directory: groupDirectory)
+            var byGroup = GiriEvent(title: "団体の会"); byGroup.eventFormat = .live; byGroup.organizer = "大喜利会"; byGroup.organizerIsGroup = true
+            byGroup.participants = ["参加者A"]
+            try groupStore.saveEvent(byGroup)
+            try check(groupStore.groupDirectory.map(\.name) == ["大喜利会"] && groupStore.groupDirectory[0].id.hasPrefix("history:"), "a group organizer appears in the group directory")
+            try check(!groupStore.playerDirectory.contains { $0.name == "大喜利会" } && groupStore.playerDirectory.contains { $0.name == "参加者A" }, "a group organizer stays out of the player list")
+            guard var group = groupStore.groupByName("大喜利会") else { throw GiriDataError.invalid("Missing group") }
+            group.members = ["メンバーB", " メンバーB ", ""]; group.furigana = "おおぎりかい"
+            try groupStore.saveGroup(group)
+            try check(groupStore.groups.count == 1 && groupStore.groups[0].members == ["メンバーB"] && !groupStore.groups[0].id.hasPrefix("history:"), "saving a group keeps one trimmed member list")
+            try check(groupStore.playerDirectory.contains { $0.name == "メンバーB" }, "group members are players")
+            var renamed = groupStore.groups[0]; renamed.name = "新しい大喜利会"
+            try groupStore.saveGroup(renamed)
+            try check(groupStore.events[0].organizer == "新しい大喜利会" && groupStore.eventsHosted(byGroup: "新しい大喜利会").count == 1, "renaming a group renames its hosted events")
+            if var member = groupStore.playerByName("メンバーB") { member.name = "メンバーC"; try groupStore.savePlayer(member) }
+            try check(groupStore.groups[0].members == ["メンバーC"] && groupStore.events[0].organizer == "新しい大喜利会", "renaming a player renames group members but not a group organizer")
+            var duplicate = GiriGroup(name: "新しい大喜利会")
+            var refused = false
+            do { try groupStore.saveGroup(duplicate) } catch { refused = true }
+            try check(refused, "group names stay unique")
+            duplicate.name = "別の団体"; try groupStore.saveGroup(duplicate)
+            // 以前プレイヤーとして主催者に入れた団体名を団体にする。
+            try groupStore.savePlayer(GiriPlayer(name: "古い団体", furigana: "ふるいだんたい"))
+            var oldStyle = GiriEvent(title: "昔の会"); oldStyle.eventFormat = .live; oldStyle.organizer = "古い団体"
+            try groupStore.saveEvent(oldStyle)
+            let converted = try groupStore.convertPlayerToGroup("古い団体")
+            try check(converted.furigana == "ふるいだんたい" && groupStore.events.first { $0.id == oldStyle.id }?.organizerIsGroup == true && !groupStore.players.contains { $0.name == "古い団体" } && groupStore.groupByName("古い団体") != nil, "an old organizer becomes a group and leaves the player list")
+            try check(try GiriJSON.decode(groupStore.exportBackup()) == groupStore.document, "groups roundtrip in schema one")
+            var legacyDocument = try JSONSerialization.jsonObject(with: groupStore.exportBackup()) as? [String: Any] ?? [:]
+            legacyDocument.removeValue(forKey: "groups")
+            try check(try GiriJSON.decode(JSONSerialization.data(withJSONObject: legacyDocument)).groups.isEmpty, "older backups without groups decode")
         }
 
         print("Native domain regressions passed: \(passed)")
