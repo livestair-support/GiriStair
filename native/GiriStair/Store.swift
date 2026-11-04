@@ -315,6 +315,12 @@ final class GiriStore: ObservableObject {
             .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
         try group.validate()
         let old = groupDirectory.first { $0.id == group.id }
+        // 新しく団体にする名前がプレイヤーとして保存されていたら、フリガナ・メモを引き継ぐ。
+        if old == nil || old?.id.hasPrefix("history:") == true,
+           let player = players.first(where: { playerSearchKey($0.name) == playerSearchKey(group.name) }) {
+            if group.furigana.isEmpty { group.furigana = player.furigana }
+            if group.memo.isEmpty { group.memo = player.memo }
+        }
         guard !groupDirectory.contains(where: { $0.id != group.id && playerSearchKey($0.name) == playerSearchKey(group.name) }) else { throw GiriDataError.invalid("同じ名前の団体が登録されています。") }
         if group.id.hasPrefix("history:") { group.id = newId() }
         let saved = group
@@ -325,6 +331,8 @@ final class GiriStore: ObservableObject {
             for index in next.events.indices where !next.events[index].organizerIsGroup && playerSearchKey(next.events[index].organizer) == newKey {
                 next.events[index].organizerIsGroup = true
             }
+            // 会の保存で自動登録されたプレイヤーの記録が残らないようにする（人として使われていない時だけ）。
+            self.removePlayerRecordIfUnused(newKey, in: &next)
             // 団体名を変えたら、その団体が主催した会の主催者名も変える。
             if let old, old.name != saved.name {
                 let key = playerSearchKey(old.name)
@@ -351,12 +359,18 @@ final class GiriStore: ObservableObject {
                 next.events[index].organizerIsGroup = true
             }
             Self.upsert(saved, into: &next.groups)
-            let inEvents = next.events.contains { event in self.referencedNames(event).contains { playerSearchKey($0) == key } }
-            let inNotes = next.notes.contains { note in note.referencedPeople.contains { playerSearchKey($0) == key } }
-            let inGroups = next.groups.contains { group in group.members.contains { playerSearchKey($0) == key } }
-            if !inEvents && !inNotes && !inGroups { next.players.removeAll { playerSearchKey($0.name) == key } }
+            self.removePlayerRecordIfUnused(key, in: &next)
         }
         return saved
+    }
+    /// 団体になった名前の、保存済みのプレイヤーの記録を外す。参加者・共催・メモ・団体のメンバーなど
+    /// 人として使われている名前や、自分の名前・別名義は残す。
+    private func removePlayerRecordIfUnused(_ key: String, in next: inout GiriDocument) {
+        guard !key.isEmpty, !next.preferences.selfKeys.contains(key) else { return }
+        let inEvents = next.events.contains { event in referencedNames(event).contains { playerSearchKey($0) == key } }
+        let inNotes = next.notes.contains { note in note.referencedPeople.contains { playerSearchKey($0) == key } }
+        let inGroups = next.groups.contains { group in group.members.contains { playerSearchKey($0) == key } }
+        if !inEvents && !inNotes && !inGroups { next.players.removeAll { playerSearchKey($0.name) == key } }
     }
     func savePreferences(_ candidate: AppPreferences) throws {
         var preferences = candidate
