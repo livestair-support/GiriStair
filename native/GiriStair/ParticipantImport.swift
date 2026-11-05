@@ -129,7 +129,8 @@ struct GiriParticipantImport: View {
     private var selectedNames: [String] { giriSelectedParticipantNames(candidates) }
 
     private func read(_ text: String) -> [GiriParticipantCandidate] {
-        giriMarkingAlreadyAdded(giriParticipantCandidates(text: text, known: knownNames), existing: existing)
+        giriMarkingAlreadyAdded(giriResolvingAliases(giriParticipantCandidates(text: text, known: knownNames), store: store),
+                                existing: giriResolvedNames(existing, store: store))
     }
 
     var body: some View {
@@ -179,20 +180,55 @@ struct GiriParticipantImport: View {
             if let lines {
                 // 画面の読み取りは、文字の位置から欄を分けてから確認に進む。
                 source = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }.map(\.text).joined(separator: "\n")
-                candidates = giriMarkingAlreadyAdded(giriParticipantCandidates(lines: lines, known: knownNames), existing: existing)
+                candidates = giriMarkingAlreadyAdded(giriResolvingAliases(giriParticipantCandidates(lines: lines, known: knownNames), store: store),
+                                                     existing: giriResolvedNames(existing, store: store))
                 previewing = true
             }
         }
     }
 }
 
-/// 照合に使う名前：プレイヤー一覧（自分・別名義を含む）。
+/// 照合に使う名前：プレイヤー一覧（自分を含む）と別名義。よく参加者に出る人を先にする
+/// （「…」で切れた名前の候補が複数ある時は、先に並んだ人を選ぶ）。
 @MainActor
 func giriParticipantKnownNames(_ store: GiriStore) -> [String] {
+    var counts: [String: Int] = [:]
+    for event in store.events {
+        for name in event.participants + event.teams.flatMap(\.members) { counts[playerSearchKey(name), default: 0] += 1 }
+    }
     var names = [store.preferences.selfName]
     names.append(contentsOf: store.preferences.selfAliases)
-    names.append(contentsOf: store.playerDirectory.map(\.name))
+    let players = store.playerDirectory.map(\.name)
+    names.append(contentsOf: players.sorted { (counts[playerSearchKey($0)] ?? 0) > (counts[playerSearchKey($1)] ?? 0) })
+    // 別名義も照合し、読み取った後で本名義にする。
+    for player in store.players { names.append(contentsOf: player.aliases) }
     return names
+}
+
+/// 別名義で読み取った名前を本名義にする（同じ人が重なったら1つにする）。
+@MainActor
+func giriResolvingAliases(_ candidates: [GiriParticipantCandidate], store: GiriStore) -> [GiriParticipantCandidate] {
+    let owners = store.mergedAliasOwners
+    var seen = Set<String>()
+    var output: [GiriParticipantCandidate] = []
+    for candidate in candidates {
+        var value = candidate
+        if let owner = owners[playerSearchKey(value.name)] {
+            value.name = owner
+            value.registered = owner
+            value.truncated = false
+        }
+        guard seen.insert(giriOCRNameKey(value.name)).inserted else { continue }
+        output.append(value)
+    }
+    return output
+}
+
+/// 今の参加者（別名義は本名義にして比べる）。
+@MainActor
+func giriResolvedNames(_ names: [String], store: GiriStore) -> [String] {
+    let owners = store.mergedAliasOwners
+    return names.map { owners[playerSearchKey($0)] ?? $0 }
 }
 
 /// 読み取った参加者の確認（参加者・興味あり・不参加などの欄ごと）。参加者の一括追加とイベントページの読み取りで共通。
@@ -253,15 +289,6 @@ struct GiriParticipantCandidateSections: View {
                 }
                 if candidate.truncated {
                     Text("名前が途中で切れています。続きを入れてください。").font(.caption).foregroundStyle(AppSectionAccent.ticket)
-                }
-                if let prefix = candidate.suspiciousPrefix, candidate.name.hasPrefix(prefix) {
-                    Button("先頭の「\(prefix)」を外す（アイコンの読み違い）") {
-                        candidates[index].name = String(candidates[index].name.dropFirst(prefix.count))
-                        candidates[index].suspiciousPrefix = nil
-                        candidates[index].registered = giriMatchRegisteredName(candidates[index].name, known: knownNames)
-                        if let registered = candidates[index].registered { candidates[index].name = registered }
-                    }
-                    .font(.caption).buttonStyle(.borderless).tint(accentActionColor)
                 }
             }
         }

@@ -970,7 +970,7 @@ struct GiriNamesField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            if !title.isEmpty { Text(title).font(.subheadline).foregroundStyle(.secondary) }
             ForEach(Array(names.indices), id: \.self) { index in
                 HStack(alignment: .top, spacing: 8) {
                     GiriPlayerSuggestionField(title: "名前", text: Binding(get: {

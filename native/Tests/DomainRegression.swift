@@ -1147,16 +1147,17 @@ struct DomainRegression {
             try check(savedMerged.aliases == ["マルオ2号"], "aliases are trimmed and never repeat the main name")
             try check(!aliasStore.playerDirectory.contains { $0.name == "マルオ2号" } && aliasStore.playerByName("マルオ2号")?.name == "まるお", "merged aliases are shown as the main player")
             try check(aliasStore.nameKeys(for: "まるお") == Set([playerSearchKey("まるお"), playerSearchKey("マルオ2号")]) && aliasStore.aliasOwner(of: "マルオ2号") == "まるお", "merged aliases count as the same person")
+            // 0.13：「まとめて表示」は使わず、別名義はいつも本名義にまとめる。
             var separate = savedMerged; separate.mergesAliases = false
             try aliasStore.savePlayer(separate)
-            try check(aliasStore.playerDirectory.contains { $0.name == "マルオ2号" } && aliasStore.nameKeys(for: "まるお") == Set([playerSearchKey("まるお")]) && aliasStore.aliasOwner(of: "マルオ2号") == "まるお", "separate aliases stay listed and link to the main name")
+            try check(!aliasStore.playerDirectory.contains { $0.name == "マルオ2号" } && aliasStore.nameKeys(for: "まるお").contains(playerSearchKey("マルオ2号")) && aliasStore.aliasOwner(of: "マルオ2号") == "まるお", "aliases are always merged into the main name")
             var settings = aliasStore.preferences; settings.selfName = "わたし"
             try aliasStore.savePreferences(settings)
             var withSelfAlias = GiriEvent(title: "昼の会"); withSelfAlias.eventFormat = .live; withSelfAlias.participants = ["わたし別名"]
             try aliasStore.saveEvent(withSelfAlias)
             try check(aliasStore.playerDirectory.contains { $0.name == "わたし別名" }, "an unregistered name is listed")
-            try aliasStore.saveSelfAliases(["わたし別名"], merges: true)
-            try check(aliasStore.preferences.mergesSelfAliases && !aliasStore.playerDirectory.contains { $0.name == "わたし別名" } && aliasStore.nameKeys(for: "わたし").contains(playerSearchKey("わたし別名")), "self aliases can be shown together")
+            try aliasStore.saveSelfAliases(["わたし別名"], merges: false)
+            try check(aliasStore.preferences.selfAliases == ["わたし別名"] && !aliasStore.playerDirectory.contains { $0.name == "わたし別名" } && aliasStore.nameKeys(for: "わたし").contains(playerSearchKey("わたし別名")), "self aliases are always merged into the user")
         }
 
         // 0.13 parallel prompts in a stage, next stage blocks, prompt styles, fill-in prompts and memo-style answers.
@@ -1218,6 +1219,57 @@ struct DomainRegression {
                                               known: [], venues: [])
             try check(noHeader.participants.isEmpty && noHeader.title == "ひかり杯" && noHeader.fee == 1000, "without a participants header nothing is read as a participant")
             try check(giriIsEventPageSectionStart("【第一回優勝者】") && giriIsEventPageSectionStart("詳細") && !giriIsEventPageSectionStart("ひかり杯"), "description headings end the title search")
+        }
+
+        // 0.13.1 OCR names: icon letters removed automatically, cut-off names matched against frequent players,
+        // groups turned back into players.
+        do {
+            let known = ["かにスープ", "たくめシャーマン", "たくみ", "守"]
+            let screen = ["参加者（4人）", "2守", "2すり身", "すり身", "たくめシャー…", "Kou"].enumerated().map { index, text in
+                GiriOCRLine(text: text, midX: 0.2, midY: 0.1 + Double(index) * 0.05, height: 0.01)
+            }
+            let read = giriParticipantCandidates(lines: screen, known: known)
+            try check(read.map(\.name) == ["守", "すり身", "たくめシャーマン", "Kou"] && read.allSatisfy { $0.suspiciousPrefix == nil }, "icon letters are removed from a screen and duplicates merged")
+            try check(giriParticipantCandidates(text: "Aさん\n2守", known: []).map(\.name) == ["Aさん", "2守"], "pasted text keeps names that start with a letter")
+            try check(read.first { $0.name == "守" }?.registered == "守" && read.first { $0.name == "すり身" }?.registered == nil, "registered and new people are told apart after removing the icon")
+            try check(giriMatchRegisteredName("たくめ", truncated: true, known: ["たくめシャーマン", "たくめ長い名前"]) == "たくめシャーマン", "a cut-off name picks the first (most frequent) match")
+            try check(giriMatchRegisteredName("たくぬシャ", truncated: true, known: ["たくめシャーマン"]) == "たくめシャーマン", "a cut-off name with a misread still matches")
+
+            let groupDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriGroupBack-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: groupDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: groupDirectory) }
+            let groupStore = GiriStore(directory: groupDirectory)
+            var hosted = GiriEvent(title: "まちがいの会"); hosted.eventFormat = .live; hosted.organizer = "さかなくん"
+            try groupStore.saveEvent(hosted)
+            let group = try groupStore.convertPlayerToGroup("さかなくん")
+            try check(groupStore.events[0].organizerIsGroup && !groupStore.playerDirectory.contains { $0.name == "さかなくん" }, "a player can become a group")
+            guard let saved = groupStore.groupDirectory.first(where: { $0.name == group.name }) else { throw GiriDataError.invalid("Missing group") }
+            try groupStore.convertGroupToPlayer(saved.id)
+            try check(!groupStore.events[0].organizerIsGroup && groupStore.groups.isEmpty && groupStore.playerDirectory.contains { $0.name == "さかなくん" }, "a group made by mistake goes back to a player")
+        }
+
+        // 0.13.1 企画 is stored as a casual meeting with a flag; optional application dates notify before the start.
+        do {
+            var project = GiriEvent(title: "企画の会"); project.eventFormat = .live; project.isProject = true
+            try check(project.isProjectEvent && project.meetingTitle == "企画" && project.meetingFilterKey == "project" && project.meetingType == .casual, "企画 is a casual meeting with a flag")
+            var tournamentProject = project; tournamentProject.meetingType = .tournament
+            var onlineProject = project; onlineProject.eventFormat = .onlineLong
+            try check(!tournamentProject.isProjectEvent && !onlineProject.isProjectEvent && EventFormat.hybrid.allowsProject, "企画 is only for casual live and spreadsheet events")
+            var projectJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(project)) as? [String: Any] ?? [:]
+            try check(projectJSON["meetingType"] as? String == "casual", "older readers still see a casual meeting")
+            for key in ["isProject", "entryStart", "entryEnd"] { projectJSON.removeValue(forKey: key) }
+            let olderProject = try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: projectJSON))
+            try check(!olderProject.isProject && olderProject.entryStart == nil && olderProject.entryEnd == nil, "older events decode without 企画 or application dates")
+            let entryNow = GiriDates.parse("2026-11-05T00:00:00Z") ?? Date()
+            var applying = GiriEvent(title: "応募のある会"); applying.eventFormat = .live; applying.isInterested = true
+            applying.entryStart = entryNow.addingTimeInterval(86400); applying.entryEnd = entryNow.addingTimeInterval(3 * 86400)
+            var entryPreferences = AppPreferences(notificationsEnabled: true); entryPreferences.reminderMinutes = 30
+            let entryReminders = planNativeReminders(events: [applying], preferences: entryPreferences, now: entryNow)
+            try check(entryReminders.contains { $0.id.hasSuffix(":entry-start") && $0.date == entryNow.addingTimeInterval(86400 - 1800) }, "the application start is notified before it opens")
+            var canceledEntry = applying; canceledEntry.status = .canceled
+            try check(!planNativeReminders(events: [canceledEntry], preferences: entryPreferences, now: entryNow).contains { $0.id.hasSuffix(":entry-start") }, "canceled events are not notified")
+            let roundtrip = try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(applying))
+            try check(roundtrip.entryStart == applying.entryStart && roundtrip.entryEnd == applying.entryEnd, "application dates roundtrip")
         }
 
         print("Native domain regressions passed: \(passed)")

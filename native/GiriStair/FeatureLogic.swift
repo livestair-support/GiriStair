@@ -1047,18 +1047,30 @@ func giriMatchRegisteredName(_ text: String, truncated: Bool = false, known: [St
         if let hit = index.first(where: { $0.1 == rest }) { return hit.0 }
     }
     if truncated {
-        for drop in 0...1 where key.count - drop >= 2 {
+        // 「…」で切れた名前（ツイプラの長い名前など）：登録名の前方と比べる。先頭のアイコンの読み違いは2文字まで除く。
+        // 候補が複数ある時は、先に並んだ名前（よく出る人）を選ぶ。
+        for drop in 0...2 where key.count - drop >= 2 {
             let rest = String(key.dropFirst(drop))
-            let hits = index.filter { $0.1.hasPrefix(rest) }
-            if hits.count == 1 { return hits[0].0 }
+            if let hit = index.first(where: { $0.1.count > rest.count && $0.1.hasPrefix(rest) }) { return hit.0 }
+        }
+        // 切れた部分にも読み違いがある時は、登録名の先頭の同じ長さと比べる（3文字以上）。
+        if key.count >= 3 {
+            var best: (name: String, score: Double)? = nil
+            for entry in index where entry.1.count > key.count {
+                let score = giriNameSimilarity(key, String(entry.1.prefix(key.count)))
+                if score >= 0.75 && score > (best?.score ?? 0) { best = (entry.0, score) }
+            }
+            if let best { return best.name }
         }
     }
     guard key.count >= 3, !key.allSatisfy(\.isNumber) else { return nil }
-    let scored = index.filter { $0.1.count >= 3 }.map { ($0.0, giriNameSimilarity(key, $0.1)) }
-        .filter { $0.1 >= 0.75 }.sorted { $0.1 > $1.1 }
-    guard let best = scored.first else { return nil }
-    if scored.count > 1 && abs(scored[1].1 - best.1) < 0.0001 { return nil }
-    return best.0
+    // 読み違い1〜2文字。同じくらい近い名前が複数ある時は、先に並んだ名前（よく出る人）。
+    var best: (name: String, score: Double)? = nil
+    for entry in index where entry.1.count >= 3 {
+        let score = giriNameSimilarity(key, entry.1)
+        if score >= 0.75 && score > (best?.score ?? 0) + 0.0001 { best = (entry.0, score) }
+    }
+    return best?.name
 }
 
 /// 欄の見出し（「参加者（15人／定員15人）」「興味あり（5人）」「不参加（0人）」など）。
@@ -1119,7 +1131,8 @@ func giriCleanParticipantText(_ raw: String) -> (name: String, truncated: Bool) 
 }
 
 /// 欄ごとに分けた行から候補を作る（同じ人は最初の1回だけ）。
-func giriParticipantCandidates(entries: [(text: String, section: GiriParticipantSection)], known: [String]) -> [GiriParticipantCandidate] {
+/// stripsIconLetter：画面の読み取りだけ、名前の前のアイコンが英数字1文字に読まれたものを外す（貼り付けた文章にはアイコンがない）。
+func giriParticipantCandidates(entries: [(text: String, section: GiriParticipantSection)], known: [String], stripsIconLetter: Bool = false) -> [GiriParticipantCandidate] {
     var seen = Set<String>()
     var output: [GiriParticipantCandidate] = []
     for entry in entries {
@@ -1128,16 +1141,18 @@ func giriParticipantCandidates(entries: [(text: String, section: GiriParticipant
         guard !giriIsParticipantNoise(source), giriParticipantHeader(source) == nil, !giriParticipantListEnds(source) else { continue }
         let cleaned = giriCleanParticipantText(source)
         guard !cleaned.name.isEmpty, !giriIsParticipantNoise(cleaned.name) else { continue }
-        let registered = giriMatchRegisteredName(cleaned.name, truncated: cleaned.truncated, known: known)
-        let name = registered ?? cleaned.name
-        guard seen.insert(giriOCRNameKey(name)).inserted else { continue }
-        var suspicious: String? = nil
-        if registered == nil, let first = cleaned.name.unicodeScalars.first, first.isASCII, CharacterSet.letters.union(.decimalDigits).contains(first),
-           cleaned.name.unicodeScalars.dropFirst().contains(where: { !$0.isASCII }) {
-            suspicious = String(first)
+        var text = cleaned.name
+        var registered = giriMatchRegisteredName(text, truncated: cleaned.truncated, known: known)
+        // アイコンが英数字1文字に読まれた（「2守」「Gしゅにく」）時は、確認画面に出さずにここで外す。
+        let scalars = Array(text.unicodeScalars)
+        if stripsIconLetter, registered == nil, scalars.count >= 2, scalars[0].isASCII, CharacterSet.letters.union(.decimalDigits).contains(scalars[0]), !scalars[1].isASCII {
+            text = String(text.dropFirst())
+            registered = giriMatchRegisteredName(text, truncated: cleaned.truncated, known: known)
         }
+        let name = registered ?? text
+        guard seen.insert(giriOCRNameKey(name)).inserted else { continue }
         output.append(GiriParticipantCandidate(id: output.count, source: source, name: name, registered: registered,
-                                               truncated: cleaned.truncated && registered == nil, suspiciousPrefix: suspicious,
+                                               truncated: cleaned.truncated && registered == nil, suspiciousPrefix: nil,
                                                section: entry.section, included: entry.section == .participants))
     }
     return output
@@ -1170,7 +1185,7 @@ func giriParticipantCandidates(lines: [GiriOCRLine], known: [String]) -> [GiriPa
     let allHeaders = sorted.compactMap { line in giriParticipantHeader(line.text).map { (line: line, section: $0) } }
     // 「参加者」の見出しから読む。それより上（説明文・「興味あり」「不参加」のボタンなど）は使わない。
     guard let firstHeader = allHeaders.first(where: { $0.section == .participants }) ?? allHeaders.first else {
-        return giriParticipantCandidates(entries: sorted.map { ($0.text, .participants) }, known: known)
+        return giriParticipantCandidates(entries: sorted.map { ($0.text, .participants) }, known: known, stripsIconLetter: true)
     }
     let rowTolerance = max(0.006, firstHeader.line.height * 0.7)
     let headers = allHeaders.filter { $0.line.midY >= firstHeader.line.midY - rowTolerance }
@@ -1182,7 +1197,7 @@ func giriParticipantCandidates(lines: [GiriOCRLine], known: [String]) -> [GiriPa
         guard let column = above.min(by: { abs($0.line.midX - line.midX) < abs($1.line.midX - line.midX) }) else { continue }
         entries.append((line.text, column.section))
     }
-    return giriParticipantCandidates(entries: entries, known: known)
+    return giriParticipantCandidates(entries: entries, known: known, stripsIconLetter: true)
 }
 
 // MARK: - イベントページの読み取り（生大喜利）
@@ -1601,5 +1616,21 @@ func giriReconcileAnswers(_ lines: [GiriAnswerLine], previous: [AnswerRecord]) -
 /// 回答案をメモの形に戻す（印があれば「△・」、なければ「・」）。
 func giriAnswerMemo(_ records: [AnswerRecord]) -> String {
     records.map { $0.mark + "・" + $0.text }.joined(separator: "\n")
+}
+
+// MARK: - 企画・応募（0.13.1）
+
+extension EventFormat {
+    /// 「企画」を選べる形式（生大喜利・スプシ系）。
+    var allowsProject: Bool { self == .live || self == .hybrid }
+}
+
+extension GiriEvent {
+    /// 企画として扱う（生大喜利・スプシ系の通常の会で「企画」を選んだ時）。
+    var isProjectEvent: Bool { isProject && meetingType == .casual && eventFormat.allowsProject }
+    /// 会の種類の表示（通常・大会・企画）。
+    var meetingTitle: String { isProjectEvent ? "企画" : meetingType.title }
+    /// 一覧の絞り込み・共有で使う会の種類の値（"casual"・"tournament"・"project"）。
+    var meetingFilterKey: String { isProjectEvent ? "project" : meetingType.rawValue }
 }
 

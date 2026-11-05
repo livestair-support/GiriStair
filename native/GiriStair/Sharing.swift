@@ -34,7 +34,7 @@ struct GiriStatisticsView: View {
         store.events.filter { event in
             guard event.isCountableParticipation() else { return false }
             if kind != "all" && event.eventFormat.rawValue != kind { return false }
-            if meeting != "all" && event.meetingType.rawValue != meeting { return false }
+            if meeting != "all" && event.meetingFilterKey != meeting { return false }
             let date = giriAnalyticsDate(event)
             if year != 0 && date.map({ Calendar.current.component(.year, from: $0) }) != year { return false }
             if month != 0 && date.map({ Calendar.current.component(.month, from: $0) }) != month { return false }
@@ -57,7 +57,7 @@ struct GiriStatisticsView: View {
                     Text("すべて").tag("all")
                     ForEach(formats) { format in Text(format.title).tag(format.rawValue) }
                 }.pickerStyle(.menu).tint(.primary)
-                Picker("会の種類", selection: $meeting) { Text("すべて").tag("all"); Text("通常").tag("casual"); Text("大会").tag("tournament") }.pickerStyle(.menu).tint(.primary)
+                Picker("会の種類", selection: $meeting) { Text("すべて").tag("all"); Text("通常").tag("casual"); Text("大会").tag("tournament"); Text("企画").tag("project") }.pickerStyle(.menu).tint(.primary)
             }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
             Section {
                 AppCardSectionTitle(title: "参加回数", systemImage: "chart.bar", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
