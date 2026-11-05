@@ -1684,10 +1684,20 @@ func giriStageOutcomeChoices(_ kind: StageKind) -> [TournamentOutcome] {
     kind == .final ? [.unrecorded, .champion, .runnerUp, .placed, .other] : [.unrecorded, .advanced, .eliminated, .other]
 }
 
+/// 全角の英数字だけ半角にする（カタカナは半角にしない。「ブロック」「タイマン」をそのまま比べるため）。
+func giriHalfwidthAlphanumerics(_ text: String) -> String {
+    String(text.unicodeScalars.map { scalar -> Character in
+        let value = scalar.value
+        let isWide = (0xFF10...0xFF19).contains(value) || (0xFF21...0xFF3A).contains(value) || (0xFF41...0xFF5A).contains(value)
+        guard isWide, let narrow = Unicode.Scalar(value - 0xFEE0) else { return Character(scalar) }
+        return Character(narrow)
+    })
+}
+
 /// 「横並び5人」なら対戦相手は4人、タイマンは1人。分からなければ nil。
 func giriOpponentSlotCount(_ lineup: String) -> Int? {
-    let value = lineup.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? lineup
-    if value.contains("タイマン") { return 1 }
+    if lineup.contains("タイマン") { return 1 }
+    let value = giriHalfwidthAlphanumerics(lineup)
     if value.contains("横並び"), let range = value.range(of: #"[0-9]+"#, options: .regularExpression), let count = Int(value[range]), count >= 2 {
         return count - 1
     }
@@ -1801,7 +1811,7 @@ struct GiriBlockEntry: Equatable {
 
 /// ブロック表の見出し（「Aブロック」「1組」「第2組」「ブロックB」など）。
 func giriBlockHeading(_ text: String) -> String? {
-    let value = (text.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? text).trimmingCharacters(in: .whitespacesAndNewlines)
+    let value = giriHalfwidthAlphanumerics(text).trimmingCharacters(in: .whitespacesAndNewlines)
     let patterns = [#"^第?[A-Za-z0-9一二三四五六七八九十]{1,3}\s*(?:ブロック|組|グループ|卓)$"#, #"^(?:ブロック|グループ|組)\s*[A-Za-z0-9]{1,3}$"#]
     return patterns.contains { value.range(of: $0, options: .regularExpression) != nil } ? value : nil
 }
