@@ -67,7 +67,7 @@ struct GiriListView: View {
     private var collapsedConditions: [String] {
         var values: [String] = []
         if year != "all" { values.append(year) }
-        if meeting != "all" { values.append(meeting == "casual" ? "通常" : "大会") }
+        if meeting != "all" { values.append(meeting == "casual" ? "通常" : meeting == "project" ? "企画" : "大会") }
         if venue != "all" { values.append(venue) }
         if !selectedPlayers.isEmpty { values.append(selectedPlayers.sorted().joined(separator: " / ")) }
         if stage != "all" { values.append(stage) }
@@ -75,6 +75,12 @@ struct GiriListView: View {
         if hostFilter != "all" { values.append("主催：" + hostFilter) }
         if !search.isEmpty { values.append("検索「\(search)」") }
         return values
+    }
+    /// 会の種類（生大喜利・スプシ系は企画も選べる）。
+    private var meetingOptions: [(String, String)] {
+        var options = [("all", "すべて"), ("casual", "通常"), ("tournament", "大会")]
+        if selectedFormat.allowsProject || meeting == "project" { options.append(("project", "企画")) }
+        return options
     }
     /// 2回以上ある生大喜利のシリーズ（照合キー, 表示名）。
     private var seriesOptions: [(String, String)] {
@@ -107,7 +113,7 @@ struct GiriListView: View {
         let playerKeySets = selectedPlayers.map { store.nameKeys(for: $0) }
         let hostKeys = hostFilter == "all" ? Set<String>() : store.nameKeys(for: hostFilter)
         return searchableEvents.filter { event in
-            if meeting != "all" && event.meetingType.rawValue != meeting { return false }
+            if meeting != "all" && event.meetingFilterKey != meeting { return false }
             switch status {
             case "interested": if !event.isInterested { return false }
             case "canceled": if event.status != .canceled { return false }
@@ -332,7 +338,7 @@ struct GiriListView: View {
                 HStack(spacing: 0) {
                     GiriListFilterMenu(title: "年", selection: $year, options: [("all", "全期間")] + years.map { ($0, $0) }, valueWidth: 64)
                     Divider().overlay(appSeparatorColor).frame(height: 30).padding(.horizontal, 9)
-                    GiriListFilterMenu(title: "会の種類", selection: $meeting, options: [("all", "すべて"), ("casual", "通常"), ("tournament", "大会")], valueWidth: 64)
+                    GiriListFilterMenu(title: "会の種類", selection: $meeting, options: meetingOptions, valueWidth: 64)
                 }
                 if hasParticipantFilter {
                     separator
@@ -796,7 +802,7 @@ struct GiriEventCard: View {
                     .accessibilityElement(children: .combine)
                 }
                 // 形式（生大喜利・長考など）は一覧の形式タブで分かるので出さず、会の種類を上に詰める。
-                GiriListBadge(text: event.meetingType.title, color: GiriBadgeColors.meeting(event.meetingType), fitsColumn: true)
+                GiriListBadge(text: event.meetingTitle, color: GiriBadgeColors.meeting(event), fitsColumn: true)
                     .frame(width: 70, alignment: .leading).offset(x: 2)
             }
             HStack(alignment: .top, spacing: 6) {
@@ -971,6 +977,9 @@ enum GiriBadgeColors {
     static func meeting(_ type: MeetingType) -> Color {
         type == .tournament ? AppSectionAccent.ticket : AppSectionAccent.artist
     }
+    static func meeting(_ event: GiriEvent) -> Color {
+        event.isProjectEvent ? AppSectionAccent.venue : meeting(event.meetingType)
+    }
 }
 
 struct GiriListBadge: View {
@@ -1004,7 +1013,10 @@ enum GiriEventPresentation {
     // The meeting type controls the card rail/background. Format colors remain
     // unchanged for the format tabs and the calendar's four-category legend.
     static func cardAccent(_ event: GiriEvent) -> Color {
-        event.meetingType == .tournament ? AppSectionAccent.ticket : accent(event.eventFormat)
+        let base = event.meetingType == .tournament ? AppSectionAccent.ticket : accent(event.eventFormat)
+        // 観覧の会は、参加する会と見分けられるように少し色を変える。
+        if event.eventFormat == .live && event.selfRole == .spectator { return base.mix(with: GiriBadgeColors.spectator, by: 0.55) }
+        return base
     }
     static func date(_ event: GiriEvent, now: Date = Date()) -> Date? {
         if !event.eventFormat.hasOnlineRounds || event.effectiveRounds.isEmpty { return event.eventDate ?? event.startsAt }

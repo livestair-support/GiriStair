@@ -1244,6 +1244,30 @@ struct DomainRegression {
             try check(!groupStore.events[0].organizerIsGroup && groupStore.groups.isEmpty && groupStore.playerDirectory.contains { $0.name == "さかなくん" }, "a group made by mistake goes back to a player")
         }
 
+        // 0.13.1 企画 is stored as a casual meeting with a flag; optional application dates notify before the start.
+        do {
+            var project = GiriEvent(title: "企画の会"); project.eventFormat = .live; project.isProject = true
+            try check(project.isProjectEvent && project.meetingTitle == "企画" && project.meetingFilterKey == "project" && project.meetingType == .casual, "企画 is a casual meeting with a flag")
+            var tournamentProject = project; tournamentProject.meetingType = .tournament
+            var onlineProject = project; onlineProject.eventFormat = .onlineLong
+            try check(!tournamentProject.isProjectEvent && !onlineProject.isProjectEvent && EventFormat.hybrid.allowsProject, "企画 is only for casual live and spreadsheet events")
+            var projectJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(project)) as? [String: Any] ?? [:]
+            try check(projectJSON["meetingType"] as? String == "casual", "older readers still see a casual meeting")
+            for key in ["isProject", "entryStart", "entryEnd"] { projectJSON.removeValue(forKey: key) }
+            let olderProject = try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: projectJSON))
+            try check(!olderProject.isProject && olderProject.entryStart == nil && olderProject.entryEnd == nil, "older events decode without 企画 or application dates")
+            let entryNow = GiriDates.parse("2026-11-05T00:00:00Z") ?? Date()
+            var applying = GiriEvent(title: "応募のある会"); applying.eventFormat = .live; applying.isInterested = true
+            applying.entryStart = entryNow.addingTimeInterval(86400); applying.entryEnd = entryNow.addingTimeInterval(3 * 86400)
+            var entryPreferences = AppPreferences(notificationsEnabled: true); entryPreferences.reminderMinutes = 30
+            let entryReminders = planNativeReminders(events: [applying], preferences: entryPreferences, now: entryNow)
+            try check(entryReminders.contains { $0.id.hasSuffix(":entry-start") && $0.date == entryNow.addingTimeInterval(86400 - 1800) }, "the application start is notified before it opens")
+            var canceledEntry = applying; canceledEntry.status = .canceled
+            try check(!planNativeReminders(events: [canceledEntry], preferences: entryPreferences, now: entryNow).contains { $0.id.hasSuffix(":entry-start") }, "canceled events are not notified")
+            let roundtrip = try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(applying))
+            try check(roundtrip.entryStart == applying.entryStart && roundtrip.entryEnd == applying.entryEnd, "application dates roundtrip")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

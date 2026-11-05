@@ -32,6 +32,12 @@ func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, sites
             }
         }
     }
+    // 応募開始（任意）：参加・興味ありのどちらでも、キャンセルした会以外は応募開始の前に知らせる。
+    for event in events where event.status != .canceled && event.onlineSiteId == nil {
+        guard let start = event.entryStart else { continue }
+        let lead = TimeInterval(preferences.reminderMinutes * 60)
+        append(event, "entry-start", preferences.reminderMinutes == 0 ? "応募開始の時刻です" : "応募開始の\(preferences.reminderMinutes)分前です", start.addingTimeInterval(-lead))
+    }
     for event in events where event.isActualParticipant {
         let lead = TimeInterval(preferences.reminderMinutes * 60)
         if event.eventFormat.hasLiveTiming {

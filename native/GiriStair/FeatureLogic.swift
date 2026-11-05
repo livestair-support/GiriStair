@@ -1617,3 +1617,19 @@ func giriAnswerMemo(_ records: [AnswerRecord]) -> String {
     records.map { $0.mark + "・" + $0.text }.joined(separator: "\n")
 }
 
+// MARK: - 企画・応募（0.13.1）
+
+extension EventFormat {
+    /// 「企画」を選べる形式（生大喜利・スプシ系）。
+    var allowsProject: Bool { self == .live || self == .hybrid }
+}
+
+extension GiriEvent {
+    /// 企画として扱う（生大喜利・スプシ系の通常の会で「企画」を選んだ時）。
+    var isProjectEvent: Bool { isProject && meetingType == .casual && eventFormat.allowsProject }
+    /// 会の種類の表示（通常・大会・企画）。
+    var meetingTitle: String { isProjectEvent ? "企画" : meetingType.title }
+    /// 一覧の絞り込み・共有で使う会の種類の値（"casual"・"tournament"・"project"）。
+    var meetingFilterKey: String { isProjectEvent ? "project" : meetingType.rawValue }
+}
+

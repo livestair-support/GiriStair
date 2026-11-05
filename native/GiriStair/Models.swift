@@ -467,6 +467,11 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     /// 自分がリザーバーにいる時は、自分の立場をリザーバーにする。
     var hasReserves: Bool = false
     var reserves: [String] = []
+    /// 0.13.1（生大喜利・スプシ系）：通常・大会とは別の「企画」。会の種類の保存値は通常（casual）のままにして、以前の版・Android 版でも読めるようにする。
+    var isProject: Bool = false
+    /// 0.13.1：応募の開始と締切（任意）。応募開始の前に通知する（LiveStair のチケット予定と同じく、日時だけ入れる）。
+    var entryStart: Date? = nil
+    var entryEnd: Date? = nil
     /// 0.10（生大喜利）：シリーズ名（「#5」などの回数を除いた名前）。空なら会の名前から判断する。
     var series: String = ""
 }
@@ -498,7 +503,7 @@ enum GiriSelfRole: String, CaseIterable, Identifiable {
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -609,6 +614,9 @@ extension GiriEvent {
         series = try c.decodeIfPresent(String.self, forKey: .series) ?? ""
         hasReserves = try c.decodeIfPresent(Bool.self, forKey: .hasReserves) ?? false
         reserves = try c.decodeIfPresent([String].self, forKey: .reserves) ?? []
+        isProject = try c.decodeIfPresent(Bool.self, forKey: .isProject) ?? false
+        entryStart = try c.giriDate(forKey: .entryStart, required: false, calendarOnly: false)
+        entryEnd = try c.giriDate(forKey: .entryEnd, required: false, calendarOnly: false)
 
         try validate()
     }
@@ -715,6 +723,9 @@ extension GiriEvent {
         try c.encode(series, forKey: .series)
         try c.encode(hasReserves, forKey: .hasReserves)
         try c.encode(reserves, forKey: .reserves)
+        try c.encode(isProject, forKey: .isProject)
+        try c.encode(entryStart.map(GiriDates.timestamp), forKey: .entryStart)
+        try c.encode(entryEnd.map(GiriDates.timestamp), forKey: .entryEnd)
 
     }
 }

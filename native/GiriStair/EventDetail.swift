@@ -105,7 +105,7 @@ struct GiriEventDetail: View {
         Section {
             GiriEventCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live).listRowSeparator(.hidden)
             detailValue("形式", event.eventFormat.title)
-            detailValue("会の種類", event.meetingType.title)
+            detailValue("会の種類", event.meetingTitle)
             if event.meetingType == .tournament {
                 detailValue("参加形式", giriTournamentFormatText(event))
                 if event.eventFormat == .live && event.knockout { detailValue("対戦形式", "トーナメント（1対1）") }
@@ -202,10 +202,14 @@ struct GiriEventDetail: View {
                     detailValue("参加費", event.entryFee.map(giriYenText) ?? "未入力")
                 }
             }
+            // 応募の開始・締切（入れた時だけ）。
+            if let start = event.entryStart { detailValue("応募開始", GiriDateText.dateTime(start)) }
+            if let end = event.entryEnd { detailValue("応募締切", GiriDateText.dateTime(end)) }
+            // イベントページ・サイトのURL（どの形式でも）。
+            if !event.siteUrl.isEmpty, let url = URL(string: event.siteUrl), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+                Link(destination: url) { Label(event.siteUrl, systemImage: "globe").lineLimit(2) }
+            }
             if event.eventFormat != .live {
-                if !event.siteUrl.isEmpty, let url = URL(string: event.siteUrl), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
-                    Link(destination: url) { Label(event.siteUrl, systemImage: "globe").lineLimit(2) }
-                }
                 if !event.affiliation.isEmpty { detailValue("所属・部", event.affiliation) }
                 if !event.block.isEmpty { detailValue("ブロック", event.block) }
             }
@@ -526,7 +530,7 @@ struct GiriEventDetail: View {
     }
 
     private func shareText(_ event: GiriEvent) -> String {
-        var lines = [event.title, event.eventFormat.title + "・" + event.meetingType.title]
+        var lines = [event.title, event.eventFormat.title + "・" + event.meetingTitle]
         if let day = event.eventDate ?? event.startsAt { lines.append(giriDetailDate(day)) }
         if !event.venue.isEmpty { lines.append(event.venue) }
         if !event.siteUrl.isEmpty { lines.append(event.siteUrl) }

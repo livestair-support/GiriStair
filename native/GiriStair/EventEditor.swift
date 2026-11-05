@@ -96,6 +96,13 @@ struct GiriEventEditor: View {
             }
         })
     }
+    /// 会の種類（企画は通常の会として保存し、企画の印を付ける）。
+    private var meetingChoice: Binding<String> {
+        Binding(get: { draft.isProjectEvent ? "project" : draft.meetingType.rawValue }, set: { value in
+            draft.isProject = value == "project"
+            draft.meetingType = value == "tournament" ? .tournament : .casual
+        })
+    }
     /// 入力した内容から決まる自分の立場（保存する時もこれを使う）。
     private var currentSelfRole: GiriSelfRole {
         var value = draft
@@ -138,6 +145,7 @@ struct GiriEventEditor: View {
             basicSection
             if isSite { siteSection }
             if !isSite {
+                entrySection
                 if showsParticipantSection { participantSection }
                 if draft.meetingType == .tournament { teamSections }
                 if showsReserves && !showsParticipantSection { reserveSection }
@@ -389,9 +397,11 @@ struct GiriEventEditor: View {
                     ForEach(store.preferences.formatChoices(including: event?.eventFormat)) { Text($0.title).tag($0) }
                 }.labelsHidden().pickerStyle(.menu).tint(.primary)
             }
-            Picker(selection: $draft.meetingType) {
-                Text("通常").tag(MeetingType.casual)
-                Text("大会").tag(MeetingType.tournament)
+            Picker(selection: meetingChoice) {
+                Text("通常").tag("casual")
+                Text("大会").tag("tournament")
+                // 生大喜利・スプシ系は、通常・大会とは別に「企画」も選べる。
+                if draft.eventFormat.allowsProject { Text("企画").tag("project") }
             } label: { GiriEditorLabel("会の種類") }.pickerStyle(.menu).tint(.primary)
             // 大会は生・ネットを問わず、ここで個人戦／チーム戦と人数を選ぶ（結果入力もこれに合わせる）。
             if draft.meetingType == .tournament {
@@ -454,8 +464,10 @@ struct GiriEventEditor: View {
                         GiriEntryFeeField(value: $draft.entryFee)
                     }
                 }
+                // イベントページ・サイトのURL（どの形式でも入れられる）。
+                TextField(draft.eventFormat.hasOnlineRounds ? "サイトURL" : "イベントページのURL", text: $draft.siteUrl)
+                    .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                 if draft.eventFormat.hasOnlineRounds {
-                    TextField("サイトURL", text: $draft.siteUrl).keyboardType(.URL).textInputAutocapitalization(.never)
                     if draft.onlineSiteId.flatMap({ store.onlineSiteById($0) })?.hasAffiliations == true || !draft.affiliation.isEmpty {
                         TextField("所属・部", text: $draft.affiliation)
                     }
@@ -516,6 +528,22 @@ struct GiriEventEditor: View {
             }
             if showsReserves { reserveRows }
         }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
+    }
+
+    /// 応募の開始・締切（任意）。LiveStair のチケット予定と同じく、日時だけを入れて開始の前に通知する。
+    private var entrySection: some View {
+        Section {
+            GiriEventCardSectionTitle(title: "応募", systemImage: "calendar.badge.clock", accentColor: AppSectionAccent.ticket)
+                .listRowSeparator(.hidden)
+            OptionalDateRow(title: "応募開始", selection: $draft.entryStart)
+            OptionalDateRow(title: "応募締切", selection: $draft.entryEnd)
+            if draft.entryStart != nil {
+                Text(store.preferences.notificationsEnabled
+                     ? (store.preferences.reminderMinutes == 0 ? "応募開始の時刻に通知します。" : "応募開始の\(store.preferences.reminderMinutes)分前に通知します。")
+                     : "設定で通知をオンにすると、応募開始の前に通知します。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.ticket)
     }
 
     /// チーム戦（参加者の欄がない時）のリザーバー。
@@ -942,6 +970,9 @@ struct GiriEventEditor: View {
                 candidate.mcs = cleanedNames(candidate.mcs)
                 candidate.judges = cleanedNames(candidate.judges)
                 candidate.reserves = candidate.hasReserves ? cleanedNames(candidate.reserves) : []
+                // 企画は生大喜利・スプシ系の通常の会だけ。
+                if !candidate.eventFormat.allowsProject || candidate.meetingType != .casual { candidate.isProject = false }
+                candidate.siteUrl = candidate.siteUrl.trimmingCharacters(in: .whitespacesAndNewlines)
                 candidate.judging = candidate.judging.trimmingCharacters(in: .whitespacesAndNewlines)
                 candidate.venueRoom = candidate.venueRoom.trimmingCharacters(in: .whitespacesAndNewlines)
                 candidate.series = candidate.series.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1062,6 +1093,7 @@ enum GiriEditorValidationError: LocalizedError {
 func giriEditorValidate(_ event: GiriEvent) throws {
     if let start = event.startsAt, let end = event.endsAt, end < start { throw GiriEditorValidationError.schedule("終了を開始より後にしてください。") }
     if let opens = event.opensAt, let start = event.startsAt, start < opens { throw GiriEditorValidationError.schedule("開場を開始より前にしてください。") }
+    if let start = event.entryStart, let end = event.entryEnd, end < start { throw GiriEditorValidationError.schedule("応募締切を応募開始より後にしてください。") }
     for round in event.effectiveRounds {
         if let start = round.submissionStart, let end = round.submissionEnd, end < start { throw GiriEditorValidationError.schedule("\(round.name)の投稿締切を投稿開始より後にしてください。") }
         if let start = round.votingStart, let end = round.votingEnd, end < start { throw GiriEditorValidationError.schedule("\(round.name)の投票締切を投票開始より後にしてください。") }
