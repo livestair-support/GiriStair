@@ -618,17 +618,18 @@ func giriStagePassRates(_ events: [GiriEvent], now: Date = Date(), by key: (Giri
         .sorted { $0.total == $1.total ? $0.label < $1.label : $0.total > $1.total }
 }
 
-/// 審査方法の選択肢（段階ごと）。
-let giriJudgingChoices = ["印象審査", "加点審査", "超加点審査", "その他"]
+/// 審査方法の選択肢（段階ごと）。0.14：印象審査は投票だけにして、拍手審査を分ける。
+let giriJudgingChoices = ["印象審査", "拍手審査", "加点審査", "超加点審査", "その他"]
 
-/// 集計で使う審査方法の分類。以前の版の「挙手（1人1票）」「拍手」などは印象審査、
+/// 集計で使う審査方法の分類。以前の版の「挙手（1人1票）」などの投票は印象審査、拍手は拍手審査、
 /// 「審査員の採点」などの分類できないものはその他にまとめる（保存した文字は変えない）。
 func giriJudgingCategory(_ value: String) -> String {
     let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return "" }
     if text.contains("超加点") { return "超加点審査" }
     if text.contains("加点") { return "加点審査" }
-    if text.contains("印象") || text.contains("挙手") || text.contains("拍手") || text.contains("投票") { return "印象審査" }
+    if text.contains("拍手") { return "拍手審査" }
+    if text.contains("印象") || text.contains("挙手") || text.contains("投票") { return "印象審査" }
     return "その他"
 }
 
@@ -657,9 +658,11 @@ func giriOrganizerResults(_ events: [GiriEvent], now: Date = Date()) -> [GiriOrg
 }
 
 /// 段階の記録から最終結果の候補を出す（決勝の負けは、タイマンなら準優勝・横並びなら決勝進出）。
+/// 0.14：予選・本戦の敗退は「敗退」（表示は「予選敗退」など段階の名前から）。
 func giriSuggestedFinalChoice(_ stages: [ResultStage]) -> GiriFinalResultChoice? {
     guard let last = stages.filter({ $0.roundId == nil }).last(where: { $0.outcome != .unrecorded }) else { return nil }
     switch last.effectiveKind {
+    case .qualifier, .main: return last.outcome == .eliminated ? .eliminated : nil
     case .final:
         switch last.outcome {
         case .champion, .advanced: return .champion
@@ -1659,4 +1662,191 @@ func giriThoughtCurrentDeadline(_ round: EventRound, now: Date = Date()) -> Date
     if round.isSubmissionOpen(now) { return round.submissionEnd }
     if let end = round.votingEnd, round.votingRequired { return end }
     return round.submissionEnd
+}
+
+// MARK: - 0.14 大会の段階（周ごとの結果・自動の結果・次の段階）
+
+/// 次の段階の名前。予選の後は本戦、本戦の後は生大喜利なら決勝・ネット大喜利なら準々決勝。
+func giriEditorNextStage(_ name: String, live: Bool = true) -> String {
+    if let range = name.range(of: #"[0-9]+(?=回戦$)"#, options: .regularExpression), let number = Int(name[range]) {
+        return name.replacingCharacters(in: range, with: String(number + 1))
+    }
+    if name.contains("準々決勝") { return "準決勝" }
+    if name.contains("準決勝") { return "決勝" }
+    if name.contains("決勝") { return "追加日程" }
+    if name.contains("予選") { return "本戦" }
+    if name.contains("本戦") || name.contains("本選") { return live ? "決勝" : "準々決勝" }
+    return "予選"
+}
+
+/// 段階の結果の選び方：決勝は優勝・準優勝など、それ以外は通過・敗退。
+func giriStageOutcomeChoices(_ kind: StageKind) -> [TournamentOutcome] {
+    kind == .final ? [.unrecorded, .champion, .runnerUp, .placed, .other] : [.unrecorded, .advanced, .eliminated, .other]
+}
+
+/// 「横並び5人」なら対戦相手は4人、タイマンは1人。分からなければ nil。
+func giriOpponentSlotCount(_ lineup: String) -> Int? {
+    let value = lineup.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? lineup
+    if value.contains("タイマン") { return 1 }
+    if value.contains("横並び"), let range = value.range(of: #"[0-9]+"#, options: .regularExpression), let count = Int(value[range]), count >= 2 {
+        return count - 1
+    }
+    return nil
+}
+
+/// 対戦相手の候補：その会に来ている人（参加者・チーム）だけ。自分と、入力済みの人は除く。
+func giriOpponentCandidates(attendees: [String], chosen: [String], isSelf: (String) -> Bool) -> [String] {
+    let taken = Set(chosen.map(playerSearchKey))
+    var seen = Set<String>()
+    return attendees.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && !isSelf($0) && !taken.contains(playerSearchKey($0)) && seen.insert(playerSearchKey($0)).inserted }
+}
+
+/// 1周分の点の合計（お題ごとの点を足す）。何も入っていなければ nil。
+func giriLapTotal(_ lap: StageLap) -> Double? {
+    let values = lap.points.compactMap { $0 }
+    return values.isEmpty ? nil : values.reduce(0, +)
+}
+
+/// その周のブロックの中の順位：ほかの人の点が入っていれば、自分より点の高い人の数 + 1。
+func giriLapPlacement(_ lap: StageLap) -> Int? {
+    guard let total = giriLapTotal(lap) else { return lap.placement }
+    let scored = lap.others.compactMap(\.points)
+    guard !scored.isEmpty else { return lap.placement }
+    return scored.filter { $0 > total }.count + 1
+}
+
+/// 段階の点の合計（周ごとの合計を足す）。周の記録がない以前の版は段階の得点。
+func giriStageTotal(_ stage: ResultStage) -> Double? {
+    guard !stage.laps.isEmpty else { return stage.points }
+    let totals = stage.laps.compactMap(giriLapTotal)
+    return totals.isEmpty ? nil : totals.reduce(0, +)
+}
+
+/// 周の記録をそろえる：周の数・お題の数（お題ごとの投票の時）に合わせて欄を足し、余りは空のものだけ消す。
+func giriNormalizedLaps(_ stage: ResultStage, lapCount: Int) -> [StageLap] {
+    var laps = stage.laps
+    if laps.isEmpty {
+        // 以前の版の1周分（組・対戦相手・得点）を1周目にする。
+        var first = StageLap()
+        first.group = stage.group
+        first.opponents = stage.opponents
+        if let points = stage.points { first.points = [points] }
+        first.voterCount = stage.voterCount
+        first.placement = stage.placement
+        laps = [first]
+    }
+    let count = max(1, lapCount)
+    while laps.count < count { laps.append(StageLap()) }
+    while laps.count > count, let last = laps.last, last.group.isEmpty && last.opponents.isEmpty && last.points.allSatisfy({ $0 == nil }) && last.others.isEmpty {
+        laps.removeLast()
+    }
+    let slots = stage.votesPerPrompt ? max(1, stage.promptCount ?? 1) : 1
+    for index in laps.indices {
+        while laps[index].points.count < slots { laps[index].points.append(nil) }
+        if laps[index].points.count > slots {
+            // 全お題で1回の投票にした時は、入っている点を1つにまとめる。
+            let total = giriLapTotal(laps[index])
+            laps[index].points = slots == 1 ? [total] : Array(laps[index].points.prefix(slots))
+        }
+    }
+    return laps
+}
+
+/// 周の記録から段階の組・対戦相手・得点を合わせる（プレイヤー詳細の「同じ組になった」・以前の版の表示用）。
+func giriStageSyncedFromLaps(_ stage: ResultStage) -> ResultStage {
+    guard !stage.laps.isEmpty else { return stage }
+    var value = stage
+    var seen = Set<String>()
+    value.opponents = stage.laps.flatMap(\.opponents).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    let groups = stage.laps.map { $0.group.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    value.group = groups.joined(separator: "・")
+    value.points = giriStageTotal(stage)
+    if stage.laps.count == 1 {
+        value.voterCount = stage.laps[0].voterCount
+        if let placement = giriLapPlacement(stage.laps[0]) { value.placement = placement }
+    }
+    return value
+}
+
+/// 自動で入れる段階の結果：決勝以外で通過ラインがあり、全部の周の点が入っていれば通過・敗退。
+func giriSuggestedStageOutcome(_ stage: ResultStage) -> TournamentOutcome? {
+    guard stage.roundId == nil, stage.effectiveKind != .final, let border = stage.borderScore, !stage.laps.isEmpty,
+          stage.laps.allSatisfy({ giriLapTotal($0) != nil }), let total = giriStageTotal(stage) else { return nil }
+    return total >= border ? .advanced : .eliminated
+}
+
+/// トーナメント表に沿って、通過した回戦の次の回戦を足す（まだない時だけ）。相手は1人に決まる時だけ入れる。
+func giriNextBracketStage(_ stages: [ResultStage], bracket: [String], isSelf: (String) -> Bool) -> ResultStage? {
+    let names = giriBracketStageNames(bracket.count)
+    let wide = stages.filter { $0.roundId == nil }
+    guard let last = wide.last, last.passed == true, let index = names.firstIndex(of: last.name), index + 1 < names.count,
+          !wide.contains(where: { $0.name == names[index + 1] }) else { return nil }
+    var next = ResultStage()
+    next.name = names[index + 1]
+    next.lineup = last.lineup.isEmpty ? "タイマン" : last.lineup
+    next.judging = last.judging
+    next.promptCount = last.promptCount
+    let candidates = giriBracketOpponents(bracket, round: index + 2, isSelf: isSelf)
+    if candidates.count == 1 { next.opponents = candidates }
+    return next
+}
+
+/// ブロック表の1つのブロック。
+struct GiriBlockEntry: Equatable {
+    var name: String
+    var members: [String]
+}
+
+/// ブロック表の見出し（「Aブロック」「1組」「第2組」「ブロックB」など）。
+func giriBlockHeading(_ text: String) -> String? {
+    let value = (text.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? text).trimmingCharacters(in: .whitespacesAndNewlines)
+    let patterns = [#"^第?[A-Za-z0-9一二三四五六七八九十]{1,3}\s*(?:ブロック|組|グループ|卓)$"#, #"^(?:ブロック|グループ|組)\s*[A-Za-z0-9]{1,3}$"#]
+    return patterns.contains { value.range(of: $0, options: .regularExpression) != nil } ? value : nil
+}
+
+/// 読み取ったブロック表を、見出しごとの名前に分ける。名前はその見出しの下（近い列）の行。
+func giriBlockTable(_ lines: [GiriOCRLine]) -> [GiriBlockEntry] {
+    let headings = lines.filter { giriBlockHeading($0.text) != nil }
+    guard !headings.isEmpty else { return [] }
+    var blocks = headings.map { GiriBlockEntry(name: giriBlockHeading($0.text) ?? $0.text, members: []) }
+    for line in lines.sorted(by: { $0.midY < $1.midY }) where giriBlockHeading(line.text) == nil {
+        let name = giriBracketCleanName(line.text)
+        guard !name.isEmpty else { continue }
+        // 上にある見出しのうち、列が近いもの（横に並んだ表）→ いちばん近い上の見出し。
+        let above = headings.enumerated().filter { $0.element.midY < line.midY }
+        guard let owner = above.min(by: { first, second in
+            let a = abs(first.element.midX - line.midX) * 3 + (line.midY - first.element.midY)
+            let b = abs(second.element.midX - line.midX) * 3 + (line.midY - second.element.midY)
+            return a < b
+        }) else { continue }
+        if !blocks[owner.offset].members.contains(where: { playerSearchKey($0) == playerSearchKey(name) }) {
+            blocks[owner.offset].members.append(name)
+        }
+    }
+    return blocks.filter { !$0.members.isEmpty }
+}
+
+/// 名前のフリガナの候補（ひらがな）。漢字の読みは端末の辞書によるので、確認して直せるようにする。
+/// 日本語の文字がない名前（英字だけなど）は空にする。
+func giriFuriganaCandidate(_ name: String) -> String {
+    let text = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard text.range(of: #"[\p{Han}\p{Hiragana}\p{Katakana}]"#, options: .regularExpression) != nil else { return "" }
+    var output = ""
+    let range = CFRange(location: 0, length: (text as NSString).length)
+    let tokenizer = CFStringTokenizerCreate(nil, text as CFString, range, kCFStringTokenizerUnitWordBoundary, Locale(identifier: "ja_JP") as CFLocale)
+    var type = CFStringTokenizerAdvanceToNextToken(tokenizer)
+    while !type.isEmpty {
+        let tokenRange = CFStringTokenizerGetCurrentTokenRange(tokenizer)
+        let token = (text as NSString).substring(with: NSRange(location: tokenRange.location, length: tokenRange.length))
+        if token.range(of: #"\p{Han}"#, options: .regularExpression) != nil,
+           let latin = CFStringTokenizerCopyCurrentTokenAttribute(tokenizer, kCFStringTokenizerAttributeLatinTranscription) as? String {
+            output += latin.applyingTransform(.latinToHiragana, reverse: false) ?? token
+        } else {
+            output += token.applyingTransform(.hiraganaToKatakana, reverse: true) ?? token
+        }
+        type = CFStringTokenizerAdvanceToNextToken(tokenizer)
+    }
+    return output.replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
 }

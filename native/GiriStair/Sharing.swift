@@ -42,8 +42,11 @@ struct GiriStatisticsView: View {
     @State private var page: GiriStatisticsPage = .participation
     /// 年・月・会の種類で絞った、全形式の参加記録。
     private var allRecords: [GiriEvent] {
-        store.events.filter { event in
+        // 会の中の大会は、元の会を参加回数に数えている時は会として1回にする（戦績はそれぞれの大会で数える）。
+        let countedParents = Set(store.events.filter { $0.isCountableParticipation() }.map(\.id))
+        return store.events.filter { event in
             guard event.isCountableParticipation() else { return false }
+            if let parent = event.parentEventId, countedParents.contains(parent) { return false }
             if meeting != "all" && event.meetingFilterKey != meeting { return false }
             let date = giriAnalyticsDate(event)
             if year != 0 && date.map({ Calendar.current.component(.year, from: $0) }) != year { return false }

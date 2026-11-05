@@ -1096,7 +1096,8 @@ struct DomainRegression {
             let marked = giriMarkingAlreadyAdded(draft.participants, existing: ["まつぼっくり"])
             try check(marked.first { $0.name == "まつぼっくり" }.map { $0.alreadyAdded && !$0.included } == true && giriSelectedParticipantNames(marked) == ["たまごサンドイッチ", "新しい人"], "people already in the list are not added twice")
             try check(giriJudgingCategory("挙手（1人1票）") == "印象審査" && giriJudgingCategory("超加点審査") == "超加点審査" && giriJudgingCategory("加点審査") == "加点審査", "judging categories")
-            try check(giriJudgingCategory("審査員の採点") == "その他" && giriJudgingCategory("").isEmpty && giriJudgingChoices == ["印象審査", "加点審査", "超加点審査", "その他"], "uncategorised judging is other")
+            try check(giriJudgingCategory("審査員の採点") == "その他" && giriJudgingCategory("").isEmpty && giriJudgingChoices == ["印象審査", "拍手審査", "加点審査", "超加点審査", "その他"], "uncategorised judging is other")
+            try check(giriJudgingCategory("拍手") == "拍手審査" && giriJudgingCategory("印象（投票）") == "印象審査", "applause judging is separate from voted impressions")
         }
 
         // 0.12 roles from inputs, reserves, aliases shown together or separately, regions.
@@ -1357,6 +1358,87 @@ struct DomainRegression {
             var round = EventRound(); round.submissionStart = day(0)
             round = completeRoundSchedule(round, submissionDays: 7, votingDays: 3)
             try check(giriThoughtCurrentDeadline(round, now: day(1)) == round.submissionEnd && giriThoughtCurrentDeadline(round, now: day(8)) == round.votingEnd, "the folded schedule shows the next deadline")
+        }
+
+        // 0.14 live tournament stages: laps in different blocks, prompts, automatic results, brackets, inner tournaments, furigana.
+        do {
+            try check(giriEditorNextStage("予選") == "本戦" && giriEditorNextStage("本戦") == "決勝" && giriEditorNextStage("本戦", live: false) == "準々決勝", "after the qualifier comes the main stage, then the final (live) or quarterfinal (net)")
+            try check(nextStageName("予選") == "本戦" && nextStageName("準々決勝") == "準決勝" && nextStageName("2回戦") == "3回戦", "net tournaments use the same next stage names")
+            try check(giriOpponentSlotCount("横並び5人") == 4 && giriOpponentSlotCount("横並び５人") == 4 && giriOpponentSlotCount("タイマン") == 1 && giriOpponentSlotCount("総当たり") == nil, "the lineup decides how many opponents there are")
+            let candidates = giriOpponentCandidates(attendees: ["わたし", "はるか", "ゆう", "はるか", ""], chosen: ["ゆう"], isSelf: { $0 == "わたし" })
+            try check(candidates == ["はるか"], "opponents come only from the attendees, without the user or people already chosen")
+
+            var legacy = ResultStage(); legacy.name = "予選"; legacy.group = "Aブロック"; legacy.opponents = ["はるか"]; legacy.points = 7
+            let migrated = giriNormalizedLaps(legacy, lapCount: 1)
+            try check(migrated.count == 1 && migrated[0].group == "Aブロック" && migrated[0].opponents == ["はるか"] && migrated[0].points == [7], "an older stage becomes its first lap")
+            var stage = legacy; stage.promptCount = 2; stage.votesPerPrompt = true; stage.judging = "印象審査"
+            stage.laps = giriNormalizedLaps(stage, lapCount: 3)
+            try check(stage.laps.count == 3 && stage.laps.allSatisfy { $0.points.count == 2 }, "three laps with a vote per prompt have two scores each")
+            stage.laps[0].points = [3, 4]; stage.laps[1].points = [5, nil]; stage.laps[1].group = "Cブロック"; stage.laps[1].opponents = ["ゆう"]
+            try check(giriStageTotal(stage) == 12 && giriLapTotal(stage.laps[1]) == 5, "lap and stage totals add the prompts")
+            stage.borderScore = 10
+            try check(giriSuggestedStageOutcome(stage) == nil, "nothing is decided before every lap has a score")
+            stage.laps[2].points = [1, 0]
+            try check(giriSuggestedStageOutcome(stage) == .advanced, "the total against the border decides advancement")
+            let synced = giriStageSyncedFromLaps(stage)
+            try check(synced.opponents == ["はるか", "ゆう"] && synced.group == "Aブロック・Cブロック" && synced.points == 13, "the stage keeps the union of opponents for player history")
+            var single = stage; single.votesPerPrompt = false
+            single.laps = giriNormalizedLaps(single, lapCount: 3)
+            try check(single.laps[0].points == [7], "switching to one vote for all prompts keeps the lap total")
+            var final = stage; final.name = "決勝"
+            try check(giriSuggestedStageOutcome(final) == nil && giriStageOutcomeChoices(.final).contains(.champion) && !giriStageOutcomeChoices(.qualifier).contains(.champion), "finals are chosen by placement, other stages by advancement")
+            var lap = StageLap(); lap.points = [6]; lap.others = [StageOtherScore(name: "はるか", points: 8), StageOtherScore(name: "ゆう", points: 2)]
+            try check(giriLapPlacement(lap) == 2, "other people's scores give the block placement")
+            var lost = ResultStage(); lost.name = "予選"; lost.outcome = .eliminated
+            try check(giriSuggestedFinalChoice([lost]) == .eliminated, "a qualifier loss is the final result")
+
+            let bracket = ["わたし", "はるか", "ゆう", "まこ"]
+            var semi = ResultStage(); semi.name = "準決勝"; semi.lineup = "タイマン"; semi.outcome = .advanced
+            let next = giriNextBracketStage([semi], bracket: bracket, isSelf: { $0 == "わたし" })
+            try check(next?.name == "決勝" && next?.lineup == "タイマン" && next?.opponents.isEmpty == true, "winning a bracket round adds the next round")
+            try check(giriNextBracketStage([semi, next ?? ResultStage()], bracket: bracket, isSelf: { $0 == "わたし" }) == nil, "the next round is added only once")
+
+            func block(_ text: String, _ x: Double, _ y: Double) -> GiriOCRLine { GiriOCRLine(text: text, midX: x, midY: y, height: 0.01) }
+            let table = giriBlockTable([block("Aブロック", 0.2, 0.1), block("Bブロック", 0.7, 0.1), block("わたし", 0.2, 0.2), block("はるか", 0.2, 0.25),
+                                        block("ゆう", 0.7, 0.2), block("まこ", 0.7, 0.25)])
+            try check(table == [GiriBlockEntry(name: "Aブロック", members: ["わたし", "はるか"]), GiriBlockEntry(name: "Bブロック", members: ["ゆう", "まこ"])], "a block table is read by headings and columns")
+            try check(giriBlockHeading("第2組") != nil && giriBlockHeading("ブロックC") != nil && giriBlockHeading("はるか") == nil, "block headings")
+
+            var lapStage = stage
+            lapStage.advancedWith = ["はるか"]
+            let stageJSON = try JSONEncoder().encode(lapStage)
+            try check(try JSONDecoder().decode(ResultStage.self, from: stageJSON) == lapStage, "laps, prompts and advancing players roundtrip")
+            let plainJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any] ?? [:]
+            try check(plainJSON["laps"] == nil && plainJSON["promptCount"] == nil && plainJSON["advancedWith"] == nil, "stages without laps keep the older JSON shape")
+            try check(try JSONDecoder().decode(ResultStage.self, from: JSONSerialization.data(withJSONObject: plainJSON)).laps.isEmpty, "older stages decode without laps")
+
+            let innerDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriInner-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: innerDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: innerDirectory) }
+            let innerStore = GiriStore(directory: innerDirectory)
+            var day = GiriEvent(title: "ひかりの会"); day.eventFormat = .live; day.venue = "ひかりホール"; day.participants = ["わたし", "はるか"]
+            day.eventDate = GiriDates.parse("2026-11-01T00:00:00Z")
+            try innerStore.saveEvent(day)
+            let inner = try innerStore.addTournament(inside: day.id)
+            try check(inner.parentEventId == day.id && inner.meetingType == .tournament && inner.venue == "ひかりホール" && inner.participants == day.participants && inner.eventDate == innerStore.events.first(where: { $0.id == day.id })?.eventDate, "a tournament inside the day copies its basics")
+            let again = try innerStore.addTournament(inside: inner.id)
+            try check(again.parentEventId == day.id && again.title == "ひかりの会 大会2", "more tournaments stay inside the same day")
+            let eventJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(day)) as? [String: Any] ?? [:]
+            try check(eventJSON["parentEventId"] == nil, "events without a parent keep the older JSON shape")
+            try innerStore.deleteEvent(day.id)
+            try check(innerStore.events.allSatisfy { $0.parentEventId == nil } && innerStore.events.count == 2, "deleting the day keeps its tournaments")
+
+            try check(giriFuriganaCandidate("カタカナ") == "かたかな" && giriFuriganaCandidate("Kou").isEmpty, "furigana candidates are hiragana and skip latin names")
+            let reading = giriFuriganaCandidate("山田")
+            try check(!reading.isEmpty && reading.range(of: #"^[\p{Hiragana}ー]+$"#, options: .regularExpression) != nil, "kanji names get a hiragana reading candidate")
+            let player = innerStore.playerDirectory.first { $0.name == "はるか" }
+            try innerStore.saveFurigana(players: [player?.id ?? "": "はるか"], venues: [innerStore.venueDirectory.first?.id ?? "": "ひかりほーる"])
+            try check(innerStore.playerDirectory.first { $0.name == "はるか" }?.furigana == "はるか" && innerStore.venueDirectory.first?.furigana == "ひかりほーる", "furigana is saved in bulk, also for names only in records")
+            var venue = GiriVenue(name: "古い会場")
+            let venueJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(venue)) as? [String: Any] ?? [:]
+            try check(venueJSON["furigana"] == nil, "venues without furigana keep the older JSON shape")
+            venue.furigana = "ふるいかいじょう"
+            try check(try JSONDecoder().decode(GiriVenue.self, from: JSONEncoder().encode(venue)).furigana == "ふるいかいじょう", "venue furigana roundtrips")
         }
 
         print("Native domain regressions passed: \(passed)")

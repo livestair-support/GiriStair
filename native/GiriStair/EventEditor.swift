@@ -1200,15 +1200,6 @@ func giriEditorNameKey(_ value: String) -> String {
     playerSearchKey(value)
 }
 
-func giriEditorNextStage(_ name: String) -> String {
-    if let range = name.range(of: #"[0-9]+(?=回戦$)"#, options: .regularExpression), let number = Int(name[range]) { return name.replacingCharacters(in: range, with: String(number + 1)) }
-    if name.contains("準々決勝") { return "準決勝" }
-    if name.contains("準決勝") { return "決勝" }
-    if name.contains("決勝") { return "追加日程" }
-    if name.contains("予選") { return "本戦1回戦" }
-    return "予選1回戦"
-}
-
 enum GiriEditorValidationError: LocalizedError {
     case schedule(String)
     var errorDescription: String? { switch self { case .schedule(let message): return message } }

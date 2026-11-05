@@ -47,11 +47,8 @@ func nextStageName(_ name: String) -> String {
        let match = expression.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
        let prefixRange = Range(match.range(at: 1), in: trimmed), let numberRange = Range(match.range(at: 2), in: trimmed),
        let number = Int(trimmed[numberRange]) { return "\(trimmed[prefixRange])\(number + 1)回戦" }
-    if trimmed.contains("予選") { return "本戦1回戦" }
-    if trimmed.contains("準々決勝") { return "準決勝" }
-    if trimmed.contains("準決勝") { return "決勝" }
-    if trimmed.contains("決勝") { return "追加日程" }
-    return "予選1回戦"
+    // 0.14：ネット大喜利は 予選 → 本戦 → 準々決勝 → 準決勝 → 決勝（生大喜利と同じ決め方）。
+    return giriEditorNextStage(trimmed, live: false)
 }
 func addNextRound(_ previous: EventRound?, id: String = UUID().uuidString, sameStage: Bool = false, tournament: Bool = true, defaultStart: Date, submissionDays: Int = 7, votingDays: Int = 7, calendar: Calendar = .current) -> EventRound {
     var round = EventRound(id: id)
