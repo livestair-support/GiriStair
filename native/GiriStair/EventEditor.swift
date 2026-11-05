@@ -202,7 +202,17 @@ struct GiriEventEditor: View {
         draft != initial || participants.filter { !$0.isEmpty } != initial.participants
     }
 
+    // 型チェックが長くならないように、本体・見た目・変更の処理・シートと確認を分ける。
     var body: some View {
+        withSheets(withPhotoHandler(withChangeHandlers(editorChrome)))
+    }
+
+    /// LiveStair EventBasicEditor と同じく、参加者（リザーバー）が2人以上の時は「≡」を長押しして並び替える。
+    private var editModeValue: EditMode {
+        canReorderParticipants || canReorderReserves ? .active : .inactive
+    }
+
+    private var editorForm: some View {
         Form {
             if isLive { eventReadSection }
             basicSection
@@ -221,10 +231,14 @@ struct GiriEventEditor: View {
                 }.appEventEditorCardStyle(accentColor: AppSectionAccent.memo)
             }
         }
+    }
+
+    private var editorChrome: some View {
+        editorForm
         .appEditorFormStyle()
         .environment(\.defaultMinListRowHeight, 48)
         // LiveStair EventBasicEditor と同じく、参加者が2人以上の時は「≡」を長押しして並び替える。
-        .environment(\.editMode, .constant(canReorderParticipants || canReorderReserves ? EditMode.active : EditMode.inactive))
+        .environment(\.editMode, .constant(editModeValue))
         .navigationTitle(event == nil ? "" : "編集")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(event != nil && isDirty)
@@ -249,6 +263,10 @@ struct GiriEventEditor: View {
             }
         }
         .interactiveDismissDisabled(isDirty)
+    }
+
+    private func withChangeHandlers<Content: View>(_ content: Content) -> some View {
+        content
         .onAppear { if !loaded { load() } }
         // 編集中に別のタブから別の記録を開いても、この入力を黙って閉じない。
         .onChange(of: isDirty) { _, dirty in if let event { navigation.markEditor(event.id, unsaved: dirty) } }
@@ -279,6 +297,11 @@ struct GiriEventEditor: View {
                 }
             }
         }
+    }
+
+    /// 参加者の画面・トーナメント表の画像を読み取る。
+    private func withPhotoHandler<Content: View>(_ content: Content) -> some View {
+        content
         .onChange(of: photo) { _, item in
             guard let item else { return }
             recognizing = true
@@ -301,6 +324,10 @@ struct GiriEventEditor: View {
                 photo = nil
             }
         }
+    }
+
+    private func withSheets<Content: View>(_ content: Content) -> some View {
+        withPromoteAlert(content)
         .sheet(isPresented: $showImport) {
             NavigationStack {
                 GiriParticipantImport(source: importText, lines: importLines, existing: participants) { names in
@@ -312,17 +339,6 @@ struct GiriEventEditor: View {
                 }
             }
         }
-        .alert(promoteTitle, isPresented: Binding(get: { removingParticipant != nil }, set: { if !$0 { removingParticipant = nil } })) {
-            Button("繰り上げる") {
-                if let index = removingParticipant { removeParticipant(index, promote: true) }
-                removingParticipant = nil
-            }
-            Button("繰り上げない") {
-                if let index = removingParticipant { removeParticipant(index, promote: false) }
-                removingParticipant = nil
-            }
-            Button("キャンセル", role: .cancel) { removingParticipant = nil }
-        } message: { Text("リザーバー1の「\(firstReserveName ?? "")」を参加者の一番下に入れ、ほかのリザーバーの番号を1つずつ上げます。") }
         .sheet(item: $bracketDraft) { draft in
             NavigationStack {
                 GiriBracketEditor(names: draft.names) { names in participants = names.isEmpty ? [""] : names }
@@ -340,6 +356,22 @@ struct GiriEventEditor: View {
             if let event { navigation.markEditor(event.id, unsaved: false) }
             dismiss()
         }
+    }
+
+    /// 参加者を外す時に、リザーバー1を繰り上げるかを聞く。
+    private func withPromoteAlert<Content: View>(_ content: Content) -> some View {
+        content
+        .alert(promoteTitle, isPresented: Binding(get: { removingParticipant != nil }, set: { if !$0 { removingParticipant = nil } })) {
+            Button("繰り上げる") {
+                if let index = removingParticipant { removeParticipant(index, promote: true) }
+                removingParticipant = nil
+            }
+            Button("繰り上げない") {
+                if let index = removingParticipant { removeParticipant(index, promote: false) }
+                removingParticipant = nil
+            }
+            Button("キャンセル", role: .cancel) { removingParticipant = nil }
+        } message: { Text("リザーバー1の「\(firstReserveName ?? "")」を参加者の一番下に入れ、ほかのリザーバーの番号を1つずつ上げます。") }
     }
 
     private var saveHeaderButton: some View {
