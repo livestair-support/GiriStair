@@ -34,6 +34,10 @@ struct GiriEventEditor: View {
     @State private var eventPagePhoto: PhotosPickerItem?
     @State private var readingEventPage = false
     @State private var eventPageDraft: GiriEventPageDraft?
+    /// 応募の日程は、入れる時だけ欄を出す。
+    @State private var showsEntry = false
+    /// 参加者を外す時に、リザーバー1を繰り上げるかを聞く。
+    @State private var removingParticipant: Int?
 
     init(event: GiriEvent? = nil, onSaved: (() -> Void)? = nil) {
         self.event = event
@@ -61,6 +65,7 @@ struct GiriEventEditor: View {
         guard canReorderParticipants else { return nil }
         return { source, destination in participants.move(fromOffsets: source, toOffset: destination) }
     }
+    private var canReorderReserves: Bool { showsReserves && draft.hasReserves && draft.reserves.count > 1 }
     private var canReorderParticipants: Bool {
         showsParticipantSection && participants.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count > 1
     }
@@ -96,6 +101,11 @@ struct GiriEventEditor: View {
             }
         })
     }
+    private var promoteTitle: String {
+        guard let index = removingParticipant, participants.indices.contains(index) else { return "リザーバーを繰り上げますか？" }
+        return "「\(participants[index])」を外して、リザーバーを繰り上げますか？"
+    }
+
     /// 会の種類（企画は通常の会として保存し、企画の印を付ける）。
     private var meetingChoice: Binding<String> {
         Binding(get: { draft.isProjectEvent ? "project" : draft.meetingType.rawValue }, set: { value in
@@ -109,13 +119,6 @@ struct GiriEventEditor: View {
         value.participants = participants
         return value.derivedSelfRole(isSelf: store.preferences.isSelf)
     }
-    /// リザーバーの名前。自分を入れたら参加者から外す。
-    private var reservesBinding: Binding<[String]> {
-        Binding(get: { draft.reserves }, set: { names in
-            draft.reserves = names
-            placeSelf(force: false)
-        })
-    }
     private var hasReservesBinding: Binding<Bool> {
         Binding(get: { draft.hasReserves }, set: { enabled in
             draft.hasReserves = enabled
@@ -125,12 +128,72 @@ struct GiriEventEditor: View {
     }
     /// 生大喜利の大会だけ：参加者の一番下でリザーバーのあり・なしと名前を入れる。
     private var showsReserves: Bool { isLive && isTournament }
+    /// リザーバーはオンにした下に、繰り上がる順の番号を付けて並べる（並び替えられる）。
     @ViewBuilder private var reserveRows: some View {
         Toggle(isOn: hasReservesBinding) { GiriEditorLabel("リザーバー") }
             .tint(AppSectionAccent.artist)
         if draft.hasReserves {
-            GiriNamesField(title: "リザーバーの名前（当日キャンセルに備えて観覧）", names: reservesBinding)
+            ForEach(draft.reserves.indices, id: \.self) { index in
+                HStack(spacing: 8) {
+                    Button(role: .destructive) {
+                        guard draft.reserves.indices.contains(index) else { return }
+                        draft.reserves.remove(at: index)
+                        placeSelf(force: false)
+                    } label: { Image(systemName: "minus.circle") }
+                    .buttonStyle(.borderless).accessibilityLabel("リザーバーを削除")
+                    Text("\(index + 1)").font(.subheadline.weight(.bold).monospacedDigit())
+                        .foregroundStyle(AppSectionAccent.artist).frame(width: 22, alignment: .center)
+                    GiriEditorPlayerField(title: "リザーバー", text: reserveBinding(index), compact: true)
+                }.listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 12))
+                    .environment(\.defaultMinListRowHeight, 36)
+            }
+            .onMove(perform: reserveMoveAction)
+            Button { draft.reserves.append("") } label: { Label("リザーバーを追加", systemImage: "plus.circle") }
+                .tint(accentActionColor)
         }
+    }
+
+    private func reserveBinding(_ index: Int) -> Binding<String> {
+        Binding(get: { draft.reserves.indices.contains(index) ? draft.reserves[index] : "" }, set: { value in
+            guard draft.reserves.indices.contains(index) else { return }
+            draft.reserves[index] = value
+            placeSelf(force: false)
+        })
+    }
+
+    private var reserveMoveAction: ((IndexSet, Int) -> Void)? {
+        guard draft.reserves.count > 1 else { return nil }
+        return { source, destination in draft.reserves.move(fromOffsets: source, toOffset: destination) }
+    }
+
+    /// リザーバー1（名前のある最初の人）。
+    private var firstReserveName: String? {
+        draft.reserveNames.first
+    }
+
+    /// 参加者を外す。リザーバーがいる時は、リザーバー1を繰り上げるかを聞く。
+    private func requestRemoveParticipant(_ index: Int) {
+        guard participants.indices.contains(index) else { return }
+        let name = participants[index].trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty && showsReserves && firstReserveName != nil {
+            removingParticipant = index
+        } else {
+            removeParticipant(index, promote: false)
+        }
+    }
+
+    private func removeParticipant(_ index: Int, promote: Bool) {
+        guard participants.indices.contains(index) else { return }
+        participants.remove(at: index)
+        if promote, let reserveIndex = draft.reserves.firstIndex(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            // リザーバー1を参加者の一番下へ。残りのリザーバーは番号を1つずつ繰り上げる。
+            let promoted = draft.reserves.remove(at: reserveIndex).trimmingCharacters(in: .whitespacesAndNewlines)
+            participants.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            participants.append(promoted)
+            if draft.reserves.isEmpty { draft.reserves = [""] }
+        }
+        if participants.isEmpty { participants = [""] }
+        placeSelf(force: false)
     }
     private var isValid: Bool {
         !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -145,10 +208,11 @@ struct GiriEventEditor: View {
             basicSection
             if isSite { siteSection }
             if !isSite {
-                entrySection
                 if showsParticipantSection { participantSection }
                 if draft.meetingType == .tournament { teamSections }
                 if showsReserves && !showsParticipantSection { reserveSection }
+                // 応募の日程は参加者の下。入れる時だけ欄を出す。
+                if showsEntry { entrySection } else { entryAddSection }
                 if draft.eventFormat.hasOnlineRounds { scheduleSections }
                 Section {
                     GiriEventCardSectionTitle(title: "メモ", systemImage: "text.alignleft", accentColor: AppSectionAccent.memo)
@@ -160,7 +224,7 @@ struct GiriEventEditor: View {
         .appEditorFormStyle()
         .environment(\.defaultMinListRowHeight, 48)
         // LiveStair EventBasicEditor と同じく、参加者が2人以上の時は「≡」を長押しして並び替える。
-        .environment(\.editMode, .constant(canReorderParticipants ? EditMode.active : EditMode.inactive))
+        .environment(\.editMode, .constant(canReorderParticipants || canReorderReserves ? EditMode.active : EditMode.inactive))
         .navigationTitle(event == nil ? "" : "編集")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(event != nil && isDirty)
@@ -244,13 +308,24 @@ struct GiriEventEditor: View {
                     let added = names.filter { !existing.contains(giriEditorNameKey($0)) }
                     participants.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                     participants.append(contentsOf: added)
-                    participants.append("")
+                    if participants.isEmpty { participants = [""] }
                 }
             }
         }
+        .alert(promoteTitle, isPresented: Binding(get: { removingParticipant != nil }, set: { if !$0 { removingParticipant = nil } })) {
+            Button("繰り上げる") {
+                if let index = removingParticipant { removeParticipant(index, promote: true) }
+                removingParticipant = nil
+            }
+            Button("繰り上げない") {
+                if let index = removingParticipant { removeParticipant(index, promote: false) }
+                removingParticipant = nil
+            }
+            Button("キャンセル", role: .cancel) { removingParticipant = nil }
+        } message: { Text("リザーバー1の「\(firstReserveName ?? "")」を参加者の一番下に入れ、ほかのリザーバーの番号を1つずつ上げます。") }
         .sheet(item: $bracketDraft) { draft in
             NavigationStack {
-                GiriBracketEditor(names: draft.names) { names in participants = names + [""] }
+                GiriBracketEditor(names: draft.names) { names in participants = names.isEmpty ? [""] : names }
             }
         }
         .alert("入力内容を空にしますか？", isPresented: $showDiscard) {
@@ -338,7 +413,9 @@ struct GiriEventEditor: View {
     /// 読み取った内容を入力に反映する。置き換えない時は空欄だけに入れ、参加者は重ならない人だけ足す。
     private func applyEventPage(_ page: GiriEventPageDraft, replace: Bool) {
         let calendar = Calendar.current
-        if let date = page.date, replace || draft.eventDate == nil {
+        // 新しく登録する時の日付（今日のまま触っていない）は、読み取った日付で上書きする。
+        let untouchedDate = draft.eventDate == nil || (event == nil && draft.eventDate == initial.eventDate)
+        if let date = page.date, replace || untouchedDate {
             let previous = draft.eventDate
             let newDay = calendar.startOfDay(for: date)
             lastEventDay = newDay
@@ -365,10 +442,10 @@ struct GiriEventEditor: View {
         draft = value
         let existing = Set(participants.map(giriEditorNameKey))
         let added = giriSelectedParticipantNames(page.participants).filter { !existing.contains(giriEditorNameKey($0)) }
+        // 読み取った後は空の行を作らない（「参加者を追加」で増やす）。
         if !added.isEmpty {
             participants.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             participants.append(contentsOf: added)
-            participants.append("")
         }
     }
 
@@ -506,16 +583,14 @@ struct GiriEventEditor: View {
             }.listRowSeparator(.hidden)
             ForEach(participants.indices, id: \.self) { index in
                 HStack(spacing: 8) {
+                    // 並び替えの「≡」と押し間違えないように、外すボタンは左に置く。
+                    Button(role: .destructive) { requestRemoveParticipant(index) } label: { Image(systemName: "minus.circle") }
+                        .buttonStyle(.borderless).accessibilityLabel("参加者を削除")
                     if isKnockoutBracket {
                         Text("\(index + 1)").font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 22, alignment: .trailing)
                     }
                     GiriEditorPlayerField(title: "参加者名", text: participantBinding(index), compact: true)
                     if isTeamTournament { assignMenu(index) }
-                    Button(role: .destructive) {
-                        participants.remove(at: index)
-                        if participants.isEmpty { participants = [""] }
-                    } label: { Image(systemName: "minus.circle") }
-                    .buttonStyle(.borderless).accessibilityLabel("参加者を削除")
                 }.listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 12))
                     .environment(\.defaultMinListRowHeight, 36)
             }
@@ -530,11 +605,27 @@ struct GiriEventEditor: View {
         }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
     }
 
+    private var entryAddSection: some View {
+        Section {
+            Button { showsEntry = true } label: { Label("応募の日程を追加", systemImage: "calendar.badge.plus") }
+                .tint(accentActionColor)
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
     /// 応募の開始・締切（任意）。LiveStair のチケット予定と同じく、日時だけを入れて開始の前に通知する。
     private var entrySection: some View {
         Section {
-            GiriEventCardSectionTitle(title: "応募", systemImage: "calendar.badge.clock", accentColor: AppSectionAccent.ticket)
-                .listRowSeparator(.hidden)
+            HStack {
+                GiriEventCardSectionTitle(title: "応募", systemImage: "calendar.badge.clock", accentColor: AppSectionAccent.ticket)
+                Spacer(minLength: 8)
+                Button("外す", role: .destructive) {
+                    draft.entryStart = nil
+                    draft.entryEnd = nil
+                    showsEntry = false
+                }
+                .font(.subheadline).buttonStyle(.borderless)
+            }
+            .listRowSeparator(.hidden)
             OptionalDateRow(title: "応募開始", selection: $draft.entryStart)
             OptionalDateRow(title: "応募締切", selection: $draft.entryEnd)
             if draft.entryStart != nil {
@@ -774,7 +865,8 @@ struct GiriEventEditor: View {
             }
         }
         if draft.rounds.isEmpty { draft.rounds = draft.effectiveRounds }
-        participants = draft.participants.isEmpty ? [""] : draft.participants + [""]
+        participants = draft.participants.isEmpty ? [""] : draft.participants
+        showsEntry = draft.entryStart != nil || draft.entryEnd != nil
         if draft.teams.isEmpty, let old = draft.tournamentResult, old.format != .individual,
            !old.members.isEmpty || !old.teamName.isEmpty {
             var team = GiriTeam(); team.name = old.teamName; team.members = old.members; team.isMine = true

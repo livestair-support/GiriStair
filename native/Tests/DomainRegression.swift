@@ -1272,6 +1272,93 @@ struct DomainRegression {
             try check(roundtrip.entryStart == applying.entryStart && roundtrip.entryEnd == applying.entryEnd, "application dates roundtrip")
         }
 
+        // 0.14 break weeks announced by a site, past rounds added from the history, quick answers.
+        do {
+            let anchor = GiriDates.parse("2026-10-01T22:00:00Z") ?? Date()
+            func day(_ offset: Int) -> Date { addCalendarDays(anchor, offset) }
+            var site = OnlineSite(id: "break-site", name: "休みのあるサイト", recurrence: .weekly)
+            site.submissionDays = 7; site.votingDays = 3
+            site.cycleSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: anchor, intervalDays: 7, anchorCycleNumber: 3)
+            guard let plainSettings = site.cycleSettings else { throw GiriDataError.invalid("Missing break settings") }
+            let settings = siteSettingsTogglingBreak(plainSettings, start: day(14), isBreak: true)
+            var breakSite = site
+            breakSite.cycleSettings = settings
+            let rows = siteCycleDescriptors(breakSite, around: day(22)).filter { $0.kind == .regular }
+            try check(!rows.contains { $0.start == day(14) }, "a break week creates no round")
+            try check(rows.first { $0.start == day(21) }?.cycleNumber == 5 && rows.first { $0.start == day(7) }?.cycleNumber == 4, "rounds after a break are renumbered and earlier ones keep their numbers")
+            try check(siteRegularCycleStart(settings, number: 5) == day(21) && siteRegularCycleStart(settings, number: 2) == day(-7), "a round number skips break weeks")
+            let earlierBreak = siteSettingsTogglingBreak(settings, start: day(-7), isBreak: true)
+            try check(siteRegularCycleStart(earlierBreak, number: 2) == day(-14) && siteRegularCycleNumber(earlierBreak, slotStart: day(-14), offset: -2) == 2, "breaks before the anchor are counted backwards")
+            try check(siteSettingsTogglingBreak(settings, start: day(14), isBreak: false).breakStarts.isEmpty, "a break can be undone")
+            try check(siteCurrentBreak(breakSite, now: day(15)) != nil && siteCurrentBreak(breakSite, now: day(22)) == nil, "the card shows a break only during its posting period")
+            var capped = breakSite; capped.cycleSettings?.regularCycleCount = 5
+            var lastRound = EventRound(); lastRound.submissionStart = day(21)
+            lastRound = completeRoundSchedule(lastRound, submissionDays: 7, votingDays: 3)
+            try check(siteSeasonLastCycleEnd(capped) == lastRound.votingEnd, "the season end moves back by a break week")
+            let breakRoundtrip = try JSONDecoder().decode(SiteCycleSettings.self, from: JSONEncoder().encode(settings))
+            try check(siteIsBreakStart(breakRoundtrip, day(14)) && breakRoundtrip.breakStarts.count == 1, "break weeks roundtrip")
+            let plainJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plainSettings)) as? [String: Any] ?? [:]
+            try check(plainJSON["breakStarts"] == nil, "settings without breaks keep the older JSON shape")
+            let plainDecoded = try JSONDecoder().decode(SiteCycleSettings.self, from: JSONSerialization.data(withJSONObject: plainJSON))
+            try check(plainDecoded.breakStarts.isEmpty, "older settings decode without breaks")
+            try check(siteNextSeasonSettings(breakSite, firstDeadline: day(70)).breakStarts.isEmpty, "a new season starts without breaks")
+
+            let breakDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriBreak-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: breakDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: breakDirectory) }
+            let breakStore = GiriStore(directory: breakDirectory)
+            try breakStore.saveOnlineSite(site)
+            guard let savedSite = breakStore.onlineSites.first else { throw GiriDataError.invalid("Missing break site") }
+            let descriptors = siteCycleDescriptors(savedSite, around: day(22))
+            guard let later = descriptors.first(where: { $0.start == day(21) }), let slot = descriptors.first(where: { $0.start == day(14) }) else {
+                throw GiriDataError.invalid("Missing break descriptors")
+            }
+            try check(later.cycleNumber == 6, "without a break the later round is 6")
+            let joined = try breakStore.createSiteCycle(savedSite.id, descriptor: later, join: true)
+            try breakStore.createSiteCycle(savedSite.id, descriptor: slot, join: false)
+            try breakStore.setSiteCycleBreak(savedSite.id, start: day(14), isBreak: true, now: day(22))
+            let renumbered = breakStore.events.first { $0.id == joined.id }
+            try check(renumbered?.siteCycleNumber == 5 && renumbered?.effectiveRounds.first?.name == "第5回", "a joined later round is renumbered after a break")
+            try check(!breakStore.events.contains { $0.onlineSiteId == savedSite.id && $0.cycleKey == slot.cycleKey }, "the empty record of the break week is removed")
+            try breakStore.setSiteCycleBreak(savedSite.id, start: day(14), isBreak: false, now: day(22))
+            try check(breakStore.events.first { $0.id == joined.id }?.siteCycleNumber == 6, "undoing a break restores the numbers")
+
+            var pastInput = SitePastCycleInput(deadline: day(-60))
+            pastInput.cycleNumber = 1
+            let past = try breakStore.addPastSiteCycle(savedSite.id, input: pastInput)
+            try check(past.isActualParticipant && past.siteScheduleCustomized && past.siteCycleNumber == 1 && past.effectiveRounds.first?.submissionEnd == day(-60), "a past round is added from its deadline")
+            var duplicateRejected = false
+            do { _ = try breakStore.addPastSiteCycle(savedSite.id, input: pastInput) } catch { duplicateRejected = true }
+            try check(duplicateRejected && breakStore.events.filter { $0.id == past.id }.count == 1, "the same past round is not added twice")
+            try breakStore.ensureCurrentSiteCycles(now: day(22))
+            try check(breakStore.events.contains { $0.id == past.id && $0.isActualParticipant }, "a past round survives the automatic rounds")
+
+            var seasonSite = savedSite
+            seasonSite.hasAffiliations = true
+            seasonSite.cycleSettings?.seasonName = "第3シーズン"; seasonSite.cycleSettings?.seasonID = "s3"; seasonSite.cycleSettings?.ruleRevisionID = "r3"
+            try check(siteHasComplexRules(seasonSite, events: []) && !siteHasComplexRules(site, events: []), "only league sites ask about rule changes")
+            let current = sitePastSeasonIdentity(seasonSite, input: SitePastCycleInput(seasonName: "第3シーズン", deadline: day(0)), events: [])
+            try check(current.isCurrent && current.seasonID == "s3" && current.ruleID == "r3", "the current season name joins the current season")
+            var older = SitePastCycleInput(seasonName: "第2シーズン", deadline: day(-100))
+            older.sameRulesAsCurrent = false
+            let different = sitePastSeasonIdentity(seasonSite, input: older, events: [])
+            try check(!different.isCurrent && different.seasonID?.hasPrefix("past-season:") == true && different.ruleID?.hasPrefix("past-rule:") == true, "a past season with different rules gets its own rule")
+            older.sameRulesAsCurrent = true
+            var recordedOlder = GiriEvent(title: "前のシーズン"); recordedOlder.onlineSiteId = seasonSite.id; recordedOlder.siteSeason = "第2シーズン"; recordedOlder.siteSeasonID = "s2"
+            let same = sitePastSeasonIdentity(seasonSite, input: older, events: [recordedOlder])
+            try check(same.seasonID == "s2" && same.ruleID == "r3", "a recorded past season is reused and the same rules keep the current rule")
+
+            var note = ThoughtNote(title: "お題", kind: .answers)
+            note.answerRecords = [AnswerRecord(id: "first", text: "最初の回答", isSubmitted: true)]
+            note.usesAnswerRecords = true
+            guard let added = giriNoteAddingAnswers(note, text: "〇 二つ目\n三つ目") else { throw GiriDataError.invalid("No answers added") }
+            try check(added.answerRecords.map(\.text) == ["最初の回答", "二つ目", "三つ目"] && added.answerRecords[1].mark == "〇" && added.answerRecords[0].isSubmitted, "answers are added on the page without losing earlier ones")
+            try check(giriNoteAddingAnswers(note, text: "  \n ") == nil, "blank input adds nothing")
+            var round = EventRound(); round.submissionStart = day(0)
+            round = completeRoundSchedule(round, submissionDays: 7, votingDays: 3)
+            try check(giriThoughtCurrentDeadline(round, now: day(1)) == round.submissionEnd && giriThoughtCurrentDeadline(round, now: day(8)) == round.votingEnd, "the folded schedule shows the next deadline")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

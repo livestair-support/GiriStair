@@ -1634,3 +1634,29 @@ extension GiriEvent {
     var meetingFilterKey: String { isProjectEvent ? "project" : meetingType.rawValue }
 }
 
+
+// MARK: - 0.14 お題/回答の画面から回答を足す
+
+/// お題/回答の画面から、移動せずに自分の回答（案）を足す。1行に1つで、先頭の印（◎・〇・△・× や点数）も読む。
+/// 足す回答がなければ nil。今までの回答・印・提出の記録はそのまま残す。
+func giriNoteAddingAnswers(_ note: ThoughtNote, text: String, now: Date = Date()) -> ThoughtNote? {
+    let lines = giriAnswerLines(text)
+    guard !lines.isEmpty else { return nil }
+    var updated = note
+    var answers = updated.effectiveAnswerRecords
+    for line in lines { answers.append(AnswerRecord(text: line.text, mark: line.mark)) }
+    updated.answerRecords = answers
+    updated.usesAnswerRecords = true
+    updated.isOthersAnswer = false
+    updated.answerer = ""
+    updated.answers = answers.map(\.text)
+    updated.updatedAt = now
+    return updated
+}
+
+/// お題/回答の日程を畳んだ時に出す締切：投稿中は投稿の締切、それ以外は投票の締切。
+func giriThoughtCurrentDeadline(_ round: EventRound, now: Date = Date()) -> Date? {
+    if round.isSubmissionOpen(now) { return round.submissionEnd }
+    if let end = round.votingEnd, round.votingRequired { return end }
+    return round.submissionEnd
+}

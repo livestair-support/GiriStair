@@ -721,6 +721,104 @@ final class GiriStore: ObservableObject {
         try saveEvent(target)
         return target
     }
+    /// 0.14：運営の都合で休みの回。その回は作らず、後ろの回の番号を詰める。
+    /// まだ何も書いていない休みの回の記録は消し、参加した回・メモのある回はキャンセルにする（取り消すと戻す）。
+    func setSiteCycleBreak(_ siteID: String, start: Date, isBreak: Bool, now: Date = Date()) throws {
+        guard loaded else { throw GiriDataError.notLoaded }
+        guard var site = onlineSiteById(siteID), let settings = site.cycleSettings else { throw GiriDataError.invalid("サイトが見つかりません。") }
+        guard siteIsBreakStart(settings, start) != isBreak else { return }
+        site.cycleSettings = siteSettingsTogglingBreak(settings, start: start, isBreak: isBreak)
+        try saveOnlineSite(site)
+        let key = cycleKeyFor(start)
+        if let event = events.first(where: { $0.onlineSiteId == siteID && $0.cycleKey == key }) {
+            if isBreak {
+                let hasNotes = notes.contains { $0.eventId == event.id }
+                if event.isParticipating || hasNotes || event.hasCycleResult {
+                    var canceled = event
+                    canceled.status = .canceled
+                    try saveEvent(canceled)
+                } else {
+                    try deleteEvent(event.id)
+                }
+            } else if event.status == .canceled {
+                var restored = event
+                restored.status = .planned
+                try saveEvent(restored)
+            }
+        }
+        guard let saved = onlineSiteById(siteID) else { return }
+        for descriptor in siteCycleDescriptors(saved, around: now) where descriptor.kind == .regular {
+            guard var event = events.first(where: { $0.onlineSiteId == siteID && $0.cycleKey == descriptor.cycleKey }),
+                  event.isActualParticipant, let number = descriptor.cycleNumber, event.siteCycleNumber != number else { continue }
+            let oldName = event.siteCycleNumber.map { "第\($0)回" }
+            event.siteCycleNumber = number
+            event.rounds = event.rounds.map { round in
+                var value = round
+                if oldName != nil && value.name == oldName { value.name = "第\(number)回"; value.promptNumber = number }
+                return value
+            }
+            try saveEvent(event)
+        }
+        try ensureCurrentSiteCycles(now: now)
+    }
+    /// 0.14：過去に参加した回（一覧に出ていない回）を、投稿の締切から追加する。
+    /// 日程はその回の記録として残し、サイトの日程の設定は変えない。
+    @discardableResult
+    func addPastSiteCycle(_ siteID: String, input: SitePastCycleInput) throws -> GiriEvent {
+        guard loaded else { throw GiriDataError.notLoaded }
+        guard let site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
+        var round = EventRound()
+        round.submissionEnd = input.deadline
+        round.submissionStart = addCalendarDays(input.deadline, -site.submissionDays)
+        round.votingStart = input.deadline
+        round.votingEnd = input.votingEnd ?? addCalendarDays(input.deadline, site.votingDays)
+        if let votingEnd = round.votingEnd, votingEnd < input.deadline {
+            throw GiriDataError.invalid("投票の締切を投稿の締切より後にしてください。")
+        }
+        if input.kind != .regular { round.name = input.kind.title }
+        else if let number = input.cycleNumber { round.name = "第\(number)回" }
+        if let number = input.cycleNumber { round.promptNumber = max(1, number) }
+        round.block = site.block
+        let start = round.submissionStart ?? input.deadline
+        let key = cycleKeyFor(start)
+        var event = events.first { $0.onlineSiteId == siteID && $0.cycleKey == key } ?? GiriEvent()
+        if event.onlineSiteId == siteID && event.isActualParticipant {
+            throw GiriDataError.invalid("同じ日程の回がすでに参加履歴にあります。")
+        }
+        if let previous = event.rounds.first?.id { round.id = previous }
+        round.stageId = round.id
+        let identity = sitePastSeasonIdentity(site, input: input, events: events)
+        let league = input.league.trimmingCharacters(in: .whitespacesAndNewlines)
+        event.title = site.name
+        event.eventFormat = site.format
+        event.meetingType = .casual
+        event.onlineSiteId = site.id
+        event.cycleKey = key
+        event.affiliation = site.hasAffiliations ? (league.isEmpty ? siteLeague(site, at: start) : league) : league
+        event.block = site.block
+        event.siteUrl = site.url
+        event.rounds = [round]
+        event.isParticipating = true
+        event.isInterested = false
+        event.siteSkipped = false
+        event.status = .planned
+        event.siteScheduleCustomized = true
+        event.sitePeriodKind = input.kind
+        event.siteCycleNumber = input.kind == .regular ? input.cycleNumber.map { max(1, $0) } : nil
+        event.siteSeason = identity.seasonName
+        event.siteSeasonID = identity.seasonID
+        event.siteRuleRevisionID = identity.ruleID
+        if identity.isCurrent, let settings = site.cycleSettings {
+            event.siteSeasonStart = settings.seasonStart
+            event.siteSeasonEnd = settings.seasonEndsAt
+        }
+        let name = preferences.selfName
+        if !name.isEmpty && !event.participants.contains(where: { playerSearchKey($0) == playerSearchKey(name) }) {
+            event.participants.append(name)
+        }
+        try saveEvent(event)
+        return events.first { $0.id == event.id } ?? event
+    }
     /// しばらく休む／再開する。サイトの日程やリーグの設定は変えない。
     func setSitePaused(_ siteID: String, paused: Bool) throws {
         guard var site = onlineSiteById(siteID), site.isPaused != paused else { return }

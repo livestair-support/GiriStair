@@ -1428,17 +1428,13 @@ func liveListDateColor(_ date: Date) -> Color {
     }
 }
 
-// An optional native date/time input. Opening and cancelling either picker
-// never writes a guessed value. UIDatePicker owns the time menu and popover.
+// An optional date/time input. 「未定」も押せる形（カプセル）で出し、押すとその日が入ってカレンダーを
+// 下から出す（LiveStair のライブ登録の日付と同じく、画面の下に出すので行の位置で潰れない）。
 struct OptionalDateRow: View {
     let title: String
     @Binding var selection: Date?
     var components: DatePickerComponents = [.date, .hourAndMinute]
     @State private var showingCalendar = false
-
-    private var dateTitle: String {
-        selection.map { GiriDateText.day($0) } ?? "未定"
-    }
 
     private var calendarSelection: Binding<Date> {
         Binding(get: { selection ?? Date() }, set: { date in
@@ -1453,6 +1449,12 @@ struct OptionalDateRow: View {
         })
     }
 
+    /// 未定から入れる時の日時：今日（時刻を使う時は今の時刻を5分単位に丸める）。
+    private var startingValue: Date {
+        let now = Date()
+        return components.contains(.hourAndMinute) ? giriFiveMinuteRounded(now) : Calendar.current.startOfDay(for: now)
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             Text(title)
@@ -1462,40 +1464,49 @@ struct OptionalDateRow: View {
             Spacer(minLength: 8)
             if components.contains(.date) {
                 Button {
+                    if selection == nil { selection = startingValue }
                     showingCalendar = true
                 } label: {
-                    HStack(spacing: 10) {
-                        Text(dateTitle)
-                            .font(.body.weight(.semibold))
-                            .foregroundColor(selection.map(liveDateWeekdayColor) ?? .primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.78)
-                        if !components.contains(.hourAndMinute) {
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                    if let selection {
+                        HStack(spacing: 10) {
+                            Text(GiriDateText.day(selection))
+                                .font(.body.weight(.semibold))
+                                .foregroundColor(liveDateWeekdayColor(selection))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
+                            if !components.contains(.hourAndMinute) {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
+                        .contentShape(Rectangle())
+                    } else {
+                        Text("未定")
+                            .font(.body)
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 14)
+                            .frame(height: 32)
+                            .background(Capsule().fill(Color(.systemGray5)))
                     }
-                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .popover(isPresented: $showingCalendar, arrowEdge: .bottom) {
-                    EventDateCalendarPickerView(selectedDate: calendarSelection,
-                        maxWidth: 345, onClose: { showingCalendar = false })
-                        .frame(width: 345, height: 372)
-                        .padding(.top, 12)
-                        .presentationCompactAdaptation(.popover)
+                .accessibilityLabel(title)
+                .sheet(isPresented: $showingCalendar) {
+                    GiriCalendarSheet(selection: calendarSelection) { showingCalendar = false }
                 }
             }
             if components.contains(.hourAndMinute) {
-                OptionalCompactTimePicker(selection: $selection)
-                    .frame(width: 70, height: 32)
+                GiriTimeCapsulePicker(selection: $selection) { startingValue }
                     .accessibilityLabel(title)
             }
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            if components == .date { showingCalendar = true }
+            if components == .date {
+                if selection == nil { selection = startingValue }
+                showingCalendar = true
+            }
         }
         .contextMenu {
             if selection != nil {
@@ -1504,6 +1515,72 @@ struct OptionalDateRow: View {
                 }
             }
         }
+    }
+}
+
+/// LiveStair EventBasicEditor eventDateCalendarOverlay：カレンダーを画面の下に出す（シートの高さを合わせ、背景は透明）。
+struct GiriCalendarSheet: View {
+    @Binding var selection: Date
+    let onClose: () -> Void
+    var body: some View {
+        GeometryReader { proxy in
+            let isSmallWidth = proxy.size.width <= 380
+            let width = min(345, proxy.size.width - (isSmallWidth ? 24 : 36))
+            VStack {
+                Spacer(minLength: 0)
+                EventDateCalendarPickerView(selectedDate: $selection, maxWidth: width, onClose: onClose)
+                    .frame(width: width, height: isSmallWidth ? 360 : 372)
+                    .padding(.bottom, isSmallWidth ? 8 : 10)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .presentationDetents([.height(392)])
+        .presentationDragIndicator(.hidden)
+        .presentationBackground(.clear)
+    }
+}
+
+/// 5分単位に切り下げる（時刻の入力の初期値）。
+func giriFiveMinuteRounded(_ date: Date) -> Date {
+    let calendar = Calendar.current
+    var parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+    parts.minute = (parts.minute ?? 0) / 5 * 5
+    return calendar.date(from: parts) ?? date
+}
+
+/// LiveStair EventEditorTimePickerButton：SwiftUI の時刻ピッカーを小さいカプセルで出す。
+/// 「--:--」を押すとその時刻が入り、押すと時刻を選べる（選んだ時刻はすぐ反映される）。
+struct GiriTimeCapsulePicker: View {
+    @Binding var selection: Date?
+    let initial: () -> Date
+    private static let capsuleWidth: CGFloat = 70
+    private static let capsuleHeight: CGFloat = 32
+    private var capsuleWidth: CGFloat { Self.capsuleWidth }
+    private var capsuleHeight: CGFloat { Self.capsuleHeight }
+
+    var body: some View {
+        Group {
+            if selection != nil {
+                DatePicker("", selection: Binding(get: { selection ?? Date() }, set: { selection = $0 }),
+                           displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+                    .environment(\.locale, Locale(identifier: "ja_JP"))
+                    .scaleEffect(0.9)
+                    .frame(width: capsuleWidth, height: capsuleHeight)
+                    .clipped()
+            } else {
+                Button { selection = giriFiveMinuteRounded(initial()) } label: {
+                    Text("--:--")
+                        .font(.body)
+                        .monospacedDigit()
+                        .foregroundColor(.primary)
+                        .frame(width: capsuleWidth, height: capsuleHeight)
+                        .background(Capsule().fill(Color(.systemGray5)))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(width: capsuleWidth, height: capsuleHeight)
     }
 }
 
@@ -1575,100 +1652,17 @@ struct GiriEventTimeRow: View {
     }
 
     /// LiveStair EventEditorTimePickerButton：「--:--」を押すとその時刻が入り、もう一度押して変えられる。
-    @ViewBuilder private func timeControl(_ title: String, selection: Binding<Date?>, initial: @escaping () -> Date) -> some View {
-        if selection.wrappedValue != nil {
-            OptionalCompactTimePicker(selection: selection)
-                .frame(width: 70, height: 32)
-                .accessibilityLabel(title)
-        } else {
-            Button { selection.wrappedValue = roundedToFiveMinutes(initial()) } label: {
-                Text("--:--")
-                    .font(.body)
-                    .monospacedDigit()
-                    .foregroundColor(.primary)
-                    .frame(width: 70, height: 32)
-                    .background(Capsule().fill(Color(.systemGray5)))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(title + "を入れる")
-        }
+    private func timeControl(_ title: String, selection: Binding<Date?>, initial: @escaping () -> Date) -> some View {
+        GiriTimeCapsulePicker(selection: selection, initial: initial)
+            .accessibilityLabel(title)
     }
 
     private func timeOfDay(_ hour: Int, _ minute: Int) -> Date {
         Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: Date()) ?? Date()
     }
 
-    private func roundedToFiveMinutes(_ date: Date) -> Date {
-        let calendar = Calendar.current
-        var parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
-        parts.minute = (parts.minute ?? 0) / 5 * 5
-        return calendar.date(from: parts) ?? date
-    }
 }
 
-private struct OptionalCompactTimePicker: UIViewRepresentable {
-    @Binding var selection: Date?
-    /// 未定（--:--）から選ぶ時に最初に出す時刻。なければ今の時刻。
-    var fallback: Date? = nil
-
-    func makeCoordinator() -> Coordinator { Coordinator(selection: $selection) }
-
-    func makeUIView(context: Context) -> UIDatePicker {
-        let picker = UIDatePicker()
-        picker.datePickerMode = .time
-        picker.preferredDatePickerStyle = .compact
-        picker.minuteInterval = 5
-        picker.locale = Locale(identifier: "ja_JP")
-        picker.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
-        let cover = context.coordinator.emptyCover
-        cover.frame = picker.bounds
-        cover.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        picker.addSubview(cover)
-        return picker
-    }
-
-    func updateUIView(_ picker: UIDatePicker, context: Context) {
-        context.coordinator.selection = $selection
-        if let selection {
-            if abs(picker.date.timeIntervalSince(selection)) > 0.5 {
-                picker.setDate(selection, animated: false)
-            }
-        } else {
-            let calendar = Calendar.current
-            var parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: fallback ?? Date())
-            parts.minute = (parts.minute ?? 0) / 5 * 5
-            let initial = calendar.date(from: parts) ?? Date()
-            if abs(picker.date.timeIntervalSince(initial)) > 0.5 { picker.setDate(initial, animated: false) }
-        }
-        context.coordinator.emptyCover.isHidden = selection != nil
-        picker.bringSubviewToFront(context.coordinator.emptyCover)
-    }
-
-    final class Coordinator: NSObject {
-        var selection: Binding<Date?>
-        let emptyCover: UILabel = {
-            let label = UILabel()
-            label.text = "--:--"
-            label.textAlignment = .center
-            label.font = .monospacedDigitSystemFont(
-                ofSize: UIFont.preferredFont(forTextStyle: .body).pointSize,
-                weight: .regular)
-            label.textColor = .label
-            // The optional placeholder must fully cover the compact picker's
-            // provisional date, which has not been committed to the document.
-            label.backgroundColor = .systemGray5
-            label.layer.cornerRadius = 16
-            label.clipsToBounds = true
-            label.isUserInteractionEnabled = false
-            label.isAccessibilityElement = false
-            return label
-        }()
-        init(selection: Binding<Date?>) { self.selection = selection }
-        @objc func changed(_ picker: UIDatePicker) {
-            selection.wrappedValue = picker.date
-        }
-    }
-}
 
 // EventBasicEditor.swift EventDateCalendarPickerView, direct source.
 struct EventDateCalendarPickerView: View {

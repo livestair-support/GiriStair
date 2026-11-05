@@ -24,16 +24,26 @@ private func giriSiteName(_ event: GiriEvent, sites: [OnlineSite]) -> String {
     return URL(string: event.siteUrl)?.host ?? event.title
 }
 
+/// 集計の小タブ。戦績（大会の成績）は戦績タブで集計するので、ここは参加と人・場所に分ける。
+private enum GiriStatisticsPage: String, CaseIterable, Identifiable {
+    case participation = "自分の参加"
+    case people = "会場・参加した人"
+    var id: String { rawValue }
+}
+
 struct GiriStatisticsView: View {
     @EnvironmentObject private var store: GiriStore
     @State private var year = 0
     @State private var month = 0
-    @State private var kind = "all"
+    /// 一覧・戦績と同じ形式タブで切り替える。
+    @State private var selectedFormat: EventFormat = .live
+    @State private var didInitializeFormat = false
     @State private var meeting = "all"
-    private var records: [GiriEvent] {
+    @State private var page: GiriStatisticsPage = .participation
+    /// 年・月・会の種類で絞った、全形式の参加記録。
+    private var allRecords: [GiriEvent] {
         store.events.filter { event in
             guard event.isCountableParticipation() else { return false }
-            if kind != "all" && event.eventFormat.rawValue != kind { return false }
             if meeting != "all" && event.meetingFilterKey != meeting { return false }
             let date = giriAnalyticsDate(event)
             if year != 0 && date.map({ Calendar.current.component(.year, from: $0) }) != year { return false }
@@ -41,64 +51,93 @@ struct GiriStatisticsView: View {
             return true
         }
     }
+    private var records: [GiriEvent] { allRecords.filter { $0.eventFormat == selectedFormat } }
     private var years: [Int] { Set(store.events.compactMap(giriAnalyticsDate).map { Calendar.current.component(.year, from: $0) }).sorted(by: >) }
     /// 使わない形式は出さない。ただし参加記録が残っている形式は集計に残す。
     private var formats: [EventFormat] {
         let recorded = Set(store.events.filter { $0.isCountableParticipation() }.map(\.eventFormat))
-        return store.preferences.effectiveFormatOrder.filter { store.preferences.isFormatVisible($0) || recorded.contains($0) || $0.rawValue == kind }
+        return store.preferences.effectiveFormatOrder.filter { store.preferences.isFormatVisible($0) || recorded.contains($0) || $0 == selectedFormat }
     }
+    private var accent: Color { giriStatisticsFormatColor(selectedFormat) }
     var body: some View {
         List {
-            Section {
-                AppCardSectionTitle(title: "表示・絞り込み", systemImage: "line.3.horizontal.decrease", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
-                Picker("年", selection: $year) { Text("全期間").tag(0); ForEach(years, id: \.self) { Text("\($0)年").tag($0) } }.pickerStyle(.menu).tint(.primary)
-                Picker("月", selection: $month) { Text("すべて").tag(0); ForEach(1...12, id: \.self) { Text("\($0)月").tag($0) } }.pickerStyle(.menu).tint(.primary)
-                Picker("形式", selection: $kind) {
-                    Text("すべて").tag("all")
-                    ForEach(formats) { format in Text(format.title).tag(format.rawValue) }
-                }.pickerStyle(.menu).tint(.primary)
-                Picker("会の種類", selection: $meeting) { Text("すべて").tag("all"); Text("通常").tag("casual"); Text("大会").tag("tournament"); Text("企画").tag("project") }.pickerStyle(.menu).tint(.primary)
-            }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
-            Section {
-                AppCardSectionTitle(title: "参加回数", systemImage: "chart.bar", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
-                LabeledContent("合計", value: "\(records.count)回")
-                ForEach(formats) { format in
-                    LabeledContent(format.title, value: "\(records.filter { $0.eventFormat == format }.count)回")
+            filterSection
+            if page == .participation { participationSections } else { peopleSections }
+        }
+        .appIndexListStyle().giriNavigationBarStyle().navigationTitle("集計").navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            guard !didInitializeFormat else { return }
+            selectedFormat = store.preferences.visibleFormatOrder.first ?? .live
+            didInitializeFormat = true
+        }
+    }
+
+    private var filterSection: some View {
+        Section {
+            AppCardSectionTitle(title: "表示・絞り込み", systemImage: "line.3.horizontal.decrease", accentColor: accent).listRowSeparator(.hidden)
+            GiriFormatPicker(selection: $selectedFormat, formats: formats, identifier: "statistics-format-tabs")
+                .listRowSeparator(.hidden)
+            Picker("表示", selection: $page) {
+                ForEach(GiriStatisticsPage.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("statistics-page-tabs")
+            Picker("年", selection: $year) { Text("全期間").tag(0); ForEach(years, id: \.self) { Text("\($0)年").tag($0) } }.pickerStyle(.menu).tint(.primary)
+            Picker("月", selection: $month) { Text("すべて").tag(0); ForEach(1...12, id: \.self) { Text("\($0)月").tag($0) } }.pickerStyle(.menu).tint(.primary)
+            Picker("会の種類", selection: $meeting) { Text("すべて").tag("all"); Text("通常").tag("casual"); Text("大会").tag("tournament"); Text("企画").tag("project") }.pickerStyle(.menu).tint(.primary)
+        }.appSectionCardStyle(accentColor: accent)
+    }
+
+    // MARK: 自分の参加
+
+    @ViewBuilder private var participationSections: some View {
+        Section {
+            AppCardSectionTitle(title: "参加回数", systemImage: "chart.bar", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
+            LabeledContent(selectedFormat.title, value: "\(records.count)回")
+            if meeting == "all" {
+                LabeledContent("通常", value: "\(records.filter { $0.meetingFilterKey == "casual" }.count)回")
+                LabeledContent("大会", value: "\(records.filter { $0.meetingFilterKey == "tournament" }.count)回")
+                if selectedFormat.allowsProject || records.contains(where: { $0.meetingFilterKey == "project" }) {
+                    LabeledContent("企画", value: "\(records.filter { $0.meetingFilterKey == "project" }.count)回")
                 }
-                NavigationLink("参加記録を確認") { GiriStatisticsRecords(title: "参加記録", records: records) }
-            }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
-            Section {
-                AppCardSectionTitle(title: "月別", systemImage: "calendar", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
-                if records.isEmpty { CenteredEmptyMessage(systemImage: "chart.bar", title: "記録がありません") }
-                else { GiriMonthChart(records: records, year: year == 0 ? nil : year).frame(height: 220) }
-                let undated = records.filter { giriAnalyticsDate($0) == nil }.count
-                if undated > 0 { LabeledContent("日付未定", value: "\(undated)回") }
-            }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
-            Section {
-                AppCardSectionTitle(title: "大会の最終成績", systemImage: "trophy", accentColor: AppSectionAccent.ticket).listRowSeparator(.hidden)
-                let tournaments = records.filter { $0.meetingType == .tournament }
-                LabeledContent("大会参加", value: "\(tournaments.count)回")
-                LabeledContent("優勝", value: "\(tournaments.filter { $0.effectivePlacement == 1 }.count)回")
-                LabeledContent("準優勝", value: "\(tournaments.filter { $0.effectivePlacement == 2 }.count)回")
-                LabeledContent("3位", value: "\(tournaments.filter(\.isThirdPlace).count)回")
-                LabeledContent("ベスト4", value: "\(tournaments.filter { $0.isBest(4) }.count)回")
-                LabeledContent("ベスト8・その他の入賞", value: "\(tournaments.filter(giriIsOtherPlacement).count)回")
-            }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+            }
+            if formats.count > 1 { LabeledContent("全形式の合計", value: "\(allRecords.count)回") }
+            NavigationLink("参加記録を確認") { GiriStatisticsRecords(title: "参加記録", records: records) }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+        Section {
+            AppCardSectionTitle(title: "月別", systemImage: "calendar", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
+            if records.isEmpty { CenteredEmptyMessage(systemImage: "chart.bar", title: "記録がありません") }
+            else { GiriMonthChart(records: records, year: year == 0 ? nil : year).frame(height: 220) }
+            let undated = records.filter { giriAnalyticsDate($0) == nil }.count
+            if undated > 0 { LabeledContent("日付未定", value: "\(undated)回") }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+        // 参加費は生大喜利だけ（入力した記録がある形式は出す）。
+        if selectedFormat == .live || records.contains(where: { $0.entryFee != nil }) {
             Section {
                 AppCardSectionTitle(title: "参加費", systemImage: "yensign.circle", accentColor: AppSectionAccent.ticket,
-                                    infoTitle: "参加費の集計について", infoMessage: "参加した生大喜利のうち、参加費を入力した記録を合計します。キャンセル・興味ありは含めません。")
+                                    infoTitle: "参加費の集計について", infoMessage: "参加した会のうち、参加費を入力した記録を合計します。キャンセル・興味ありは含めません。")
                     .listRowSeparator(.hidden)
                 let fees = records.compactMap(\.entryFee)
                 LabeledContent("合計", value: giriYenText(fees.reduce(0, +)))
                 LabeledContent("入力した記録", value: "\(fees.count)回")
                 if !fees.isEmpty { LabeledContent("1回あたり", value: giriYenText(fees.reduce(0, +) / fees.count)) }
             }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
-            ranking("会場別の参加回数", "mappin.and.ellipse", .venue, giriRanks(records.filter { $0.eventFormat.hasLiveTiming }.map(\.venue))) { entry in records.filter { $0.eventFormat.hasLiveTiming && $0.venue == entry.name } }
-            ranking("主催者別の参加回数", "person.crop.circle", .memo, giriRanks(records.map(\.organizer))) { entry in records.filter { $0.organizer == entry.name } }
-            ranking("一緒に参加した人", "person.2", .artist, giriRanks(records.flatMap { $0.everyone.filter { !store.preferences.isSelf($0) } })) { entry in records.filter { $0.everyone.contains(entry.name) } }
-            ranking("サイト別の参加回数", "globe", .artist, giriRanks(records.filter { $0.eventFormat.hasOnlineRounds }.map { giriSiteName($0, sites: store.onlineSites) })) { entry in records.filter { $0.eventFormat.hasOnlineRounds && giriSiteName($0, sites: store.onlineSites) == entry.name } }
-        }.appIndexListStyle().giriNavigationBarStyle().navigationTitle("集計").navigationBarTitleDisplayMode(.inline)
+        }
     }
+
+    // MARK: 会場・参加した人
+
+    @ViewBuilder private var peopleSections: some View {
+        if selectedFormat.hasLiveTiming {
+            ranking("会場別の参加回数", "mappin.and.ellipse", .venue, giriRanks(records.map(\.venue))) { entry in records.filter { $0.venue == entry.name } }
+        }
+        if selectedFormat.hasOnlineRounds {
+            ranking("サイト別の参加回数", "globe", .artist, giriRanks(records.map { giriSiteName($0, sites: store.onlineSites) })) { entry in records.filter { giriSiteName($0, sites: store.onlineSites) == entry.name } }
+        }
+        ranking("主催者別の参加回数", "person.crop.circle", .memo, giriRanks(records.map(\.organizer))) { entry in records.filter { $0.organizer == entry.name } }
+        ranking("一緒に参加した人", "person.2", .artist, giriRanks(records.flatMap { $0.everyone.filter { !store.preferences.isSelf($0) } })) { entry in records.filter { $0.everyone.contains(entry.name) } }
+    }
+
     private enum RankingAccent { case venue, memo, artist; var color: Color { switch self { case .venue: AppSectionAccent.venue; case .memo: AppSectionAccent.memo; case .artist: AppSectionAccent.artist } } }
     private func ranking(_ title: String, _ icon: String, _ accent: RankingAccent, _ entries: [GiriRankEntry], events: @escaping (GiriRankEntry) -> [GiriEvent]) -> some View {
         Section {
