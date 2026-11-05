@@ -1013,7 +1013,9 @@ enum GiriEventPresentation {
     // The meeting type controls the card rail/background. Format colors remain
     // unchanged for the format tabs and the calendar's four-category legend.
     static func cardAccent(_ event: GiriEvent) -> Color {
-        let base = event.meetingType == .tournament ? AppSectionAccent.ticket : accent(event.eventFormat)
+        // 大会・企画は、通常の会と色を分ける（企画は札と同じ色）。
+        let base = event.meetingType == .tournament ? AppSectionAccent.ticket
+            : event.isProjectEvent ? AppSectionAccent.venue : accent(event.eventFormat)
         // 観覧の会は、参加する会と見分けられるように少し色を変える。
         if event.eventFormat == .live && event.selfRole == .spectator { return base.mix(with: GiriBadgeColors.spectator, by: 0.55) }
         return base

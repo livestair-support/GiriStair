@@ -12,6 +12,8 @@ struct GiriEventDetail: View {
     @State private var promptRoundID: String?
     @State private var showCycleEditor = false
     @State private var nextDraft: GiriRoundDraftAction?
+    /// 0.14：この会の中に足した大会（その編集を開く）。
+    @State private var newTournamentID: String?
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
 
@@ -20,6 +22,7 @@ struct GiriEventDetail: View {
             if let event {
                 Form {
                     basic(event)
+                    if event.eventFormat == .live { innerTournaments(event) }
                     if event.meetingType == .tournament && event.tournamentFormat != .individual {
                         // チーム戦はチームとして表示し、チームに分けていない参加者（即席チーム）だけを出す。
                         if !event.unassignedParticipants.isEmpty { participants(event.unassignedParticipants, title: "チーム未定の参加者", numbered: false) }
@@ -99,6 +102,45 @@ struct GiriEventDetail: View {
         .sheet(item: $nextDraft) { action in
             NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
         }
+        .navigationDestination(item: $newTournamentID) { id in
+            if let child = store.events.first(where: { $0.id == id }) { GiriEventEditor(event: child) }
+        }
+    }
+
+    /// 0.14：同じ日の会の中の大会。元の会と、この会の中の大会を行き来でき、ここから大会を足せる。
+    @ViewBuilder private func innerTournaments(_ event: GiriEvent) -> some View {
+        let parent = event.parentEventId.flatMap { id in store.events.first { $0.id == id } }
+        let children = store.events.filter { $0.parentEventId == event.id }
+            .sorted { $0.createdAt < $1.createdAt }
+        Section {
+            GiriEventCardSectionTitle(title: "この会の中の大会", systemImage: "trophy", accentColor: AppSectionAccent.ticket)
+                .listRowSeparator(.hidden)
+            if let parent {
+                NavigationLink { GiriEventDetail(eventID: parent.id) } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("元の会").font(.caption).foregroundStyle(.secondary)
+                        Text(parent.title).font(.subheadline.weight(.semibold))
+                    }
+                }
+            }
+            ForEach(children) { child in
+                NavigationLink { GiriEventDetail(eventID: child.id) } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(child.title).font(.subheadline.weight(.semibold))
+                        let summary = child.finalResultTitle ?? "結果未入力"
+                        Text(summary).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Button {
+                store.run {
+                    let child = try store.addTournament(inside: event.id)
+                    playLiveStairSaveFeedback()
+                    newTournamentID = child.id
+                }
+            } label: { Label("この会の中に大会を追加", systemImage: "plus.circle") }
+            .tint(accentActionColor)
+        }.appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
     }
 
     private func basic(_ event: GiriEvent) -> some View {

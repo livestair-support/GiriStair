@@ -16,6 +16,8 @@ struct GiriStairApp: App {
         let store = GiriStore()
         #endif
         _store = StateObject(wrappedValue: store)
+        // 時刻の入力（SwiftUI の DatePicker）は5分刻み。
+        UIDatePicker.appearance().minuteInterval = 5
     }
 
     var body: some Scene {

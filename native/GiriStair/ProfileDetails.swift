@@ -602,6 +602,7 @@ func giriKanaSectionOrder(_ title: String) -> Int {
 struct GiriPlayersView: View {
     @EnvironmentObject private var store: GiriStore
     @State private var query = ""
+    @State private var bulkFurigana = false
     @State private var isHeaderCollapsed = false
     @State private var adding = false
     @State private var addingGroup = false
@@ -656,11 +657,14 @@ struct GiriPlayersView: View {
                 Menu {
                     Button("プレイヤーを追加", systemImage: "person.badge.plus") { adding = true }
                     Button("団体を追加", systemImage: "person.3") { addingGroup = true }
+                    Divider()
+                    Button("フリガナを一括で設定", systemImage: "character.textbox") { bulkFurigana = true }
                 } label: { Image(systemName: "plus") }
                 .accessibilityLabel("追加")
             }
         }
         .sheet(isPresented: $adding) { NavigationStack { GiriPlayerEditor() } }
+        .navigationDestination(isPresented: $bulkFurigana) { GiriFuriganaBulkEditor(target: .players) }
         .sheet(isPresented: $addingGroup) { NavigationStack { GiriGroupEditor() } }
         .alert("団体にしますか？", isPresented: Binding(get: { groupCandidate != nil }, set: { if !$0 { groupCandidate = nil } })) {
             Button("キャンセル", role: .cancel) { groupCandidate = nil }
@@ -1251,10 +1255,11 @@ struct GiriPlayerEditor: View {
 struct GiriVenuesView: View {
     @EnvironmentObject private var store: GiriStore
     @State private var query = ""
+    @State private var bulkFurigana = false
     @State private var isHeaderCollapsed = false
     @State private var adding = false
     private var venues: [GiriVenue] {
-        store.venueDirectory.filter { query.isEmpty || "\($0.name) \($0.prefecture) \($0.mapAddress)".localizedStandardContains(query) }
+        store.venueDirectory.filter { query.isEmpty || "\($0.name) \($0.furigana) \($0.prefecture) \($0.mapAddress)".localizedStandardContains(query) }
     }
     /// LiveStair の会場一覧の「都道府県」順と同じく、都道府県ごとにまとめる。
     private var sections: [GiriIndexSection<GiriVenue>] {
@@ -1294,10 +1299,15 @@ struct GiriVenuesView: View {
         .giriNavigationBarStyle()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { adding = true } label: { Image(systemName: "plus") }.accessibilityLabel("会場を追加")
+                Menu {
+                    Button("会場を追加", systemImage: "plus.circle") { adding = true }
+                    Button("フリガナを一括で設定", systemImage: "character.textbox") { bulkFurigana = true }
+                } label: { Image(systemName: "plus") }
+                .accessibilityLabel("追加")
             }
         }
         .sheet(isPresented: $adding) { NavigationStack { GiriVenueEditor() } }
+        .navigationDestination(isPresented: $bulkFurigana) { GiriFuriganaBulkEditor(target: .venues) }
     }
 
     private func venueRow(_ venue: GiriVenue, deletable: Bool) -> some View {
@@ -1618,6 +1628,7 @@ struct GiriVenueEditor: View {
                 Section {
                     AppCardSectionTitle(title: "会場名", systemImage: "mappin.and.ellipse", accentColor: AppSectionAccent.venue).listRowSeparator(.hidden)
                     GiriProfileTextRow(title: "会場名", placeholder: "必須", text: $draft.name)
+                    GiriProfileTextRow(title: "フリガナ", placeholder: "未入力", text: $draft.furigana)
                 }.appSectionCardStyle(accentColor: AppSectionAccent.venue)
                 Section {
                     AppCardSectionTitle(title: "基本情報", systemImage: "building.2", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
@@ -1788,3 +1799,94 @@ private struct GiriOpponentRecordContent: View {
     }
 }
 
+/// 0.14：プレイヤー・会場のフリガナを一覧でまとめて設定する。未設定の名前には読みの候補を入れ、
+/// 確認・修正してから保存する（漢字の読みは間違うことがあるので、保存前に直せる）。
+enum GiriFuriganaTarget { case players, venues }
+
+struct GiriFuriganaBulkEditor: View {
+    @EnvironmentObject private var store: GiriStore
+    @Environment(\.dismiss) private var dismiss
+    let target: GiriFuriganaTarget
+    @State private var drafts: [String: String] = [:]
+    @State private var originals: [String: String] = [:]
+    @State private var showsAll = false
+    @State private var loaded = false
+    @State private var discard = false
+
+    private struct Entry: Identifiable { let id: String; let name: String; let furigana: String }
+
+    private var entries: [Entry] {
+        switch target {
+        case .players: return store.playerDirectory.map { Entry(id: $0.id, name: $0.name, furigana: $0.furigana) }
+        case .venues: return store.venueDirectory.map { Entry(id: $0.id, name: $0.name, furigana: $0.furigana) }
+        }
+    }
+    private var shown: [Entry] { showsAll ? entries : entries.filter { $0.furigana.isEmpty } }
+    private var changedIDs: [String] { drafts.keys.filter { (drafts[$0] ?? "") != (originals[$0] ?? "") } }
+    private var accent: Color { target == .players ? AppSectionAccent.artist : AppSectionAccent.venue }
+
+    var body: some View {
+        List {
+            Section {
+                AppCardSectionTitle(title: target == .players ? "プレイヤー" : "会場", systemImage: "character.textbox", accentColor: accent,
+                                    infoTitle: "フリガナの一括設定",
+                                    infoMessage: "未設定の名前には読みの候補を入れています。漢字の読みは違うことがあるので、確認してから保存してください。")
+                    .listRowSeparator(.hidden)
+                Toggle("設定済みも表示", isOn: $showsAll).tint(accent)
+            }.appSectionCardStyle(accentColor: accent)
+            Section {
+                if shown.isEmpty {
+                    CenteredEmptyMessage(systemImage: "checkmark.circle", title: "フリガナが未設定の名前はありません")
+                }
+                ForEach(shown) { entry in
+                    HStack(spacing: 12) {
+                        Text(entry.name).font(.subheadline.weight(.medium)).lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        TextField("フリガナ", text: binding(entry.id))
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            }.appSectionCardStyle(accentColor: accent)
+        }
+        .appIndexListStyle()
+        .environment(\.defaultMinListRowHeight, settingsMinimumListRowHeight)
+        .navigationTitle("フリガナを一括で設定").navigationBarTitleDisplayMode(.inline)
+        .giriNavigationBarStyle()
+        .navigationBarBackButtonHidden(!changedIDs.isEmpty)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                if !changedIDs.isEmpty { Button { discard = true } label: { Image(systemName: "chevron.left") }.accessibilityLabel("戻る") }
+            }
+            ToolbarItem(placement: .confirmationAction) { Button("保存", action: save).fontWeight(.bold).disabled(changedIDs.isEmpty) }
+        }
+        .giriDiscardChangesAlert(isPresented: $discard) { dismiss() }
+        .onAppear(perform: load)
+    }
+
+    private func binding(_ id: String) -> Binding<String> {
+        Binding(get: { drafts[id] ?? "" }, set: { drafts[id] = $0 })
+    }
+
+    private func load() {
+        guard !loaded else { return }
+        loaded = true
+        for entry in entries {
+            originals[entry.id] = entry.furigana
+            drafts[entry.id] = entry.furigana.isEmpty ? giriFuriganaCandidate(entry.name) : entry.furigana
+        }
+    }
+
+    private func save() {
+        var values: [String: String] = [:]
+        for id in changedIDs { values[id] = drafts[id] ?? "" }
+        store.run {
+            switch target {
+            case .players: try store.saveFurigana(players: values, venues: [:])
+            case .venues: try store.saveFurigana(players: [:], venues: values)
+            }
+            playLiveStairSaveFeedback()
+            dismiss()
+        }
+    }
+}

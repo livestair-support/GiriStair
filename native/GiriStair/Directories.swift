@@ -204,10 +204,17 @@ struct GiriSiteDetail: View {
                     }
                 }
                 if let settings = site.cycleSettings, settings.trackSeasonTotals, currentSeasonKey != nil {
-                    GiriDetailCard(title: "シーズンの合計成績", systemImage: "chart.bar", accentColor: AppSectionAccent.ticket, kind: .venue) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            if !settings.seasonName.isEmpty { Text(settings.seasonName).font(.headline) }
+                    GiriDetailCard(title: "シーズンの合計成績", systemImage: "chart.bar", accentColor: AppSectionAccent.ticket, kind: .venue, trailing: {
+                        // 合計は回ごとの回答の点数から出す。点数を入れる回の一覧（参加履歴）へ移る。
+                        Button("点数を入れる") { withAnimation { page = 1 } }
+                            .font(.subheadline)
+                            .foregroundStyle(accentActionColor)
+                    }) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            if !settings.seasonName.isEmpty { Text(settings.seasonName).font(.subheadline.weight(.semibold)) }
                             seasonTotalsRows(site: site, seasonID: settings.seasonID, seasonName: settings.seasonName)
+                            Text("参加履歴の各回の「お題・回答」で、提出した回答の点数を入れると集計されます。")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -249,15 +256,28 @@ struct GiriSiteDetail: View {
     private func historyPage(_ site: OnlineSite) -> some View {
         ScrollView {
             VStack(spacing: 14) {
-                if history.isEmpty {
-                    GiriDetailCard(title: "参加履歴", systemImage: "clock", accentColor: AppSectionAccent.memo, kind: .venue) {
-                        Text("参加した回の履歴がありません").font(.subheadline).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
+                // 一覧に出ていない過去の回は、ここから追加する。
+                GiriDetailCard(title: "参加履歴", systemImage: "clock", accentColor: AppSectionAccent.memo, kind: .venue) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if history.isEmpty {
+                            Text("参加した回の履歴がありません").font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        Button { route = .pastCycle(site.id) } label: {
+                            Label("参加した回を追加", systemImage: "plus.circle.fill").font(.subheadline.weight(.semibold))
+                        }
+                        .buttonStyle(.borderless)
+                        .tint(accentActionColor)
+                        Text("一覧に出ていない過去の回を、投稿の締切から追加します。").font(.caption).foregroundStyle(.secondary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
                 }
                 ForEach(seasonGroups) { group in
                     GiriDetailCard(title: group.displayName, systemImage: "clock", accentColor: AppSectionAccent.memo, kind: .venue) {
                         VStack(alignment: .leading, spacing: 0) {
+                            if let rule = pastRuleLabel(site: site, group: group) {
+                                Text(rule).font(.caption).foregroundStyle(.secondary).padding(.bottom, 6)
+                            }
                             if site.cycleSettings?.trackSeasonTotals == true, group.id != currentSeasonKey,
                                group.seasonID != nil || !group.name.isEmpty {
                                 VStack(alignment: .leading, spacing: 6) {
@@ -266,11 +286,7 @@ struct GiriSiteDetail: View {
                                 .padding(.bottom, 8)
                             }
                             ForEach(group.events) { event in
-                                Button { navigation.openThoughts(eventID: event.id) } label: { historyRow(event) }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        if event.hasEnded() { Button("結果を記録", systemImage: "square.and.pencil") { route = .cycleResult(event.id) } }
-                                    }
+                                historyRow(event)
                                 if event.id != group.events.last?.id { Divider().overlay(appSeparatorColor) }
                             }
                         }
@@ -283,14 +299,33 @@ struct GiriSiteDetail: View {
         .scrollIndicators(.hidden)
     }
 
+    /// 0.14：過去の回を追加した時に「今のシーズンとルールが同じか」を選んだシーズンだけ出す（ルールが複雑なサイト）。
+    private func pastRuleLabel(site: OnlineSite, group: GiriSiteSeasonGroup) -> String? {
+        guard group.id != currentSeasonKey, siteHasComplexRules(site, events: store.events) else { return nil }
+        if group.events.contains(where: { $0.siteRuleRevisionID?.hasPrefix("past-rule:") == true }) { return "ルールは今のシーズンと違う" }
+        let current = site.cycleSettings?.ruleRevisionID
+        if current != nil, group.events.contains(where: { $0.siteScheduleCustomized && $0.siteRuleRevisionID == current }) { return "ルールは今のシーズンと同じ" }
+        return nil
+    }
+
     @ViewBuilder private func seasonTotalsRows(site: OnlineSite, seasonID: String?, seasonName: String) -> some View {
         let totals = giriSeasonTotals(siteID: site.id, seasonID: seasonID, seasonName: seasonName, events: store.events, notes: store.notes)
-        LabeledContent("提出した回答", value: "\(totals.submittedAnswerCount)回答")
-        LabeledContent("点数の記録済み", value: "\(totals.scoredAnswerCount)回答")
-        LabeledContent("平均（1人あたり）", value: totals.averagePointsPerVoter.map(giriScoreText) ?? "未記録")
+        seasonTotalRow("提出した回答", "\(totals.submittedAnswerCount)回答")
+        seasonTotalRow("点数の記録済み", "\(totals.scoredAnswerCount)回答")
+        seasonTotalRow("平均（1人あたり）", totals.averagePointsPerVoter.map(giriScoreText) ?? "未記録")
         if totals.legacyRoundResultCount > 0 {
             Text("平均には回単位で残した点数\(totals.legacyRoundResultCount)件も含みます。")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// 合計成績の1行（本文より小さく、値は右に寄せる）。
+    private func seasonTotalRow(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Text(value).font(.subheadline.weight(.semibold)).monospacedDigit()
+                .foregroundStyle(value == "未記録" ? Color.secondary : Color.primary)
         }
     }
 
@@ -330,8 +365,36 @@ struct GiriSiteDetail: View {
         }
     }
 
+    /// 1回分の履歴：見出し（お題・回答を開く）→ その回のお題ごとのリンク → 操作。
     private func historyRow(_ event: GiriEvent) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+        let prompts = store.notes.filter { $0.eventId == event.id && $0.kind == .answers && !$0.isOthersAnswer }
+            .sorted { $0.createdAt < $1.createdAt }
+        return VStack(alignment: .leading, spacing: 6) {
+            Button { openPrompts(event) } label: { historyHeader(event) }
+                .buttonStyle(.plain)
+            ForEach(prompts) { note in
+                Button { navigation.openThought(noteID: note.id) } label: { historyPromptRow(note) }
+                    .buttonStyle(.plain)
+            }
+            HStack(spacing: 16) {
+                Button { openPrompts(event) } label: {
+                    Label(prompts.isEmpty ? "お題・回答を入れる" : "お題を追加", systemImage: "text.bubble")
+                }
+                if event.hasEnded() && !event.siteSkipped {
+                    Button { route = .cycleResult(event.id) } label: {
+                        Label(event.hasCycleResult ? "結果を直す" : "結果を記録", systemImage: "square.and.pencil")
+                    }
+                }
+            }
+            .font(.caption.weight(.semibold))
+            .buttonStyle(.borderless)
+            .tint(accentActionColor)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func historyHeader(_ event: GiriEvent) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
                 Text(event.siteCycleNumber.map { "第\($0)回" } ?? GiriDateText.day(event.participationStartDate ?? event.eventDate))
                     .font(.headline).foregroundStyle(.primary)
@@ -347,13 +410,38 @@ struct GiriSiteDetail: View {
                 if event.siteQualification != .none { Text(event.siteQualification.title) }
             }.font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.ticket)
             if !event.cycleResult.isEmpty { Text(event.cycleResult).font(.subheadline).foregroundStyle(.primary) }
-            HStack(spacing: 4) {
-                Image(systemName: "text.bubble")
-                Text("お題・提出した回答・没案")
-                Spacer()
-                Image(systemName: "chevron.right")
-            }.font(.caption).foregroundStyle(AppSectionAccent.memo)
-        }.padding(.vertical, 4).contentShape(Rectangle())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    /// お題1つ：お題の文（小さめ）と、提出した回答（さらに小さく）。押すとそのお題を開く。
+    private func historyPromptRow(_ note: ThoughtNote) -> some View {
+        let submitted = note.submittedAnswers.map(\.text).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let promptText = note.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "text.bubble").font(.caption2).foregroundStyle(AppSectionAccent.memo).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(promptText.isEmpty ? (note.imageDataBase64.isEmpty ? "お題（未入力）" : "画像のお題") : promptText)
+                    .font(.caption.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
+                if submitted.isEmpty {
+                    Text("回答 \(note.ownAnswerRecords.count)件・提出なし").font(.caption2).foregroundStyle(.secondary)
+                } else {
+                    Text("提出：" + submitted.joined(separator: " ／ ")).font(.caption2).foregroundStyle(.secondary).lineLimit(3)
+                }
+            }
+            Spacer(minLength: 6)
+            Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary).padding(.top, 2)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .background(AppSectionAccent.memo.opacity(0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
+    }
+
+    private func openPrompts(_ event: GiriEvent) {
+        if let round = event.effectiveRounds.first { navigation.openThoughts(eventID: event.id, roundID: round.id) }
+        else { navigation.openThoughts(eventID: event.id) }
     }
 }
 

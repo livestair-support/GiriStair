@@ -1096,7 +1096,8 @@ struct DomainRegression {
             let marked = giriMarkingAlreadyAdded(draft.participants, existing: ["まつぼっくり"])
             try check(marked.first { $0.name == "まつぼっくり" }.map { $0.alreadyAdded && !$0.included } == true && giriSelectedParticipantNames(marked) == ["たまごサンドイッチ", "新しい人"], "people already in the list are not added twice")
             try check(giriJudgingCategory("挙手（1人1票）") == "印象審査" && giriJudgingCategory("超加点審査") == "超加点審査" && giriJudgingCategory("加点審査") == "加点審査", "judging categories")
-            try check(giriJudgingCategory("審査員の採点") == "その他" && giriJudgingCategory("").isEmpty && giriJudgingChoices == ["印象審査", "加点審査", "超加点審査", "その他"], "uncategorised judging is other")
+            try check(giriJudgingCategory("審査員の採点") == "その他" && giriJudgingCategory("").isEmpty && giriJudgingChoices == ["印象審査", "拍手審査", "加点審査", "超加点審査", "その他"], "uncategorised judging is other")
+            try check(giriJudgingCategory("拍手") == "拍手審査" && giriJudgingCategory("印象（投票）") == "印象審査", "applause judging is separate from voted impressions")
         }
 
         // 0.12 roles from inputs, reserves, aliases shown together or separately, regions.
@@ -1270,6 +1271,174 @@ struct DomainRegression {
             try check(!planNativeReminders(events: [canceledEntry], preferences: entryPreferences, now: entryNow).contains { $0.id.hasSuffix(":entry-start") }, "canceled events are not notified")
             let roundtrip = try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(applying))
             try check(roundtrip.entryStart == applying.entryStart && roundtrip.entryEnd == applying.entryEnd, "application dates roundtrip")
+        }
+
+        // 0.14 break weeks announced by a site, past rounds added from the history, quick answers.
+        do {
+            let anchor = GiriDates.parse("2026-10-01T22:00:00Z") ?? Date()
+            func day(_ offset: Int) -> Date { addCalendarDays(anchor, offset) }
+            var site = OnlineSite(id: "break-site", name: "休みのあるサイト", recurrence: .weekly)
+            site.submissionDays = 7; site.votingDays = 3
+            site.cycleSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: anchor, intervalDays: 7, anchorCycleNumber: 3)
+            guard let plainSettings = site.cycleSettings else { throw GiriDataError.invalid("Missing break settings") }
+            let settings = siteSettingsTogglingBreak(plainSettings, start: day(14), isBreak: true)
+            var breakSite = site
+            breakSite.cycleSettings = settings
+            let rows = siteCycleDescriptors(breakSite, around: day(22)).filter { $0.kind == .regular }
+            try check(!rows.contains { $0.start == day(14) }, "a break week creates no round")
+            try check(rows.first { $0.start == day(21) }?.cycleNumber == 5 && rows.first { $0.start == day(7) }?.cycleNumber == 4, "rounds after a break are renumbered and earlier ones keep their numbers")
+            try check(siteRegularCycleStart(settings, number: 5) == day(21) && siteRegularCycleStart(settings, number: 2) == day(-7), "a round number skips break weeks")
+            let earlierBreak = siteSettingsTogglingBreak(settings, start: day(-7), isBreak: true)
+            try check(siteRegularCycleStart(earlierBreak, number: 2) == day(-14) && siteRegularCycleNumber(earlierBreak, slotStart: day(-14), offset: -2) == 2, "breaks before the anchor are counted backwards")
+            try check(siteSettingsTogglingBreak(settings, start: day(14), isBreak: false).breakStarts.isEmpty, "a break can be undone")
+            try check(siteCurrentBreak(breakSite, now: day(15)) != nil && siteCurrentBreak(breakSite, now: day(22)) == nil, "the card shows a break only during its posting period")
+            var capped = breakSite; capped.cycleSettings?.regularCycleCount = 5
+            var lastRound = EventRound(); lastRound.submissionStart = day(21)
+            lastRound = completeRoundSchedule(lastRound, submissionDays: 7, votingDays: 3)
+            try check(siteSeasonLastCycleEnd(capped) == lastRound.votingEnd, "the season end moves back by a break week")
+            let breakRoundtrip = try JSONDecoder().decode(SiteCycleSettings.self, from: JSONEncoder().encode(settings))
+            try check(siteIsBreakStart(breakRoundtrip, day(14)) && breakRoundtrip.breakStarts.count == 1, "break weeks roundtrip")
+            let plainJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plainSettings)) as? [String: Any] ?? [:]
+            try check(plainJSON["breakStarts"] == nil, "settings without breaks keep the older JSON shape")
+            let plainDecoded = try JSONDecoder().decode(SiteCycleSettings.self, from: JSONSerialization.data(withJSONObject: plainJSON))
+            try check(plainDecoded.breakStarts.isEmpty, "older settings decode without breaks")
+            try check(siteNextSeasonSettings(breakSite, firstDeadline: day(70)).breakStarts.isEmpty, "a new season starts without breaks")
+
+            let breakDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriBreak-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: breakDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: breakDirectory) }
+            let breakStore = GiriStore(directory: breakDirectory)
+            try breakStore.saveOnlineSite(site)
+            guard let savedSite = breakStore.onlineSites.first else { throw GiriDataError.invalid("Missing break site") }
+            let descriptors = siteCycleDescriptors(savedSite, around: day(22))
+            guard let later = descriptors.first(where: { $0.start == day(21) }), let slot = descriptors.first(where: { $0.start == day(14) }) else {
+                throw GiriDataError.invalid("Missing break descriptors")
+            }
+            try check(later.cycleNumber == 6, "without a break the later round is 6")
+            let joined = try breakStore.createSiteCycle(savedSite.id, descriptor: later, join: true)
+            try breakStore.createSiteCycle(savedSite.id, descriptor: slot, join: false)
+            try breakStore.setSiteCycleBreak(savedSite.id, start: day(14), isBreak: true, now: day(22))
+            let renumbered = breakStore.events.first { $0.id == joined.id }
+            try check(renumbered?.siteCycleNumber == 5 && renumbered?.effectiveRounds.first?.name == "第5回", "a joined later round is renumbered after a break")
+            try check(!breakStore.events.contains { $0.onlineSiteId == savedSite.id && $0.cycleKey == slot.cycleKey }, "the empty record of the break week is removed")
+            try breakStore.setSiteCycleBreak(savedSite.id, start: day(14), isBreak: false, now: day(22))
+            try check(breakStore.events.first { $0.id == joined.id }?.siteCycleNumber == 6, "undoing a break restores the numbers")
+
+            var pastInput = SitePastCycleInput(deadline: day(-60))
+            pastInput.cycleNumber = 1
+            let past = try breakStore.addPastSiteCycle(savedSite.id, input: pastInput)
+            try check(past.isActualParticipant && past.siteScheduleCustomized && past.siteCycleNumber == 1 && past.effectiveRounds.first?.submissionEnd == day(-60), "a past round is added from its deadline")
+            var duplicateRejected = false
+            do { _ = try breakStore.addPastSiteCycle(savedSite.id, input: pastInput) } catch { duplicateRejected = true }
+            try check(duplicateRejected && breakStore.events.filter { $0.id == past.id }.count == 1, "the same past round is not added twice")
+            try breakStore.ensureCurrentSiteCycles(now: day(22))
+            try check(breakStore.events.contains { $0.id == past.id && $0.isActualParticipant }, "a past round survives the automatic rounds")
+
+            var seasonSite = savedSite
+            seasonSite.hasAffiliations = true
+            seasonSite.cycleSettings?.seasonName = "第3シーズン"; seasonSite.cycleSettings?.seasonID = "s3"; seasonSite.cycleSettings?.ruleRevisionID = "r3"
+            try check(siteHasComplexRules(seasonSite, events: []) && !siteHasComplexRules(site, events: []), "only league sites ask about rule changes")
+            let current = sitePastSeasonIdentity(seasonSite, input: SitePastCycleInput(seasonName: "第3シーズン", deadline: day(0)), events: [])
+            try check(current.isCurrent && current.seasonID == "s3" && current.ruleID == "r3", "the current season name joins the current season")
+            var older = SitePastCycleInput(seasonName: "第2シーズン", deadline: day(-100))
+            older.sameRulesAsCurrent = false
+            let different = sitePastSeasonIdentity(seasonSite, input: older, events: [])
+            try check(!different.isCurrent && different.seasonID?.hasPrefix("past-season:") == true && different.ruleID?.hasPrefix("past-rule:") == true, "a past season with different rules gets its own rule")
+            older.sameRulesAsCurrent = true
+            var recordedOlder = GiriEvent(title: "前のシーズン"); recordedOlder.onlineSiteId = seasonSite.id; recordedOlder.siteSeason = "第2シーズン"; recordedOlder.siteSeasonID = "s2"
+            let same = sitePastSeasonIdentity(seasonSite, input: older, events: [recordedOlder])
+            try check(same.seasonID == "s2" && same.ruleID == "r3", "a recorded past season is reused and the same rules keep the current rule")
+
+            var note = ThoughtNote(title: "お題", kind: .answers)
+            note.answerRecords = [AnswerRecord(id: "first", text: "最初の回答", isSubmitted: true)]
+            note.usesAnswerRecords = true
+            guard let added = giriNoteAddingAnswers(note, text: "〇 二つ目\n三つ目") else { throw GiriDataError.invalid("No answers added") }
+            try check(added.answerRecords.map(\.text) == ["最初の回答", "二つ目", "三つ目"] && added.answerRecords[1].mark == "〇" && added.answerRecords[0].isSubmitted, "answers are added on the page without losing earlier ones")
+            try check(giriNoteAddingAnswers(note, text: "  \n ") == nil, "blank input adds nothing")
+            var round = EventRound(); round.submissionStart = day(0)
+            round = completeRoundSchedule(round, submissionDays: 7, votingDays: 3)
+            try check(giriThoughtCurrentDeadline(round, now: day(1)) == round.submissionEnd && giriThoughtCurrentDeadline(round, now: day(8)) == round.votingEnd, "the folded schedule shows the next deadline")
+        }
+
+        // 0.14 live tournament stages: laps in different blocks, prompts, automatic results, brackets, inner tournaments, furigana.
+        do {
+            try check(giriEditorNextStage("予選") == "本戦" && giriEditorNextStage("本戦") == "決勝" && giriEditorNextStage("本戦", live: false) == "準々決勝", "after the qualifier comes the main stage, then the final (live) or quarterfinal (net)")
+            try check(nextStageName("予選") == "本戦" && nextStageName("準々決勝") == "準決勝" && nextStageName("2回戦") == "3回戦", "net tournaments use the same next stage names")
+            try check(giriOpponentSlotCount("横並び5人") == 4 && giriOpponentSlotCount("横並び５人") == 4 && giriOpponentSlotCount("タイマン") == 1 && giriOpponentSlotCount("総当たり") == nil, "the lineup decides how many opponents there are")
+            let candidates = giriOpponentCandidates(attendees: ["わたし", "はるか", "ゆう", "はるか", ""], chosen: ["ゆう"], isSelf: { $0 == "わたし" })
+            try check(candidates == ["はるか"], "opponents come only from the attendees, without the user or people already chosen")
+
+            var legacy = ResultStage(); legacy.name = "予選"; legacy.group = "Aブロック"; legacy.opponents = ["はるか"]; legacy.points = 7
+            let migrated = giriNormalizedLaps(legacy, lapCount: 1)
+            try check(migrated.count == 1 && migrated[0].group == "Aブロック" && migrated[0].opponents == ["はるか"] && migrated[0].points == [7], "an older stage becomes its first lap")
+            var stage = legacy; stage.promptCount = 2; stage.votesPerPrompt = true; stage.judging = "印象審査"
+            stage.laps = giriNormalizedLaps(stage, lapCount: 3)
+            try check(stage.laps.count == 3 && stage.laps.allSatisfy { $0.points.count == 2 }, "three laps with a vote per prompt have two scores each")
+            stage.laps[0].points = [3, 4]; stage.laps[1].points = [5, nil]; stage.laps[1].group = "Cブロック"; stage.laps[1].opponents = ["ゆう"]
+            try check(giriStageTotal(stage) == 12 && giriLapTotal(stage.laps[1]) == 5, "lap and stage totals add the prompts")
+            stage.borderScore = 10
+            try check(giriSuggestedStageOutcome(stage) == nil, "nothing is decided before every lap has a score")
+            stage.laps[2].points = [1, 0]
+            try check(giriSuggestedStageOutcome(stage) == .advanced, "the total against the border decides advancement")
+            let synced = giriStageSyncedFromLaps(stage)
+            try check(synced.opponents == ["はるか", "ゆう"] && synced.group == "Aブロック・Cブロック" && synced.points == 13, "the stage keeps the union of opponents for player history")
+            var single = stage; single.votesPerPrompt = false
+            single.laps = giriNormalizedLaps(single, lapCount: 3)
+            try check(single.laps[0].points == [7], "switching to one vote for all prompts keeps the lap total")
+            var final = stage; final.name = "決勝"
+            try check(giriSuggestedStageOutcome(final) == nil && giriStageOutcomeChoices(.final).contains(.champion) && !giriStageOutcomeChoices(.qualifier).contains(.champion), "finals are chosen by placement, other stages by advancement")
+            var lap = StageLap(); lap.points = [6]; lap.others = [StageOtherScore(name: "はるか", points: 8), StageOtherScore(name: "ゆう", points: 2)]
+            try check(giriLapPlacement(lap) == 2, "other people's scores give the block placement")
+            var lost = ResultStage(); lost.name = "予選"; lost.outcome = .eliminated
+            try check(giriSuggestedFinalChoice([lost]) == .eliminated, "a qualifier loss is the final result")
+
+            let bracket = ["わたし", "はるか", "ゆう", "まこ"]
+            var semi = ResultStage(); semi.name = "準決勝"; semi.lineup = "タイマン"; semi.outcome = .advanced
+            let next = giriNextBracketStage([semi], bracket: bracket, isSelf: { $0 == "わたし" })
+            try check(next?.name == "決勝" && next?.lineup == "タイマン" && next?.opponents.isEmpty == true, "winning a bracket round adds the next round")
+            try check(giriNextBracketStage([semi, next ?? ResultStage()], bracket: bracket, isSelf: { $0 == "わたし" }) == nil, "the next round is added only once")
+
+            func block(_ text: String, _ x: Double, _ y: Double) -> GiriOCRLine { GiriOCRLine(text: text, midX: x, midY: y, height: 0.01) }
+            let table = giriBlockTable([block("Aブロック", 0.2, 0.1), block("Bブロック", 0.7, 0.1), block("わたし", 0.2, 0.2), block("はるか", 0.2, 0.25),
+                                        block("ゆう", 0.7, 0.2), block("まこ", 0.7, 0.25)])
+            try check(table == [GiriBlockEntry(name: "Aブロック", members: ["わたし", "はるか"]), GiriBlockEntry(name: "Bブロック", members: ["ゆう", "まこ"])], "a block table is read by headings and columns")
+            try check(giriBlockHeading("第2組") != nil && giriBlockHeading("ブロックC") != nil && giriBlockHeading("はるか") == nil, "block headings")
+
+            var lapStage = stage
+            lapStage.advancedWith = ["はるか"]
+            let stageJSON = try JSONEncoder().encode(lapStage)
+            try check(try JSONDecoder().decode(ResultStage.self, from: stageJSON) == lapStage, "laps, prompts and advancing players roundtrip")
+            let plainJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any] ?? [:]
+            try check(plainJSON["laps"] == nil && plainJSON["promptCount"] == nil && plainJSON["advancedWith"] == nil, "stages without laps keep the older JSON shape")
+            try check(try JSONDecoder().decode(ResultStage.self, from: JSONSerialization.data(withJSONObject: plainJSON)).laps.isEmpty, "older stages decode without laps")
+
+            let innerDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriInner-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: innerDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: innerDirectory) }
+            let innerStore = GiriStore(directory: innerDirectory)
+            var day = GiriEvent(title: "ひかりの会"); day.eventFormat = .live; day.venue = "ひかりホール"; day.participants = ["わたし", "はるか"]
+            day.eventDate = GiriDates.parse("2026-11-01T00:00:00Z")
+            try innerStore.saveEvent(day)
+            let inner = try innerStore.addTournament(inside: day.id)
+            try check(inner.parentEventId == day.id && inner.meetingType == .tournament && inner.venue == "ひかりホール" && inner.participants == day.participants && inner.eventDate == innerStore.events.first(where: { $0.id == day.id })?.eventDate, "a tournament inside the day copies its basics")
+            let again = try innerStore.addTournament(inside: inner.id)
+            try check(again.parentEventId == day.id && again.title == "ひかりの会 大会2", "more tournaments stay inside the same day")
+            let eventJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(day)) as? [String: Any] ?? [:]
+            try check(eventJSON["parentEventId"] == nil, "events without a parent keep the older JSON shape")
+            try innerStore.deleteEvent(day.id)
+            try check(innerStore.events.allSatisfy { $0.parentEventId == nil } && innerStore.events.count == 2, "deleting the day keeps its tournaments")
+
+            try check(giriFuriganaCandidate("カタカナ") == "かたかな" && giriFuriganaCandidate("Kou").isEmpty, "furigana candidates are hiragana and skip latin names")
+            let reading = giriFuriganaCandidate("山田")
+            try check(!reading.isEmpty && reading.range(of: #"^[\p{Hiragana}ー]+$"#, options: .regularExpression) != nil, "kanji names get a hiragana reading candidate")
+            let player = innerStore.playerDirectory.first { $0.name == "はるか" }
+            try innerStore.saveFurigana(players: [player?.id ?? "": "はるか"], venues: [innerStore.venueDirectory.first?.id ?? "": "ひかりほーる"])
+            try check(innerStore.playerDirectory.first { $0.name == "はるか" }?.furigana == "はるか" && innerStore.venueDirectory.first?.furigana == "ひかりほーる", "furigana is saved in bulk, also for names only in records")
+            var venue = GiriVenue(name: "古い会場")
+            let venueJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(venue)) as? [String: Any] ?? [:]
+            try check(venueJSON["furigana"] == nil, "venues without furigana keep the older JSON shape")
+            venue.furigana = "ふるいかいじょう"
+            try check(try JSONDecoder().decode(GiriVenue.self, from: JSONEncoder().encode(venue)).furigana == "ふるいかいじょう", "venue furigana roundtrips")
         }
 
         print("Native domain regressions passed: \(passed)")

@@ -167,7 +167,9 @@ final class GiriStore: ObservableObject {
             let key = playerSearchKey(name)
             if !name.isEmpty && values[key] == nil { values[key] = GiriVenue(id: "history:\(key)", name: name) }
         }
-        return values.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return values.values.sorted {
+            ($0.furigana.isEmpty ? $0.name : $0.furigana).localizedStandardCompare($1.furigana.isEmpty ? $1.name : $1.furigana) == .orderedAscending
+        }
     }
     /// 会・結果・他人の回答で使われている名前。LiveStair の一覧と同じく、
     /// 記録のないプレイヤーだけを一覧から削除できるようにするために使う。
@@ -252,6 +254,8 @@ final class GiriStore: ObservableObject {
     func deleteEvent(_ id: String) throws {
         try mutate { next in
             next.events.removeAll { $0.id == id }
+            // 会の中の大会は、元の会を消しても大会として残す。
+            for index in next.events.indices where next.events[index].parentEventId == id { next.events[index].parentEventId = nil }
             for index in next.onlineSites.indices where next.onlineSites[index].leagueChanges.contains(where: { $0.sourceEventID == id }) {
                 if next.onlineSites[index].leagueBaseline == nil { next.onlineSites[index].leagueBaseline = next.onlineSites[index].leagueChanges.sorted { $0.effectiveFrom < $1.effectiveFrom }.first?.fromLeague ?? next.onlineSites[index].affiliation }
                 next.onlineSites[index].leagueChanges.removeAll { $0.sourceEventID == id }
@@ -529,6 +533,34 @@ final class GiriStore: ObservableObject {
             }
         }
     }
+    /// 0.14：フリガナをまとめて保存する（キーは一覧のID）。記録の中だけにある名前は、その名前で登録する。
+    func saveFurigana(players: [String: String], venues: [String: String]) throws {
+        guard loaded else { throw GiriDataError.notLoaded }
+        let playerList = playerDirectory
+        let venueList = venueDirectory
+        try mutate { next in
+            for (id, raw) in players {
+                let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let index = next.players.firstIndex(where: { $0.id == id }) {
+                    next.players[index].furigana = value
+                } else if let entry = playerList.first(where: { $0.id == id }), !value.isEmpty {
+                    var player = GiriPlayer(name: entry.name)
+                    player.furigana = value
+                    next.players.append(player)
+                }
+            }
+            for (id, raw) in venues {
+                let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let index = next.venues.firstIndex(where: { $0.id == id }) {
+                    next.venues[index].furigana = value
+                } else if let entry = venueList.first(where: { $0.id == id }), !value.isEmpty {
+                    var venue = GiriVenue(name: entry.name)
+                    venue.furigana = value
+                    next.venues.append(venue)
+                }
+            }
+        }
+    }
     func deleteVenue(_ id: String) throws {
         try mutate { next in
             next.venues.removeAll { $0.id == id }
@@ -720,6 +752,138 @@ final class GiriStore: ObservableObject {
         if skipped { target.isParticipating = false; target.isInterested = false }
         try saveEvent(target)
         return target
+    }
+    /// 0.14：運営の都合で休みの回。その回は作らず、後ろの回の番号を詰める。
+    /// まだ何も書いていない休みの回の記録は消し、参加した回・メモのある回はキャンセルにする（取り消すと戻す）。
+    func setSiteCycleBreak(_ siteID: String, start: Date, isBreak: Bool, now: Date = Date()) throws {
+        guard loaded else { throw GiriDataError.notLoaded }
+        guard var site = onlineSiteById(siteID), let settings = site.cycleSettings else { throw GiriDataError.invalid("サイトが見つかりません。") }
+        guard siteIsBreakStart(settings, start) != isBreak else { return }
+        site.cycleSettings = siteSettingsTogglingBreak(settings, start: start, isBreak: isBreak)
+        try saveOnlineSite(site)
+        let key = cycleKeyFor(start)
+        if let event = events.first(where: { $0.onlineSiteId == siteID && $0.cycleKey == key }) {
+            if isBreak {
+                let hasNotes = notes.contains { $0.eventId == event.id }
+                if event.isParticipating || hasNotes || event.hasCycleResult {
+                    var canceled = event
+                    canceled.status = .canceled
+                    try saveEvent(canceled)
+                } else {
+                    try deleteEvent(event.id)
+                }
+            } else if event.status == .canceled {
+                var restored = event
+                restored.status = .planned
+                try saveEvent(restored)
+            }
+        }
+        guard let saved = onlineSiteById(siteID) else { return }
+        for descriptor in siteCycleDescriptors(saved, around: now) where descriptor.kind == .regular {
+            guard var event = events.first(where: { $0.onlineSiteId == siteID && $0.cycleKey == descriptor.cycleKey }),
+                  event.isActualParticipant, let number = descriptor.cycleNumber, event.siteCycleNumber != number else { continue }
+            let oldName = event.siteCycleNumber.map { "第\($0)回" }
+            event.siteCycleNumber = number
+            event.rounds = event.rounds.map { round in
+                var value = round
+                if oldName != nil && value.name == oldName { value.name = "第\(number)回"; value.promptNumber = number }
+                return value
+            }
+            try saveEvent(event)
+        }
+        try ensureCurrentSiteCycles(now: now)
+    }
+    /// 0.14：同じ日の生大喜利の会の中で行う大会を追加する。日付・時刻・会場・主催・参加者を引き継ぎ、
+    /// 元の会の中の大会にする（戦績ではそれぞれの大会、集計の参加回数は会として1回）。
+    @discardableResult
+    func addTournament(inside parentID: String) throws -> GiriEvent {
+        guard loaded else { throw GiriDataError.notLoaded }
+        guard let found = events.first(where: { $0.id == parentID }) else { throw GiriDataError.invalid("元の会が見つかりません。") }
+        // 会の中の大会からさらに足した時も、同じ元の会の中に並べる。
+        let parent = found.parentEventId.flatMap { id in events.first { $0.id == id } } ?? found
+        let siblings = events.filter { $0.parentEventId == parent.id }.count
+        var child = GiriEvent()
+        child.title = parent.title + " 大会\(siblings + (parent.meetingType == .tournament ? 2 : 1))"
+        child.eventFormat = parent.eventFormat
+        child.meetingType = .tournament
+        child.parentEventId = parent.id
+        child.eventDate = parent.eventDate
+        child.startsAt = parent.startsAt
+        child.endsAt = parent.endsAt
+        child.opensAt = parent.opensAt
+        child.venue = parent.venue
+        child.venueId = parent.venueId
+        child.venueRoom = parent.venueRoom
+        child.organizer = parent.organizer
+        child.organizerIsGroup = parent.organizerIsGroup
+        child.coOrganizers = parent.coOrganizers
+        child.mcs = parent.mcs
+        child.participants = parent.participants
+        child.isParticipating = parent.isParticipating
+        child.isInterested = parent.isInterested
+        child.status = parent.status
+        child.siteUrl = parent.siteUrl
+        child.selfRole = parent.selfRole
+        try saveEvent(child)
+        return events.first { $0.id == child.id } ?? child
+    }
+    /// 0.14：過去に参加した回（一覧に出ていない回）を、投稿の締切から追加する。
+    /// 日程はその回の記録として残し、サイトの日程の設定は変えない。
+    @discardableResult
+    func addPastSiteCycle(_ siteID: String, input: SitePastCycleInput) throws -> GiriEvent {
+        guard loaded else { throw GiriDataError.notLoaded }
+        guard let site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
+        var round = EventRound()
+        round.submissionEnd = input.deadline
+        round.submissionStart = addCalendarDays(input.deadline, -site.submissionDays)
+        round.votingStart = input.deadline
+        round.votingEnd = input.votingEnd ?? addCalendarDays(input.deadline, site.votingDays)
+        if let votingEnd = round.votingEnd, votingEnd < input.deadline {
+            throw GiriDataError.invalid("投票の締切を投稿の締切より後にしてください。")
+        }
+        if input.kind != .regular { round.name = input.kind.title }
+        else if let number = input.cycleNumber { round.name = "第\(number)回" }
+        if let number = input.cycleNumber { round.promptNumber = max(1, number) }
+        round.block = site.block
+        let start = round.submissionStart ?? input.deadline
+        let key = cycleKeyFor(start)
+        var event = events.first { $0.onlineSiteId == siteID && $0.cycleKey == key } ?? GiriEvent()
+        if event.onlineSiteId == siteID && event.isActualParticipant {
+            throw GiriDataError.invalid("同じ日程の回がすでに参加履歴にあります。")
+        }
+        if let previous = event.rounds.first?.id { round.id = previous }
+        round.stageId = round.id
+        let identity = sitePastSeasonIdentity(site, input: input, events: events)
+        let league = input.league.trimmingCharacters(in: .whitespacesAndNewlines)
+        event.title = site.name
+        event.eventFormat = site.format
+        event.meetingType = .casual
+        event.onlineSiteId = site.id
+        event.cycleKey = key
+        event.affiliation = site.hasAffiliations ? (league.isEmpty ? siteLeague(site, at: start) : league) : league
+        event.block = site.block
+        event.siteUrl = site.url
+        event.rounds = [round]
+        event.isParticipating = true
+        event.isInterested = false
+        event.siteSkipped = false
+        event.status = .planned
+        event.siteScheduleCustomized = true
+        event.sitePeriodKind = input.kind
+        event.siteCycleNumber = input.kind == .regular ? input.cycleNumber.map { max(1, $0) } : nil
+        event.siteSeason = identity.seasonName
+        event.siteSeasonID = identity.seasonID
+        event.siteRuleRevisionID = identity.ruleID
+        if identity.isCurrent, let settings = site.cycleSettings {
+            event.siteSeasonStart = settings.seasonStart
+            event.siteSeasonEnd = settings.seasonEndsAt
+        }
+        let name = preferences.selfName
+        if !name.isEmpty && !event.participants.contains(where: { playerSearchKey($0) == playerSearchKey(name) }) {
+            event.participants.append(name)
+        }
+        try saveEvent(event)
+        return events.first { $0.id == event.id } ?? event
     }
     /// しばらく休む／再開する。サイトの日程やリーグの設定は変えない。
     func setSitePaused(_ siteID: String, paused: Bool) throws {

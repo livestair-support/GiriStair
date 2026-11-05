@@ -641,8 +641,9 @@ struct GiriRoundWorkspaceSections: View {
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
     private var round: EventRound? { event?.effectiveRounds.first { $0.id == roundID } }
     private var notes: [ThoughtNote] {
+        // 回答を足しても並びが動かないように、作った順（新しいお題が上）にする。
         store.notes.filter { $0.kind == .answers && thoughtMatches($0, eventID: eventID, roundID: roundID) }
-            .sorted { $0.updatedAt > $1.updatedAt }
+            .sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt > $1.createdAt }
     }
     var body: some View {
         Group {
@@ -659,7 +660,7 @@ struct GiriRoundWorkspaceSections: View {
             }
             if round != nil {
                 Section {
-                    Button { creating = true } label: { Label("お題と回答案を追加", systemImage: "plus.circle") }
+                    Button { creating = true } label: { Label("お題を追加", systemImage: "plus.circle") }
                         .tint(accentActionColor)
                 }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
             }
@@ -687,10 +688,7 @@ struct GiriRoundWorkspaceSections: View {
                     NavigationLink { GiriRoundEditor(eventID: eventID, round: round) } label: { Image(systemName: "pencil") }
                         .accessibilityLabel("日程を編集")
                 }
-                Text(thoughtPhase(event: event, round: round))
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
-                GiriThoughtPeriodRow(title: "投稿", start: round.submissionStart, end: round.submissionEnd, enabled: round.submissionEnabled, accent: AppSectionAccent.artist)
-                GiriThoughtPeriodRow(title: "投票", start: round.votingStart, end: round.votingEnd, enabled: round.votingRequired, accent: AppSectionAccent.memo)
+                GiriThoughtScheduleDisclosure(event: event, round: round)
                 if event.meetingType == .tournament {
                     Button { navigation.openResultEntry(eventID, roundID: roundID) } label: { Label("この回の結果", systemImage: "trophy") }
                         .tint(accentActionColor)
@@ -763,9 +761,7 @@ private struct GiriThoughtNotePage: View {
                     .listRowSeparator(.hidden)
                 if let round = event.effectiveRounds.first(where: { $0.id == (note.roundId ?? "legacy") }), event.eventFormat.hasOnlineRounds {
                     Text(thoughtRoundLabel(event: event, round: round)).font(.subheadline.weight(.semibold))
-                    Text(thoughtPhase(event: event, round: round)).font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
-                    GiriThoughtPeriodRow(title: "投稿", start: round.submissionStart, end: round.submissionEnd, enabled: round.submissionEnabled, accent: AppSectionAccent.artist)
-                    GiriThoughtPeriodRow(title: "投票", start: round.votingStart, end: round.votingEnd, enabled: round.votingRequired, accent: AppSectionAccent.memo)
+                    GiriThoughtScheduleDisclosure(event: event, round: round)
                 } else if let stage = event.stageResults.first(where: { $0.id == note.resultStageId }) {
                     Text(stage.name).font(.subheadline.weight(.semibold))
                     let detail = [stage.group, stage.lineup, stage.judging].filter { !$0.isEmpty }
@@ -871,6 +867,9 @@ private struct GiriThoughtNoteRows: View {
     let note: ThoughtNote
     let event: GiriEvent?
     let onEdit: () -> Void
+    /// 0.14：移動せずに足す回答（案）。
+    @State private var newAnswer = ""
+    @FocusState private var addingAnswer: Bool
     private var isLong: Bool { note.effectiveFormat(event: event) == .onlineLong }
     var body: some View {
         Text(thoughtTitle(note)).font(.headline).textSelection(.enabled)
@@ -885,13 +884,11 @@ private struct GiriThoughtNoteRows: View {
         if note.kind == .answers {
             let own = note.ownAnswerRecords
             let others = note.otherAnswerRecords
-            if own.isEmpty && others.isEmpty {
-                Button("回答を追加", action: onEdit).tint(accentActionColor)
-            }
             if !own.isEmpty {
                 Text(isLong ? "回答案（採用した回答に印）" : "自分の回答").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
             ForEach(own) { record in ownRow(record) }
+            quickAddRow
             if !others.isEmpty {
                 Text("ツボ（他の人の回答）").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
@@ -949,6 +946,35 @@ private struct GiriThoughtNoteRows: View {
         }.padding(.vertical, 2)
     }
 
+    /// お題と別に、この画面のまま回答を足す。改行で続けて入れられる（行の先頭の印も読む）。
+    private var quickAddRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "plus.circle.fill").font(.subheadline).foregroundStyle(accentActionColor)
+            TextField(isLong ? "回答案を追加" : "回答を追加", text: $newAnswer)
+                .font(.subheadline)
+                .focused($addingAnswer)
+                .submitLabel(.next)
+                .onSubmit(addAnswer)
+            if !newAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button("追加", action: addAnswer)
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.borderless)
+                    .tint(accentActionColor)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func addAnswer() {
+        guard let updated = giriNoteAddingAnswers(note, text: newAnswer) else { return }
+        store.run {
+            try store.saveNote(updated)
+            newAnswer = ""
+            // 続けて入れられるように、入力欄にとどまる。
+            addingAnswer = true
+        }
+    }
+
     private func toggleSubmitted(_ id: String) {
         var updated = note
         var answers = updated.effectiveAnswerRecords
@@ -961,6 +987,29 @@ private struct GiriThoughtNoteRows: View {
         updated.answers = answers.map(\.text)
         updated.updatedAt = Date()
         store.run { try store.saveNote(updated) }
+    }
+}
+
+/// 0.14：投稿・投票の日程は畳める。畳んだ時は今の状態と次の締切だけを出す。
+/// 開いたか畳んだかは端末に残す（次に開いた時も同じ）。
+private struct GiriThoughtScheduleDisclosure: View {
+    let event: GiriEvent
+    let round: EventRound
+    @AppStorage("giriThoughtScheduleExpanded") private var expanded = false
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            GiriThoughtPeriodRow(title: "投稿", start: round.submissionStart, end: round.submissionEnd, enabled: round.submissionEnabled, accent: AppSectionAccent.artist)
+            GiriThoughtPeriodRow(title: "投票", start: round.votingStart, end: round.votingEnd, enabled: round.votingRequired, accent: AppSectionAccent.memo)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(thoughtPhase(event: event, round: round))
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
+                if !expanded, let deadline = giriThoughtCurrentDeadline(round) {
+                    Text("締切 " + thoughtDateTime(deadline)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+        }
+        .tint(Color.secondary)
     }
 }
 

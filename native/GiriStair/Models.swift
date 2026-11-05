@@ -241,12 +241,66 @@ struct ResultStage: Codable, Equatable, Identifiable {
     /// 0.10：段階の種類（予選・本戦・準々決勝・準決勝・決勝・その他）。nil は段階名から判断する。
     /// 知らない値（新しい版の値）は読み込みを止めずに nil として扱う。
     var kind: StageKind? = nil
+    /// 0.14：1周あたりのお題数（生大喜利）。分からない時は nil。
+    var promptCount: Int? = nil
+    /// 0.14：印象審査でお題が2つ以上の時、お題ごとに投票するか（false は全お題で1回の投票）。
+    var votesPerPrompt: Bool = false
+    /// 0.14：同じ段階を違うブロックで何周か行う時の、周ごとの結果（1周だけの時も入れる）。
+    /// 空は以前の版の記録で、group・opponents・points をそのまま使う。
+    var laps: [StageLap] = []
+    /// 0.14：一緒に通過した人（任意）。
+    var advancedWith: [String] = []
+}
+
+/// 0.14：段階の1周分（ブロック・対戦相手・お題ごとの点・ほかの人の点）。
+struct StageLap: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    var group: String = ""
+    var opponents: [String] = []
+    /// お題ごとの点（全お題で1回の投票の時は1つ）。未入力は nil。
+    var points: [Double?] = []
+    var voterCount: Int? = nil
+    /// その周のブロックの中の順位（ほかの人の点があれば自動で出す）。
+    var placement: Int? = nil
+    var others: [StageOtherScore] = []
+}
+
+/// 0.14：同じブロックのほかの人の点（任意）。
+struct StageOtherScore: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    var name: String = ""
+    var points: Double? = nil
+}
+
+extension StageLap {
+    private enum CodingKeys: String, CodingKey { case id, group, opponents, points, voterCount, placement, others }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        group = try c.decodeIfPresent(String.self, forKey: .group) ?? ""
+        opponents = try c.decodeIfPresent([String].self, forKey: .opponents) ?? []
+        points = try c.decodeIfPresent([Double?].self, forKey: .points) ?? []
+        voterCount = try c.decodeIfPresent(Int.self, forKey: .voterCount)
+        placement = try c.decodeIfPresent(Int.self, forKey: .placement)
+        others = try c.decodeIfPresent([StageOtherScore].self, forKey: .others) ?? []
+    }
+}
+
+extension StageOtherScore {
+    private enum CodingKeys: String, CodingKey { case id, name, points }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        points = try c.decodeIfPresent(Double.self, forKey: .points)
+    }
 }
 
 extension ResultStage {
     private enum CodingKeys: String, CodingKey {
         case id, name, outcome, placement, memo, roundId, stageId, teamPlacement, individualPlacement, voterCount, points, maxPointsPerVoter
         case group, lineup, judging, opponents, entrantCount, advanceCount, scoring, borderScore, kind
+        case promptCount, votesPerPrompt, laps, advancedWith
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -284,6 +338,10 @@ extension ResultStage {
         scoring = try c.decodeIfPresent(StageScoring.self, forKey: .scoring)
         borderScore = try c.decodeIfPresent(Double.self, forKey: .borderScore)
         kind = (try c.decodeIfPresent(String.self, forKey: .kind)).flatMap(StageKind.init(rawValue:))
+        promptCount = try c.decodeIfPresent(Int.self, forKey: .promptCount)
+        votesPerPrompt = try c.decodeIfPresent(Bool.self, forKey: .votesPerPrompt) ?? false
+        laps = try c.decodeIfPresent([StageLap].self, forKey: .laps) ?? []
+        advancedWith = try c.decodeIfPresent([String].self, forKey: .advancedWith) ?? []
 
         try validate()
     }
@@ -323,6 +381,11 @@ extension ResultStage {
         try c.encode(scoring, forKey: .scoring)
         try c.encode(borderScore, forKey: .borderScore)
         try c.encode(kind?.rawValue, forKey: .kind)
+        // 0.14 の項目は入れた時だけ書く（以前の版のJSONの形を保つ）。
+        try c.encodeIfPresent(promptCount, forKey: .promptCount)
+        if votesPerPrompt { try c.encode(votesPerPrompt, forKey: .votesPerPrompt) }
+        if !laps.isEmpty { try c.encode(laps, forKey: .laps) }
+        if !advancedWith.isEmpty { try c.encode(advancedWith, forKey: .advancedWith) }
     }
 }
 
@@ -472,6 +535,8 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     /// 0.13.1：応募の開始と締切（任意）。応募開始の前に通知する（LiveStair のチケット予定と同じく、日時だけ入れる）。
     var entryStart: Date? = nil
     var entryEnd: Date? = nil
+    /// 0.14：同じ日の会の中で行う大会の時、元の会のID（集計の参加回数は会として1回）。
+    var parentEventId: String? = nil
     /// 0.10（生大喜利）：シリーズ名（「#5」などの回数を除いた名前）。空なら会の名前から判断する。
     var series: String = ""
 }
@@ -503,7 +568,7 @@ enum GiriSelfRole: String, CaseIterable, Identifiable {
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -617,6 +682,7 @@ extension GiriEvent {
         isProject = try c.decodeIfPresent(Bool.self, forKey: .isProject) ?? false
         entryStart = try c.giriDate(forKey: .entryStart, required: false, calendarOnly: false)
         entryEnd = try c.giriDate(forKey: .entryEnd, required: false, calendarOnly: false)
+        parentEventId = try c.decodeIfPresent(String.self, forKey: .parentEventId)
 
         try validate()
     }
@@ -726,6 +792,7 @@ extension GiriEvent {
         try c.encode(isProject, forKey: .isProject)
         try c.encode(entryStart.map(GiriDates.timestamp), forKey: .entryStart)
         try c.encode(entryEnd.map(GiriDates.timestamp), forKey: .entryEnd)
+        try c.encodeIfPresent(parentEventId, forKey: .parentEventId)
 
     }
 }
@@ -1219,11 +1286,13 @@ struct GiriVenue: Codable, Equatable, Identifiable {
     var latitude: Double? = nil
     var longitude: Double? = nil
     var mapAddress: String = ""
+    /// 0.14：フリガナ（並び・検索用、任意）。
+    var furigana: String = ""
 }
 
 extension GiriVenue {
     private enum CodingKeys: String, CodingKey {
-        case id, name, prefecture, mapUrl, memo, latitude, longitude, mapAddress
+        case id, name, prefecture, mapUrl, memo, latitude, longitude, mapAddress, furigana
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1243,6 +1312,7 @@ extension GiriVenue {
         longitude = try c.decodeIfPresent(Double.self, forKey: .longitude)
 
         mapAddress = try c.decodeIfPresent(String.self, forKey: .mapAddress) ?? ""
+        furigana = try c.decodeIfPresent(String.self, forKey: .furigana) ?? ""
 
         try validate()
     }
@@ -1264,7 +1334,7 @@ extension GiriVenue {
         try c.encode(longitude, forKey: .longitude)
 
         try c.encode(mapAddress, forKey: .mapAddress)
-
+        if !furigana.isEmpty { try c.encode(furigana, forKey: .furigana) }
     }
 }
 
@@ -1512,6 +1582,12 @@ extension ResultStage {
         if let points { try require(points.isFinite && points >= 0, "得点が不正です。") }
         try positive(entrantCount, "人数"); try positive(advanceCount, "通過枠")
         if let borderScore { try require(borderScore.isFinite && borderScore >= 0, "通過ラインが不正です。") }
+        try positive(promptCount, "お題数")
+        try require(Set(laps.map(\.id)).count == laps.count, "周の記録のIDが重複しています。")
+        for lap in laps {
+            try positive(lap.placement, "順位")
+            try require(lap.points.allSatisfy { $0.map { $0.isFinite && $0 >= 0 } ?? true } && (lap.voterCount ?? 0) >= 0, "周の得点が不正です。")
+        }
     }
     /// 1人あたりの点（得点÷投票人数）。半喜利などの「187点 (1.18)」の括弧の値。
     var pointsPerVoter: Double? {
@@ -1524,7 +1600,8 @@ extension ResultStage {
     }
     var hasRecord: Bool {
         outcome != .unrecorded || placement != nil || teamPlacement != nil || individualPlacement != nil || voterCount != nil || points != nil || maxPointsPerVoter != 1 || !memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-            !group.isEmpty || !lineup.isEmpty || !judging.isEmpty || !opponents.isEmpty || entrantCount != nil || advanceCount != nil || scoring != nil || borderScore != nil || kind != nil
+            !group.isEmpty || !lineup.isEmpty || !judging.isEmpty || !opponents.isEmpty || entrantCount != nil || advanceCount != nil || scoring != nil || borderScore != nil || kind != nil ||
+            promptCount != nil || !laps.isEmpty || !advancedWith.isEmpty
     }
 }
 

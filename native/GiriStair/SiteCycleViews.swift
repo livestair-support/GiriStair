@@ -5,11 +5,14 @@ enum GiriSiteRoute: Hashable, Identifiable {
     case detail(String)
     case editor(String)
     case cycleResult(String)
+    /// 0.14：過去に参加した回を追加する（サイトのID）。
+    case pastCycle(String)
     var id: String {
         switch self {
         case .detail(let id): return "detail:" + id
         case .editor(let id): return "editor:" + id
         case .cycleResult(let id): return "result:" + id
+        case .pastCycle(let id): return "past:" + id
         }
     }
 }
@@ -24,6 +27,150 @@ struct GiriSiteRouteView: View {
             if let site = store.onlineSiteById(id) { GiriSiteEditor(site: site) }
             else { CenteredEmptyMessage(systemImage: "globe", title: "サイトが見つかりません") }
         case .cycleResult(let id): GiriCycleResultEditor(eventID: id)
+        case .pastCycle(let id): GiriSitePastCycleEditor(siteID: id)
+        }
+    }
+}
+
+/// 0.14：一覧に出ていない、過去に参加した回を追加する。投稿の締切が分かれば作れる。
+/// ルールが複雑なサイトでは、違うシーズンの回に「今のシーズンとルールが同じか」も残す。
+struct GiriSitePastCycleEditor: View {
+    @EnvironmentObject private var store: GiriStore
+    @Environment(\.dismiss) private var dismiss
+    let siteID: String
+    @State private var seasonName = ""
+    @State private var cycleNumber: Int?
+    @State private var kind: SitePeriodKind = .regular
+    @State private var deadline: Date?
+    @State private var votingEnd: Date?
+    @State private var league = ""
+    @State private var sameRules = true
+    @State private var initialized = false
+    @State private var discard = false
+    @State private var initialSeason = ""
+
+    private var site: OnlineSite? { store.onlineSiteById(siteID) }
+    private var changed: Bool { deadline != nil || cycleNumber != nil || seasonName != initialSeason || !league.isEmpty }
+    private var usesSeasons: Bool { site.map(siteUsesSeasons) ?? false }
+    /// 今のシーズンと違うシーズンで、ルールが複雑なサイトの時だけルールを聞く。
+    private var asksRules: Bool {
+        guard let site, usesSeasons, siteHasComplexRules(site, events: store.events) else { return false }
+        let name = seasonName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !name.isEmpty && playerSearchKey(name) != playerSearchKey(site.cycleSettings?.seasonName ?? "")
+    }
+    /// 記録済みのシーズン名（新しい順）。
+    private var knownSeasons: [String] {
+        var names: [String] = []
+        if let current = site?.cycleSettings?.seasonName, !current.isEmpty { names.append(current) }
+        let past = store.events.filter { $0.onlineSiteId == siteID && !$0.siteSeason.isEmpty }
+            .sorted { ($0.participationStartDate ?? $0.createdAt) > ($1.participationStartDate ?? $1.createdAt) }
+        for event in past where !names.contains(where: { playerSearchKey($0) == playerSearchKey(event.siteSeason) }) {
+            names.append(event.siteSeason)
+        }
+        return names
+    }
+
+    var body: some View {
+        Form {
+            cycleSection
+            if asksRules { rulesSection }
+        }
+        .appEditorFormStyle()
+        .navigationTitle("参加した回を追加").navigationBarTitleDisplayMode(.inline)
+        .giriNavigationBarStyle()
+        .navigationBarBackButtonHidden(changed)
+        .interactiveDismissDisabled(changed)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                if changed { Button { discard = true } label: { Image(systemName: "chevron.left") }.accessibilityLabel("戻る") }
+            }
+            ToolbarItem(placement: .confirmationAction) { Button("保存", action: save).fontWeight(.bold).disabled(deadline == nil) }
+        }
+        .giriDiscardChangesAlert(isPresented: $discard) { dismiss() }
+        .onAppear(perform: load)
+    }
+
+    private var cycleSection: some View {
+        Section {
+            AppCardSectionTitle(title: "参加した回", systemImage: "clock.arrow.circlepath", accentColor: AppSectionAccent.artist,
+                                infoTitle: "参加した回の追加",
+                                infoMessage: "一覧に出ていない過去の回を、投稿の締切から追加します。お題・回答と結果はあとから入れられます。")
+                .listRowSeparator(.hidden)
+            if usesSeasons { seasonRow }
+            Picker("日程", selection: $kind) {
+                ForEach(SitePeriodKind.allCases) { value in Text(value.title).tag(value) }
+            }.pickerStyle(.menu).tint(Color.primary)
+            if kind == .regular {
+                HStack(spacing: 12) {
+                    GiriEditorLabel("回")
+                    Spacer(minLength: 8)
+                    Text("第").foregroundStyle(.secondary)
+                    TextField("任意", value: $cycleNumber, format: .number)
+                        .keyboardType(.numberPad).multilineTextAlignment(.trailing).frame(maxWidth: 72)
+                    Text("回").foregroundStyle(.secondary)
+                }
+            }
+            OptionalDateRow(title: "投稿の締切", selection: Binding(get: { deadline }, set: { value in
+                deadline = value
+                if let value, let site { votingEnd = addCalendarDays(value, site.votingDays) }
+            }))
+            OptionalDateRow(title: "投票の締切", selection: $votingEnd)
+            if site?.hasAffiliations == true {
+                HStack(spacing: 12) {
+                    GiriEditorLabel("リーグ")
+                    TextField("その回のリーグ", text: $league).multilineTextAlignment(.trailing)
+                }
+            }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+    }
+
+    private var seasonRow: some View {
+        HStack(spacing: 12) {
+            GiriEditorLabel("シーズン")
+            TextField("シーズン名", text: $seasonName).multilineTextAlignment(.trailing)
+            if knownSeasons.count > 1 {
+                Menu {
+                    ForEach(knownSeasons, id: \.self) { name in Button(name) { seasonName = name } }
+                } label: {
+                    Image(systemName: "chevron.up.chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28).contentShape(Rectangle())
+                }
+                .accessibilityLabel("記録済みのシーズンから選ぶ")
+            }
+        }
+    }
+
+    private var rulesSection: some View {
+        Section {
+            AppCardSectionTitle(title: "ルール", systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.memo)
+                .listRowSeparator(.hidden)
+            Picker("今のシーズンと", selection: $sameRules) {
+                Text("同じ").tag(true)
+                Text("違う").tag(false)
+            }.pickerStyle(.menu).tint(Color.primary)
+        }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+    }
+
+    private func load() {
+        guard !initialized, let site else { return }
+        initialized = true
+        seasonName = site.cycleSettings?.seasonName ?? ""
+        initialSeason = seasonName
+    }
+
+    private func save() {
+        guard let deadline else { return }
+        var input = SitePastCycleInput(deadline: deadline)
+        input.seasonName = seasonName
+        input.cycleNumber = kind == .regular ? cycleNumber : nil
+        input.kind = kind
+        input.votingEnd = votingEnd
+        input.league = league
+        input.sameRulesAsCurrent = asksRules ? sameRules : true
+        store.run {
+            try store.addPastSiteCycle(siteID, input: input)
+            playLiveStairSaveFeedback()
+            dismiss()
         }
     }
 }
@@ -88,16 +235,30 @@ struct GiriSitePeriodActions: View {
     @State private var showingSetup = false
     @State private var resultEvent: GiriEvent?
     @State private var deadlineRequest: GiriSiteDeadlineRequest?
+    /// 運営の都合で休みにする回（確認を出す）。
+    @State private var breakCycle: SiteVisibleCycle?
+    /// 次のシーズンでルールが変わる時、締切の保存のあとに日程・ルールの設定を開く。
+    @State private var setupAfterDeadline = false
 
     var body: some View {
         // The page owns its clock. A List cell must not create a second
         // TimelineView while it is being inserted by the format picker.
         periodRows(now: now)
+        .confirmationDialog(breakDialogTitle, isPresented: breakDialogShown, titleVisibility: .visible, presenting: breakCycle) { cycle in
+            Button("休みにする") { markBreak(cycle) }
+            Button("キャンセル", role: .cancel) {}
+        } message: { _ in
+            Text("この回は作らず、次の回から番号を1つずつ詰めます。あとで取り消せます。")
+        }
         .sheet(isPresented: $showingSetup) { NavigationStack { GiriSiteEditor(site: site) } }
         .sheet(item: $resultEvent) { event in NavigationStack { GiriCycleResultEditor(eventID: event.id) } }
-        .sheet(item: $deadlineRequest) { request in
+        .sheet(item: $deadlineRequest, onDismiss: {
+            guard setupAfterDeadline else { return }
+            setupAfterDeadline = false
+            openSetup()
+        }) { request in
             NavigationStack {
-                GiriSiteDeadlineSheet(site: site, request: request)
+                GiriSiteDeadlineSheet(site: site, request: request) { setupAfterDeadline = true }
             }
         }
     }
@@ -136,6 +297,7 @@ struct GiriSitePeriodActions: View {
         VStack(alignment: .leading, spacing: 10) {
             if let seasonLabel = currentSeasonLabel { Text(seasonLabel).font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
             ForEach(posting) { cycle in postingRow(cycle) }
+            if posting.isEmpty, let pause = siteCurrentBreak(site, now: now) { breakRow(pause) }
             ForEach(voting) { cycle in votingRow(cycle) }
             if posting.isEmpty && voting.isEmpty && !seasonEnded {
                 if site.cycleSettings == nil {
@@ -228,11 +390,21 @@ struct GiriSitePeriodActions: View {
                     .foregroundStyle(skipped ? Color.secondary : accentActionColor)
                 Spacer(minLength: 8)
                 if !cycle.title.isEmpty { Text(cycle.title).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.trailing) }
+                if canBreak(cycle) {
+                    Menu {
+                        Button("運営の都合で休み", systemImage: "moon.zzz") { breakCycle = cycle }
+                    } label: {
+                        Image(systemName: "ellipsis.circle").font(.subheadline).foregroundStyle(.secondary)
+                            .frame(width: 26, height: 22).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("この回のその他")
+                }
             }
             Text("締切 " + GiriDateText.dateTime(cycle.round.submissionEnd)).font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 16) {
                 if joined {
                     actionButton("回答を考える", systemImage: "text.bubble") { open(cycle, join: true) }
+                    actionButton("今回は投稿しない", systemImage: "forward") { skip(cycle) }
                 } else if skipped {
                     Text("見送り").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                     actionButton("やっぱり参加する", systemImage: "arrow.uturn.backward") { open(cycle, join: true) }
@@ -243,6 +415,51 @@ struct GiriSitePeriodActions: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 運営の都合で休みの回：投稿期間のあいだ、カードに出して取り消せるようにする。
+    private func breakRow(_ round: EventRound) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("今回はお休み", systemImage: "moon.zzz")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text("運営の都合で休み（次の回から番号を詰めています）").font(.caption).foregroundStyle(.secondary)
+            if let start = round.submissionStart {
+                actionButton("休みを取り消す", systemImage: "arrow.uturn.backward") { unmarkBreak(start) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 決まった間隔で出る通常の回だけ、休みにできる。
+    private func canBreak(_ cycle: SiteVisibleCycle) -> Bool {
+        guard site.recurrence == .weekly, let descriptor = cycle.descriptor else { return false }
+        return descriptor.kind == .regular && !descriptor.cycleKey.hasPrefix("special:") && descriptor.round.submissionStart != nil
+    }
+
+    private var breakDialogTitle: String {
+        guard let cycle = breakCycle else { return "運営の都合で休みにしますか？" }
+        return (cycle.descriptor?.cycleNumber.map { "第\($0)回を" } ?? "この回を") + "運営の都合で休みにしますか？"
+    }
+
+    private var breakDialogShown: Binding<Bool> {
+        Binding(get: { breakCycle != nil }, set: { if !$0 { breakCycle = nil } })
+    }
+
+    private func markBreak(_ cycle: SiteVisibleCycle) {
+        guard let start = cycle.descriptor?.round.submissionStart else { return }
+        store.run {
+            try store.setSiteCycleBreak(site.id, start: start, isBreak: true)
+            playLiveStairSaveFeedback()
+        }
+        breakCycle = nil
+    }
+
+    private func unmarkBreak(_ start: Date) {
+        store.run {
+            try store.setSiteCycleBreak(site.id, start: start, isBreak: false)
+            playLiveStairSaveFeedback()
+        }
     }
 
     private func votingRow(_ cycle: SiteVisibleCycle) -> some View {
@@ -303,9 +520,15 @@ struct GiriSiteDeadlineSheet: View {
     @Environment(\.dismiss) private var dismiss
     let site: OnlineSite
     let request: GiriSiteDeadlineRequest
+    /// 次のシーズンでルールが変わる時（保存のあとに設定を開く）。
+    var onRulesChange: (() -> Void)? = nil
     @State private var deadline: Date? = nil
     @State private var votingEnd: Date? = nil
     @State private var cycleNumber = 1
+    @State private var rulesChange = false
+
+    /// シーズン明けのルール変更は、ルールが複雑なサイトだけ聞く。
+    private var asksRules: Bool { request == .nextSeason && siteHasComplexRules(site, events: store.events) }
 
     private var pageTitle: String {
         switch request {
@@ -347,6 +570,18 @@ struct GiriSiteDeadlineSheet: View {
                     }
                 }
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+            if asksRules {
+                Section {
+                    AppCardSectionTitle(title: "ルール", systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.memo,
+                                        infoTitle: "ルールの変更",
+                                        infoMessage: "変更がある時は、保存のあとに日程・リーグの設定を開きます。")
+                        .listRowSeparator(.hidden)
+                    Picker("前のシーズンから", selection: $rulesChange) {
+                        Text("変更なし").tag(false)
+                        Text("変更あり").tag(true)
+                    }.pickerStyle(.menu).tint(Color.primary)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+            }
         }
         .appEditorFormStyle()
         .navigationTitle(pageTitle).navigationBarTitleDisplayMode(.inline)
@@ -379,6 +614,7 @@ struct GiriSiteDeadlineSheet: View {
             }
             try store.ensureCurrentSiteCycles()
             playLiveStairSaveFeedback()
+            if asksRules && rulesChange { onRulesChange?() }
             dismiss()
         }
     }

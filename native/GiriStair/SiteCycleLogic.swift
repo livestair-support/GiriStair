@@ -67,6 +67,8 @@ struct SiteCycleSettings: Codable, Equatable {
     var waitingForNext: Bool = false
     /// 0.11：この日時より前の通常の回は作らない（次のお題の開始が分かっている時など）。
     var notBefore: Date? = nil
+    /// 0.14：運営の都合で休みになった通常の回の投稿開始。その回は作らず、後ろの回の番号を詰める。
+    var breakStarts: [Date] = []
 
     var inferredSeasonStart: Date {
         // Compatibility alias for old call sites; never reconstruct unknown
@@ -105,7 +107,7 @@ struct SiteCycleSettings: Codable, Equatable {
 }
 
 extension SiteCycleSettings {
-    private enum CodingKeys: String, CodingKey { case pattern, anchorStart, intervalDays, anchorCycleNumber, seasonName, seasonStart, seasonLengthDays, regularCycleCount, leagues, specialPeriods, leagueChangesPerSeason, seasonID, seasonEndsAt, trackSeasonTotals, ruleRevisionID, legacyInferredSeasonStart, seasonNumber, waitingForNext, notBefore }
+    private enum CodingKeys: String, CodingKey { case pattern, anchorStart, intervalDays, anchorCycleNumber, seasonName, seasonStart, seasonLengthDays, regularCycleCount, leagues, specialPeriods, leagueChangesPerSeason, seasonID, seasonEndsAt, trackSeasonTotals, ruleRevisionID, legacyInferredSeasonStart, seasonNumber, waitingForNext, notBefore, breakStarts }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         pattern = try c.decodeIfPresent(SiteCyclePattern.self, forKey: .pattern) ?? .alternating
@@ -127,6 +129,8 @@ extension SiteCycleSettings {
         seasonNumber = try c.decodeIfPresent(Int.self, forKey: .seasonNumber)
         waitingForNext = try c.decodeIfPresent(Bool.self, forKey: .waitingForNext) ?? false
         notBefore = try c.giriDate(forKey: .notBefore, required: false, calendarOnly: false)
+        let breaks = try c.decodeIfPresent([String].self, forKey: .breakStarts) ?? []
+        breakStarts = breaks.compactMap { GiriDates.parse($0, calendarOnly: false) }.sorted()
         // 0.6 filled this date by counting backwards with today's rule. Clear
         // only that recognizable generated value, preserving explicit dates.
         if seasonID == nil && ruleRevisionID == nil && anchorCycleNumber > 1,
@@ -158,6 +162,7 @@ extension SiteCycleSettings {
         try c.encode(seasonNumber, forKey: .seasonNumber)
         try c.encode(waitingForNext, forKey: .waitingForNext)
         try c.encode(notBefore.map(GiriDates.timestamp), forKey: .notBefore)
+        if !breakStarts.isEmpty { try c.encode(breakStarts.map(GiriDates.timestamp), forKey: .breakStarts) }
     }
 }
 
@@ -272,9 +277,11 @@ private func siteRevisionDescriptors(siteID: String, block: String, revision: Si
     // 投稿中でも投票中でもない間（シーズンの合間など）は、通常の回を作らない（特別な日程は出す）。
     if revision.recurrence == .weekly && !settings.waitingForNext {
         for offset in (approximateIndex - span)...(approximateIndex + 1) {
-            let number = settings.anchorCycleNumber + offset
-            guard !hasSeason || number >= 1, validCap.map({ number <= $0 }) ?? true else { continue }
             let start = addCalendarDays(settings.anchorStart, offset * settings.intervalDays, calendar: calendar)
+            // 運営の都合で休みの回は作らない。後ろの回は番号を詰める。
+            if siteIsBreakStart(settings, start) { continue }
+            let number = siteRegularCycleNumber(settings, slotStart: start, offset: offset)
+            guard !hasSeason || number >= 1, validCap.map({ number <= $0 }) ?? true else { continue }
             guard lower.map({ start >= $0 }) ?? true,
                   upperBound.map({ start < $0 }) ?? true,
                   settings.seasonEnd.map({ start < $0 }) ?? true else { continue }
@@ -381,9 +388,71 @@ func siteSeasonLastCycleEnd(_ site: OnlineSite, calendar: Calendar = .current) -
     guard site.recurrence == .weekly, let settings = site.cycleSettings,
           let last = settings.regularCycleCount, last >= settings.anchorCycleNumber else { return nil }
     var round = EventRound()
-    round.submissionStart = addCalendarDays(settings.anchorStart, (last - settings.anchorCycleNumber) * settings.intervalDays, calendar: calendar)
+    round.submissionStart = siteRegularCycleStart(settings, number: last, calendar: calendar)
     round = completeRoundSchedule(round, submissionDays: site.submissionDays, votingDays: site.votingDays)
     return round.votingEnd
+}
+
+// MARK: - 0.14 運営の都合で休みの回
+
+/// 休みの回か（同じ分の投稿開始なら同じ回）。
+func siteIsBreakStart(_ settings: SiteCycleSettings, _ start: Date) -> Bool {
+    settings.breakStarts.contains { abs($0.timeIntervalSince(start)) < 60 }
+}
+
+/// 休みの回を飛ばした通常の回の番号。基準の回より後ろは、その間の休みの数だけ詰める。
+/// 基準の回より前は、その間の休みの数だけ前の番号が小さくならない。
+func siteRegularCycleNumber(_ settings: SiteCycleSettings, slotStart: Date, offset: Int) -> Int {
+    let anchor = settings.anchorStart
+    if offset >= 0 {
+        let skipped = settings.breakStarts.filter { $0.timeIntervalSince(anchor) > -60 && slotStart.timeIntervalSince($0) > 60 }.count
+        return settings.anchorCycleNumber + offset - skipped
+    }
+    let skipped = settings.breakStarts.filter { $0.timeIntervalSince(slotStart) > 60 && anchor.timeIntervalSince($0) > 60 }.count
+    return settings.anchorCycleNumber + offset + skipped
+}
+
+/// 通常の回の番号から、その回の投稿開始（休みの回を飛ばす）。
+func siteRegularCycleStart(_ settings: SiteCycleSettings, number: Int, calendar: Calendar = .current) -> Date {
+    let target = number - settings.anchorCycleNumber
+    // 前へ数える時は、基準の回の1つ前から数える。
+    let backward = target < 0
+    let step = backward ? -1 : 1
+    let needed = backward ? -target - 1 : target
+    let limit = needed + settings.breakStarts.count + 1
+    var counted = 0
+    var index = backward ? -1 : 0
+    var start = settings.anchorStart
+    for _ in 0...limit {
+        start = addCalendarDays(settings.anchorStart, index * settings.intervalDays, calendar: calendar)
+        if !siteIsBreakStart(settings, start) {
+            if counted == needed { return start }
+            counted += 1
+        }
+        index += step
+    }
+    return start
+}
+
+/// 休みにする／休みを取り消す。投稿開始は分単位で同じものを1つだけ残す。
+func siteSettingsTogglingBreak(_ settings: SiteCycleSettings, start: Date, isBreak: Bool) -> SiteCycleSettings {
+    var value = settings
+    value.breakStarts.removeAll { abs($0.timeIntervalSince(start)) < 60 }
+    if isBreak { value.breakStarts.append(start) }
+    value.breakStarts.sort()
+    return value
+}
+
+/// 今の投稿期間にあたる休みの回（カードに「今回は休み」を出す）。
+func siteCurrentBreak(_ site: OnlineSite, now: Date = Date(), calendar: Calendar = .current) -> EventRound? {
+    guard site.recurrence == .weekly, let settings = site.cycleSettings, !settings.waitingForNext else { return nil }
+    for start in settings.breakStarts {
+        var round = EventRound()
+        round.submissionStart = start
+        round = completeRoundSchedule(round, submissionDays: site.submissionDays, votingDays: site.votingDays)
+        if round.isSubmissionOpen(now) { return round }
+    }
+    return nil
 }
 
 /// 次のシーズンの番号。番号がない旧設定は「第12シーズン」のような名前から読む。
@@ -411,6 +480,7 @@ func siteNextSeasonSettings(_ site: OnlineSite, firstDeadline: Date, calendar: C
     value.specialPeriods = []
     value.waitingForNext = false
     value.notBefore = nil
+    value.breakStarts = []
     return value
 }
 
@@ -443,6 +513,8 @@ func siteResumeSettings(_ site: OnlineSite, firstDeadline: Date, cycleNumber: In
     value.anchorStart = start
     value.notBefore = start
     value.waitingForNext = false
+    // 再開した回より前の休みは、新しい番号の数え方に使わない。
+    value.breakStarts.removeAll { $0.timeIntervalSince(start) < -60 }
     if let cycleNumber { value.anchorCycleNumber = max(1, cycleNumber) }
     if let cap = value.regularCycleCount, cap < value.anchorCycleNumber { value.regularCycleCount = nil }
     return value
@@ -460,4 +532,53 @@ func siteSuggestedResumeCycleNumber(_ site: OnlineSite, events: [GiriEvent]) -> 
         latest = max(latest ?? number, number)
     }
     return latest.map { $0 + 1 } ?? max(1, settings.anchorCycleNumber)
+}
+
+// MARK: - 0.14 シーズンのルールと過去の回
+
+/// リーグ・プレーオフ・入れ替え戦などがある、ルールが複雑なサイト。
+/// シーズン明けのルール変更の確認と、過去の回のルールの同じ／違うは、このサイトだけで聞く。
+func siteHasComplexRules(_ site: OnlineSite, events: [GiriEvent]) -> Bool {
+    let settings = site.cycleSettings ?? SiteCycleSettings()
+    if site.hasAffiliations || !settings.leagues.isEmpty || settings.leagueChangesPerSeason { return true }
+    if settings.specialPeriods.contains(where: { $0.kind != .regular }) { return true }
+    if site.ruleHistory.contains(where: { $0.settings.specialPeriods.contains { $0.kind != .regular } }) { return true }
+    return events.contains { $0.onlineSiteId == site.id && ($0.siteQualification != .none || $0.sitePeriodKind != .regular) }
+}
+
+/// サイトでシーズンを使っているか（シーズン名・ID・合計成績のどれか）。
+func siteUsesSeasons(_ site: OnlineSite) -> Bool {
+    guard let settings = site.cycleSettings else { return false }
+    return settings.seasonID != nil || !settings.seasonName.isEmpty || settings.trackSeasonTotals || settings.seasonNumber != nil
+}
+
+/// 過去に参加した回の入力。シーズン名が今のシーズンと同じなら今のシーズン、
+/// 記録済みの過去のシーズンと同じならそのシーズンにまとめる。
+struct SitePastCycleInput: Equatable {
+    var seasonName: String = ""
+    var cycleNumber: Int? = nil
+    var kind: SitePeriodKind = .regular
+    var deadline: Date
+    var votingEnd: Date? = nil
+    var league: String = ""
+    /// ルールが今のシーズンと同じか（ルールが複雑なサイトで、違うシーズンの時だけ聞く）。
+    var sameRulesAsCurrent: Bool = true
+}
+
+/// 過去のシーズンのID・ルールのID。今のシーズンと同じ名前なら今の値を使う。
+/// 違うシーズンでルールが同じなら今のルールのID、違うならそのシーズン用のIDにする。
+func sitePastSeasonIdentity(_ site: OnlineSite, input: SitePastCycleInput, events: [GiriEvent]) -> (seasonName: String, seasonID: String?, ruleID: String?, isCurrent: Bool) {
+    let settings = site.cycleSettings ?? SiteCycleSettings()
+    let name = input.seasonName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard siteUsesSeasons(site) else { return ("", nil, settings.ruleRevisionID, true) }
+    if name.isEmpty || playerSearchKey(name) == playerSearchKey(settings.seasonName) {
+        return (settings.seasonName, settings.seasonID, settings.ruleRevisionID, true)
+    }
+    let sameSeason = events.filter {
+        $0.onlineSiteId == site.id && playerSearchKey($0.siteSeason) == playerSearchKey(name) && $0.siteSeasonID != settings.seasonID
+    }
+    let seasonID = sameSeason.compactMap(\.siteSeasonID).first ?? "past-season:" + UUID().uuidString
+    if input.sameRulesAsCurrent { return (name, seasonID, settings.ruleRevisionID, false) }
+    let pastRule = sameSeason.compactMap(\.siteRuleRevisionID).first { $0 != settings.ruleRevisionID }
+    return (name, seasonID, pastRule ?? "past-rule:" + UUID().uuidString, false)
 }
