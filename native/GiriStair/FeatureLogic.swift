@@ -1131,7 +1131,8 @@ func giriCleanParticipantText(_ raw: String) -> (name: String, truncated: Bool) 
 }
 
 /// 欄ごとに分けた行から候補を作る（同じ人は最初の1回だけ）。
-func giriParticipantCandidates(entries: [(text: String, section: GiriParticipantSection)], known: [String]) -> [GiriParticipantCandidate] {
+/// stripsIconLetter：画面の読み取りだけ、名前の前のアイコンが英数字1文字に読まれたものを外す（貼り付けた文章にはアイコンがない）。
+func giriParticipantCandidates(entries: [(text: String, section: GiriParticipantSection)], known: [String], stripsIconLetter: Bool = false) -> [GiriParticipantCandidate] {
     var seen = Set<String>()
     var output: [GiriParticipantCandidate] = []
     for entry in entries {
@@ -1144,7 +1145,7 @@ func giriParticipantCandidates(entries: [(text: String, section: GiriParticipant
         var registered = giriMatchRegisteredName(text, truncated: cleaned.truncated, known: known)
         // アイコンが英数字1文字に読まれた（「2守」「Gしゅにく」）時は、確認画面に出さずにここで外す。
         let scalars = Array(text.unicodeScalars)
-        if registered == nil, scalars.count >= 2, scalars[0].isASCII, CharacterSet.letters.union(.decimalDigits).contains(scalars[0]), !scalars[1].isASCII {
+        if stripsIconLetter, registered == nil, scalars.count >= 2, scalars[0].isASCII, CharacterSet.letters.union(.decimalDigits).contains(scalars[0]), !scalars[1].isASCII {
             text = String(text.dropFirst())
             registered = giriMatchRegisteredName(text, truncated: cleaned.truncated, known: known)
         }
@@ -1184,7 +1185,7 @@ func giriParticipantCandidates(lines: [GiriOCRLine], known: [String]) -> [GiriPa
     let allHeaders = sorted.compactMap { line in giriParticipantHeader(line.text).map { (line: line, section: $0) } }
     // 「参加者」の見出しから読む。それより上（説明文・「興味あり」「不参加」のボタンなど）は使わない。
     guard let firstHeader = allHeaders.first(where: { $0.section == .participants }) ?? allHeaders.first else {
-        return giriParticipantCandidates(entries: sorted.map { ($0.text, .participants) }, known: known)
+        return giriParticipantCandidates(entries: sorted.map { ($0.text, .participants) }, known: known, stripsIconLetter: true)
     }
     let rowTolerance = max(0.006, firstHeader.line.height * 0.7)
     let headers = allHeaders.filter { $0.line.midY >= firstHeader.line.midY - rowTolerance }
@@ -1196,7 +1197,7 @@ func giriParticipantCandidates(lines: [GiriOCRLine], known: [String]) -> [GiriPa
         guard let column = above.min(by: { abs($0.line.midX - line.midX) < abs($1.line.midX - line.midX) }) else { continue }
         entries.append((line.text, column.section))
     }
-    return giriParticipantCandidates(entries: entries, known: known)
+    return giriParticipantCandidates(entries: entries, known: known, stripsIconLetter: true)
 }
 
 // MARK: - イベントページの読み取り（生大喜利）

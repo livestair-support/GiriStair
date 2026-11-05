@@ -1225,8 +1225,12 @@ struct DomainRegression {
         // groups turned back into players.
         do {
             let known = ["かにスープ", "たくめシャーマン", "たくみ", "守"]
-            let read = giriParticipantCandidates(text: "参加者（4人）\n2守\n2すり身\nすり身\nたくめシャー…\nKou", known: known)
-            try check(read.map(\.name) == ["守", "すり身", "たくめシャーマン", "Kou"] && read.allSatisfy { $0.suspiciousPrefix == nil }, "icon letters are removed and duplicates merged")
+            let screen = ["参加者（4人）", "2守", "2すり身", "すり身", "たくめシャー…", "Kou"].enumerated().map { index, text in
+                GiriOCRLine(text: text, midX: 0.2, midY: 0.1 + Double(index) * 0.05, height: 0.01)
+            }
+            let read = giriParticipantCandidates(lines: screen, known: known)
+            try check(read.map(\.name) == ["守", "すり身", "たくめシャーマン", "Kou"] && read.allSatisfy { $0.suspiciousPrefix == nil }, "icon letters are removed from a screen and duplicates merged")
+            try check(giriParticipantCandidates(text: "Aさん\n2守", known: []).map(\.name) == ["Aさん", "2守"], "pasted text keeps names that start with a letter")
             try check(read.first { $0.name == "守" }?.registered == "守" && read.first { $0.name == "すり身" }?.registered == nil, "registered and new people are told apart after removing the icon")
             try check(giriMatchRegisteredName("たくめ", truncated: true, known: ["たくめシャーマン", "たくめ長い名前"]) == "たくめシャーマン", "a cut-off name picks the first (most frequent) match")
             try check(giriMatchRegisteredName("たくぬシャ", truncated: true, known: ["たくめシャーマン"]) == "たくめシャーマン", "a cut-off name with a misread still matches")
