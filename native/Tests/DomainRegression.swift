@@ -1157,7 +1157,7 @@ struct DomainRegression {
             try aliasStore.saveEvent(withSelfAlias)
             try check(aliasStore.playerDirectory.contains { $0.name == "わたし別名" }, "an unregistered name is listed")
             try aliasStore.saveSelfAliases(["わたし別名"], merges: false)
-            try check(aliasStore.preferences.mergesSelfAliases && !aliasStore.playerDirectory.contains { $0.name == "わたし別名" } && aliasStore.nameKeys(for: "わたし").contains(playerSearchKey("わたし別名")), "self aliases can be shown together")
+            try check(aliasStore.preferences.selfAliases == ["わたし別名"] && !aliasStore.playerDirectory.contains { $0.name == "わたし別名" } && aliasStore.nameKeys(for: "わたし").contains(playerSearchKey("わたし別名")), "self aliases are always merged into the user")
         }
 
         // 0.13 parallel prompts in a stage, next stage blocks, prompt styles, fill-in prompts and memo-style answers.
