@@ -1199,10 +1199,9 @@ func giriParticipantCandidates(lines: [GiriOCRLine], known: [String]) -> [GiriPa
         // 欄は位置で決める（アイコンの形では決めない）：同じ列にある見出しのうち、すぐ上のもの。
         // 同じ列に見出しがなければ、横の位置がいちばん近い見出し。
         let above = headers.filter { $0.line.midY < line.midY }
-        let sameColumn = above.filter { abs($0.line.midX - line.midX) < 0.3 }
-        let column = sameColumn.max(by: { $0.line.midY < $1.line.midY })
-            ?? above.min(by: { abs($0.line.midX - line.midX) < abs($1.line.midX - line.midX) })
-        guard let column else { continue }
+        guard let nearest = above.map({ abs($0.line.midX - line.midX) }).min() else { continue }
+        let sameColumn = above.filter { abs($0.line.midX - line.midX) <= nearest + 0.08 }
+        guard let column = sameColumn.max(by: { $0.line.midY < $1.line.midY }) else { continue }
         entries.append((line.text, column.section))
     }
     return giriParticipantCandidates(entries: entries, known: known, stripsIconLetter: true)
