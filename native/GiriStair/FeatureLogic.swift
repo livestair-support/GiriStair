@@ -1856,7 +1856,7 @@ func giriFuriganaCandidate(_ name: String) -> String {
         guard !run.isEmpty else { return }
         switch runKind {
         case 1: output += giriKanjiReading(run)
-        case 2: output += run.applyingTransform(.hiraganaToKatakana, reverse: true) ?? run
+        case 2: output += giriKatakanaToHiragana(run)
         case 3: output += run.lowercased().applyingTransform(.latinToHiragana, reverse: false) ?? run
         case 4: output += Int(run).map(giriNumberReading) ?? run
         default: break
@@ -1876,6 +1876,13 @@ func giriFuriganaCandidate(_ name: String) -> String {
     }
     flush()
     return output
+}
+
+/// カタカナをひらがなにする（文字の番号で置き換えるので「ー」は「ー」のまま。端末の変換は「ー」を母音にしてしまう）。
+func giriKatakanaToHiragana(_ text: String) -> String {
+    String(String.UnicodeScalarView(text.unicodeScalars.map { scalar in
+        (0x30A1...0x30F6).contains(scalar.value) ? Unicode.Scalar(scalar.value - 0x60) ?? scalar : scalar
+    }))
 }
 
 /// 漢字だけの部分の読み（端末の辞書のローマ字読みをひらがなにする）。
