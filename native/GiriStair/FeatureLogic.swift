@@ -2175,3 +2175,9 @@ func giriBulkPromptNotes(text: String, eventID: String?, roundID: String? = nil,
         return note
     }
 }
+
+/// 0.17：文の区切り（文節）ではなく、文字の量で折り返す（投票の画面と同じ見え方）。
+/// 文字のあいだに幅のない空白を入れて、どこでも折り返せるようにする。
+func giriCharacterWrapped(_ text: String) -> String {
+    text.components(separatedBy: "\n").map { line in line.map(String.init).joined(separator: "\u{200B}") }.joined(separator: "\n")
+}

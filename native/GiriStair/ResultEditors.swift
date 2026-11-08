@@ -335,6 +335,7 @@ struct GiriResultEntry: View {
     private func applyAutomaticResults() {
         // 開いた直後（読み込んだだけ）では何も変えない。
         guard let event, event.isSelfPlayer, loaded, result.stages != originalResult.stages else { return }
+        if event.eventFormat.hasOnlineRounds { syncSingleRoundStages() }
         let names = bracket(event)
         if names.count >= 2, var next = giriNextBracketStage(result.stages, bracket: names, isSelf: store.preferences.isSelf) {
             if !event.eventFormat.hasOnlineRounds { next.laps = giriNormalizedLaps(next, lapCount: 1) }
@@ -408,7 +409,9 @@ struct GiriResultEntry: View {
                 Text("段階がまだありません").font(.subheadline).foregroundStyle(.secondary)
             }
             ForEach(wide) { stage in
-                Button { editingStageID = stage.id } label: { stageRow(stage, nested: false) }
+                // 0.17：お題が1つだけの段階（ネット）は、段階と回を1行にまとめて回の入力を開く。
+                let single = singleRound(of: stage, in: rounds)
+                Button { editingStageID = single?.id ?? stage.id } label: { stageRow(single.map { mergedRow(stage, round: $0) } ?? stage, nested: false) }
                     .buttonStyle(.plain)
                 // 同じ段階を違うブロックで何周かした時は、周ごとの結果を同じ枠の中に並べる。
                 if stage.laps.count > 1 {
@@ -417,9 +420,11 @@ struct GiriResultEntry: View {
                             .buttonStyle(.plain)
                     }
                 }
-                ForEach(rounds.filter { $0.stageId != nil && $0.stageId == stage.stageId }) { round in
-                    Button { editingStageID = round.id } label: { stageRow(round, nested: true) }
-                        .buttonStyle(.plain)
+                if single == nil {
+                    ForEach(rounds.filter { $0.stageId != nil && $0.stageId == stage.stageId }) { round in
+                        Button { editingStageID = round.id } label: { stageRow(round, nested: true) }
+                            .buttonStyle(.plain)
+                    }
                 }
             }
             // 段階に結び付かない旧データの回
@@ -456,6 +461,35 @@ struct GiriResultEntry: View {
             } label: { Label("段階を追加", systemImage: "plus.circle") }
             .tint(accentActionColor)
         }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
+    /// 段階の回が1つだけの時、その回の記録。
+    private func singleRound(of stage: ResultStage, in rounds: [ResultStage]) -> ResultStage? {
+        guard let stageID = stage.stageId else { return nil }
+        let matches = rounds.filter { $0.stageId == stageID }
+        return matches.count == 1 ? matches.first : nil
+    }
+
+    /// 1行にまとめた時の表示：名前・形式は段階、結果は回（なければ段階）。
+    private func mergedRow(_ stage: ResultStage, round: ResultStage) -> ResultStage {
+        var value = round
+        value.name = stage.name
+        if round.outcome == .unrecorded { value.outcome = stage.outcome }
+        if round.placement == nil { value.placement = stage.placement }
+        value.lineup = stage.lineup
+        value.judging = stage.judging
+        value.group = stage.group
+        return value
+    }
+
+    /// お題が1つだけの段階は、回の通過・敗退と順位を段階の記録にも入れる（最終結果・まとめは段階で数える）。
+    private func syncSingleRoundStages() {
+        let rounds = result.stages.filter { $0.roundId != nil }
+        for index in result.stages.indices where result.stages[index].roundId == nil {
+            guard let round = singleRound(of: result.stages[index], in: rounds) else { continue }
+            if round.outcome != .unrecorded && result.stages[index].outcome != round.outcome { result.stages[index].outcome = round.outcome }
+            if let placement = round.placement, result.stages[index].placement != placement { result.stages[index].placement = placement }
+        }
     }
 
     private func templateCaption(_ source: GiriEvent) -> String {
@@ -908,6 +942,8 @@ struct GiriStageEditor: View {
                             .listRowSeparator(.hidden)
                         Text(answerNotes[index].prompt.isEmpty ? answerNotes[index].title : answerNotes[index].prompt)
                             .font(.subheadline.weight(.semibold)).lineLimit(4)
+                        // 0.17：画像のお題は画像も出す。
+                        if !answerNotes[index].imageDataBase64.isEmpty { GiriThoughtImage(base64: answerNotes[index].imageDataBase64) }
                         GiriAnswerResultFields(records: $answerNotes[index].answerRecords)
                     }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
                 }

@@ -724,14 +724,20 @@ private struct GiriThoughtNotePage: View {
     let noteID: String
     @State private var editing = false
     @State private var deleting = false
+    /// 0.17：回答の欄のタブ（自分の回答・他人の回答）。
+    @State private var mode: GiriAnswerMode = .own
     private var note: ThoughtNote? { store.notes.first { $0.id == noteID } }
     private var event: GiriEvent? { store.events.first { $0.id == note?.eventId } }
     var body: some View {
         Form {
             if let note {
                 contextSection(note)
-                Section { GiriThoughtNoteRows(note: note, event: event, onEdit: { editing = true }) }
-                    .appSectionCardStyle(accentColor: AppSectionAccent.memo)
+                if note.kind == .answers {
+                    GiriNoteSections(note: note, event: event, mode: $mode)
+                } else {
+                    Section { GiriThoughtNoteRows(note: note, event: event, onEdit: { editing = true }) }
+                        .appSectionCardStyle(accentColor: AppSectionAccent.memo)
+                }
             } else {
                 CenteredEmptyMessage(systemImage: "text.bubble", title: "このメモは削除されています")
             }
@@ -889,8 +895,10 @@ private struct GiriThoughtNoteRows: View {
     let note: ThoughtNote
     let event: GiriEvent?
     let onEdit: () -> Void
-    /// 0.16：一覧（overview）・自分の回答モード・他人の回答モード。
-    var display: GiriAnswerMode? = nil
+    /// 0.17：一覧（overview）・お題の欄・回答の欄（自分／他人のタブ）。
+    var part: GiriNoteRowsPart = .overview
+    /// 回答の欄のタブ（自分の回答・他人の回答）。
+    var mode: Binding<GiriAnswerMode>? = nil
     /// 0.14：移動せずに足す回答（案）。
     @State private var newAnswer = ""
     @State private var newOtherAnswerer = ""
@@ -903,33 +911,34 @@ private struct GiriThoughtNoteRows: View {
     private var isLong: Bool { note.effectiveFormat(event: event) == .onlineLong }
     private var order: GiriAnswerOrder { GiriAnswerOrder(rawValue: answerOrder) ?? .added }
     var body: some View {
-        Text(thoughtTitle(note)).font(.headline).textSelection(.enabled)
-        if !note.imageDataBase64.isEmpty { GiriThoughtImage(base64: note.imageDataBase64) }
-        if !note.promptAuthor.isEmpty {
-            HStack {
-                Text("作題").font(.subheadline).foregroundStyle(.secondary)
-                Spacer()
-                Text(thoughtAuthorText(note)).font(.subheadline.weight(.semibold))
-            }
-        }
+        if part != .answers { promptRows }
         if note.kind == .answers {
             let own = note.ownAnswerRecords
             let others = note.otherAnswerRecords
-            switch display {
-            case .own?:
-                // 自分の回答モード：参加のチェック → 回答の投稿 → 出した回答一覧（印・出す回答を選ぶ）。
+            switch part {
+            case .prompt:
+                // 参加はお題の側で決める。
                 participationToggle
-                postingForm
-                ownList(own)
-            case .others?:
-                // 他人の回答モード：回答者と回答を1つずつ投稿する。
-                othersPostingForm
-                othersList(others)
-            case nil:
+            case .answers:
+                Picker("回答", selection: modeBinding) {
+                    ForEach(GiriAnswerMode.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .listRowSeparator(.hidden)
+                if modeBinding.wrappedValue == .own {
+                    postingForm
+                    ownList(own)
+                } else {
+                    othersPostingForm
+                    othersList(others)
+                }
+                if !note.memo.isEmpty {
+                    Text(note.memo).font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+            case .overview:
                 if !note.isParticipatingPrompt {
                     Label("参加していないお題", systemImage: "eye.slash").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 }
-                modeLinks
                 ownList(own)
                 othersList(others)
                 if !note.memo.isEmpty {
@@ -943,6 +952,22 @@ private struct GiriThoughtNoteRows: View {
             Text(note.body).textSelection(.enabled)
         }
     }
+
+    @ViewBuilder private var promptRows: some View {
+        Text(thoughtTitle(note)).font(.headline).textSelection(.enabled)
+            // 一覧（overview）からの長押しの「編集」もここで開く。
+            .sheet(isPresented: editingAnswerShown) { answerEditSheet }
+        if !note.imageDataBase64.isEmpty { GiriThoughtImage(base64: note.imageDataBase64) }
+        if !note.promptAuthor.isEmpty {
+            HStack {
+                Text("作題").font(.subheadline).foregroundStyle(.secondary)
+                Spacer()
+                Text(thoughtAuthorText(note)).font(.subheadline.weight(.semibold))
+            }
+        }
+    }
+
+    private var modeBinding: Binding<GiriAnswerMode> { mode ?? .constant(.own) }
 
     /// 自分の回答の一覧（並びの切り替え・印・出す回答）。
     @ViewBuilder private func ownList(_ own: [AnswerRecord]) -> some View {
@@ -967,25 +992,6 @@ private struct GiriThoughtNoteRows: View {
             Text("他人の回答（ツボ）").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
         }
         ForEach(others) { record in otherRow(record) }
-    }
-
-    /// 一覧からそれぞれのモードの画面へ。
-    private var modeLinks: some View {
-        HStack(spacing: 10) {
-            NavigationLink { GiriAnswerModePage(noteID: note.id, initialMode: .own) } label: {
-                Label("自分の回答", systemImage: "person.fill").font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            NavigationLink { GiriAnswerModePage(noteID: note.id, initialMode: .others) } label: {
-                Label("他人の回答", systemImage: "person.2.fill").font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-        }
-        .tint(accentActionColor)
-        .padding(.vertical, 2)
-        .sheet(isPresented: editingAnswerShown) { answerEditSheet }
     }
 
     /// このお題に参加したか。参加していないお題（参加していないブロックのお題を考えるなど）は一覧で下に分ける。
@@ -1037,38 +1043,45 @@ private struct GiriThoughtNoteRows: View {
     }
 
     private func ownRow(_ record: AnswerRecord) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Button { toggleSubmitted(record.id) } label: {
                     Image(systemName: record.isSubmitted ? "checkmark.square.fill" : "square")
                         .foregroundStyle(record.isSubmitted ? accentActionColor : Color.secondary)
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel(record.isSubmitted ? "提出した回答の印を外す" : "提出した回答にする")
-                markMenu(record)
+                if !record.mark.isEmpty {
+                    Text(record.mark).font(.subheadline.weight(.bold)).foregroundStyle(AppSectionAccent.ticket)
+                }
                 Group {
                     if note.effectivePromptStyle == .fill { GiriFilledPromptText(prompt: note.prompt, answer: record.text) }
-                    else { Text(record.text) }
+                    else { Text(giriCharacterWrapped(record.text)) }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 if record.isSubmitted {
                     Text(isLong ? "採用" : "出した").font(.caption.weight(.semibold)).foregroundStyle(accentActionColor)
                 }
-                Menu {
-                    Button("編集", systemImage: "pencil") { editingAnswerText = record.text; editingAnswerID = record.id }
-                    Button("削除", systemImage: "trash", role: .destructive) { saveAnswer(id: record.id, delete: true) }
-                    Divider()
-                    GiriThoughtShareActions(note: note, event: event, record: record)
-                } label: {
-                    Image(systemName: "ellipsis").frame(minWidth: 28, minHeight: 28)
-                }.accessibilityLabel("この回答の編集・共有")
             }
             let result = thoughtAnswerResult(record)
             if !result.isEmpty { Text(result).font(.caption.weight(.medium)).foregroundStyle(AppSectionAccent.ticket) }
         }
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        // 編集・印・削除・共有は長押しのメニューから。
         .contextMenu {
             Button("編集", systemImage: "pencil") { editingAnswerText = record.text; editingAnswerID = record.id }
+            Menu("印を付ける", systemImage: "circle.circle") {
+                ForEach(["◎", "〇", "△", "×"], id: \.self) { mark in
+                    Button(mark) { saveAnswer(id: record.id, mark: mark) }
+                }
+                Menu("点数") {
+                    ForEach(1...10, id: \.self) { point in Button("\(point)点") { saveAnswer(id: record.id, mark: String(point)) } }
+                }
+                if !record.mark.isEmpty { Button("印を外す", role: .destructive) { saveAnswer(id: record.id, mark: "") } }
+            }
+            GiriThoughtShareActions(note: note, event: event, record: record)
             Button("削除", systemImage: "trash", role: .destructive) { saveAnswer(id: record.id, delete: true) }
         }
     }
@@ -1084,27 +1097,6 @@ private struct GiriThoughtNoteRows: View {
                 editingAnswerID = nil
             } onCancel: { editingAnswerID = nil }
         }
-    }
-
-    /// 印（◎・〇・△・× や点数）は、押して選ぶ。自分の好きな印で回答案を見比べられる。
-    private func markMenu(_ record: AnswerRecord) -> some View {
-        Menu {
-            ForEach(["◎", "〇", "△", "×"], id: \.self) { mark in
-                Button(mark) { saveAnswer(id: record.id, mark: mark) }
-            }
-            Menu("点数") {
-                ForEach(1...10, id: \.self) { point in Button("\(point)点") { saveAnswer(id: record.id, mark: String(point)) } }
-            }
-            if !record.mark.isEmpty { Button("印を外す", role: .destructive) { saveAnswer(id: record.id, mark: "") } }
-        } label: {
-            Text(record.mark.isEmpty ? "・" : record.mark)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(record.mark.isEmpty ? Color.secondary : AppSectionAccent.ticket)
-                .frame(minWidth: 24, minHeight: 24)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.borderless)
-        .accessibilityLabel("印を付ける")
     }
 
     /// 長考の投稿フォーム：回答案を1つずつ書いて「投稿」で足す（改行は回答の中の改行）。
@@ -1147,21 +1139,18 @@ private struct GiriThoughtNoteRows: View {
     }
 
     private func otherRow(_ record: AnswerRecord) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(record.answerer).font(.caption.weight(.semibold)).foregroundStyle(AppSectionAccent.favorite)
-                Text(record.text).textSelection(.enabled)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Menu {
-                Button("編集", systemImage: "pencil") { editingAnswerText = record.text; editingAnswerID = record.id }
-                Button("削除", systemImage: "trash", role: .destructive) { saveAnswer(id: record.id, delete: true) }
-                Divider()
-                GiriThoughtShareActions(note: note, event: event, record: record)
-            } label: {
-                Image(systemName: "ellipsis").frame(minWidth: 28, minHeight: 28)
-            }.accessibilityLabel("この回答の編集・共有")
-        }.padding(.vertical, 2)
+        VStack(alignment: .leading, spacing: 3) {
+            Text(record.answerer).font(.caption.weight(.semibold)).foregroundStyle(AppSectionAccent.favorite)
+            Text(giriCharacterWrapped(record.text)).font(.subheadline)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("編集", systemImage: "pencil") { editingAnswerText = record.text; editingAnswerID = record.id }
+            GiriThoughtShareActions(note: note, event: event, record: record)
+            Button("削除", systemImage: "trash", role: .destructive) { saveAnswer(id: record.id, delete: true) }
+        }
     }
 
     /// お題と別に、この画面のまま回答を足す。改行で続けて入れられる（行の先頭の印も読む）。
@@ -1315,6 +1304,8 @@ struct GiriThoughtEditor: View {
     private var isLong: Bool { selectedFormat == .onlineLong }
 
     /// 0.16：新しいお題を保存したあと、どちらのモードで回答を入れるかを選ぶ。
+    /// 0.17：「このお題に参加」はお題の側で決める（nil は触っていない）。
+    @State private var participatesDraft: Bool?
     @State private var savedNoteID: String?
     @State private var modeChoice = false
     @State private var chosenMode: GiriAnswerMode?
@@ -1465,6 +1456,11 @@ struct GiriThoughtEditor: View {
         }
     }
 
+    private var participationBinding: Binding<Bool> {
+        Binding(get: { participatesDraft ?? (isNewNote ? giriDefaultPromptParticipation(event: event) : initial.isParticipatingPrompt) },
+                set: { participatesDraft = $0 })
+    }
+
     private var promptSection: some View {
         Section {
             AppCardSectionTitle(title: draft.kind == .free ? "タイトル" : "お題", systemImage: draft.kind == .free ? "square.and.pencil" : "lightbulb", accentColor: AppSectionAccent.memo)
@@ -1499,6 +1495,9 @@ struct GiriThoughtEditor: View {
                 if !draft.promptAuthor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Toggle("（改）", isOn: $draft.promptRevised).tint(AppSectionAccent.memo)
                 }
+                // 0.17：参加したかはお題の側で決める。
+                Toggle(isOn: participationBinding) { GiriEditorLabel("このお題に参加") }
+                    .tint(AppSectionAccent.memo)
             }
         }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
     }
@@ -1763,7 +1762,10 @@ struct GiriThoughtEditor: View {
         saved.format = event?.eventFormat ?? selectedFormat
         saved.used = draft.kind == .prompts && draft.used
         // 0.16：新しいお題は、関連する会に参加していれば「このお題に参加」から始める。
-        if isNewNote && draft.kind == .answers { saved.participates = giriDefaultPromptParticipation(event: event) }
+        if draft.kind == .answers {
+            if let participatesDraft { saved.participates = participatesDraft }
+            else if isNewNote { saved.participates = giriDefaultPromptParticipation(event: event) }
+        }
         saved.updatedAt = Date()
         do {
             try store.saveNote(saved)
@@ -1952,7 +1954,7 @@ private struct GiriThoughtImagePicker: View {
     }
 }
 
-private struct GiriThoughtImage: View {
+struct GiriThoughtImage: View {
     let base64: String
     @State private var showingFullImage = false
 
@@ -2322,22 +2324,14 @@ struct GiriAnswerModePage: View {
     var body: some View {
         Form {
             if let note {
-                Section {
-                    Picker("モード", selection: $mode) {
-                        ForEach(GiriAnswerMode.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .listRowSeparator(.hidden)
-                }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
-                Section { GiriThoughtNoteRows(note: note, event: event, onEdit: {}, display: mode) }
-                    .appSectionCardStyle(accentColor: mode == .own ? AppSectionAccent.memo : AppSectionAccent.favorite)
+                GiriNoteSections(note: note, event: event, mode: $mode)
             } else {
                 CenteredEmptyMessage(systemImage: "text.bubble", title: "このお題は削除されています")
             }
         }
         .appEditorFormStyle()
         .scrollDismissesKeyboard(.interactively)
-        .navigationTitle(mode.title).navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("お題/回答").navigationBarTitleDisplayMode(.inline)
         .giriNavigationBarStyle()
     }
 }
@@ -2411,5 +2405,27 @@ struct GiriBulkPromptEditor: View {
             playLiveStairSaveFeedback()
             dismiss()
         }
+    }
+}
+
+/// 0.17：お題の画面の欄（一覧の中のお題・お題の欄・回答の欄）。
+enum GiriNoteRowsPart { case overview, prompt, answers }
+
+/// 0.17：お題の欄（お題・画像・作題者・このお題に参加）と、回答の欄（自分の回答／他人の回答のタブ）。
+struct GiriNoteSections: View {
+    let note: ThoughtNote
+    let event: GiriEvent?
+    @Binding var mode: GiriAnswerMode
+    var body: some View {
+        Section {
+            AppCardSectionTitle(title: "お題", systemImage: "lightbulb", accentColor: AppSectionAccent.memo)
+                .listRowSeparator(.hidden)
+            GiriThoughtNoteRows(note: note, event: event, onEdit: {}, part: .prompt)
+        }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+        Section {
+            AppCardSectionTitle(title: "回答", systemImage: "text.bubble", accentColor: mode == .own ? AppSectionAccent.artist : AppSectionAccent.favorite)
+                .listRowSeparator(.hidden)
+            GiriThoughtNoteRows(note: note, event: event, onEdit: {}, part: .answers, mode: $mode)
+        }.appSectionCardStyle(accentColor: mode == .own ? AppSectionAccent.artist : AppSectionAccent.favorite)
     }
 }
