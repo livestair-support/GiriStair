@@ -1124,7 +1124,8 @@ func giriCleanParticipantText(_ raw: String) -> (name: String, truncated: Bool) 
         value.removeSubrange(range)
         truncated = true
     }
-    value = value.replacingOccurrences(of: #"^[\s・･•●○◎◆◇■□▲△▼▽★☆※＊*\-－—―~〜～凸(（\[［「『【①-⓿❶-➓]+"#, with: "", options: .regularExpression)
+    // 「?」のアイコン（運営が入れた人など）は名前の一部ではないので外す。
+    value = value.replacingOccurrences(of: #"^[\s・･•●○◎◆◇■□▲△▼▽★☆※＊*\-－—―~〜～凸(（\[［「『【①-⓿❶-➓?？]+"#, with: "", options: .regularExpression)
     // アイコンが英数字1文字に読まれて、空白をはさんで名前が続く（「1 3104」「G しゅにく」）。
     if let range = value.range(of: #"^[A-Za-z0-9Ａ-Ｚａ-ｚ０-９]\s+(?=\S)"#, options: .regularExpression) { value.removeSubrange(range) }
     if !value.contains("(") && !value.contains("（") {
@@ -1195,9 +1196,13 @@ func giriParticipantCandidates(lines: [GiriOCRLine], known: [String]) -> [GiriPa
     let end = sorted.first { $0.midY > firstHeader.line.midY && giriParticipantListEnds($0.text) }?.midY ?? .infinity
     var entries: [(text: String, section: GiriParticipantSection)] = []
     for line in sorted where line.midY > firstHeader.line.midY && line.midY < end && giriParticipantHeader(line.text) == nil {
-        // 行より上にある見出しのうち、横の位置がいちばん近い欄に入れる。
+        // 欄は位置で決める（アイコンの形では決めない）：同じ列にある見出しのうち、すぐ上のもの。
+        // 同じ列に見出しがなければ、横の位置がいちばん近い見出し。
         let above = headers.filter { $0.line.midY < line.midY }
-        guard let column = above.min(by: { abs($0.line.midX - line.midX) < abs($1.line.midX - line.midX) }) else { continue }
+        let sameColumn = above.filter { abs($0.line.midX - line.midX) < 0.3 }
+        let column = sameColumn.max(by: { $0.line.midY < $1.line.midY })
+            ?? above.min(by: { abs($0.line.midX - line.midX) < abs($1.line.midX - line.midX) })
+        guard let column else { continue }
         entries.append((line.text, column.section))
     }
     return giriParticipantCandidates(entries: entries, known: known, stripsIconLetter: true)
@@ -1841,8 +1846,41 @@ func giriBlockTable(_ lines: [GiriOCRLine]) -> [GiriBlockEntry] {
 /// 名前のフリガナの候補（ひらがな）。漢字の読みは端末の辞書によるので、確認して直せるようにする。
 /// 日本語の文字がない名前（英字だけなど）は空にする。
 func giriFuriganaCandidate(_ name: String) -> String {
-    let text = name.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard text.range(of: #"[\p{Han}\p{Hiragana}\p{Katakana}]"#, options: .regularExpression) != nil else { return "" }
+    let text = giriHalfwidthAlphanumerics(name.trimmingCharacters(in: .whitespacesAndNewlines))
+    guard !text.isEmpty else { return "" }
+    // 文字の種類ごとに区切って読む：漢字は端末の辞書、かなはそのまま（「ー」も残す）、
+    // 英字はローマ字読み、数字は日本語の数の読み。
+    var output = ""
+    var run = ""
+    var runKind = 0
+    func flush() {
+        guard !run.isEmpty else { return }
+        switch runKind {
+        case 1: output += giriKanjiReading(run)
+        case 2: output += run.applyingTransform(.hiraganaToKatakana, reverse: true) ?? run
+        case 3: output += run.lowercased().applyingTransform(.latinToHiragana, reverse: false) ?? run
+        case 4: output += Int(run).map(giriNumberReading) ?? run
+        default: break
+        }
+        run = ""
+    }
+    for character in text {
+        let kind: Int
+        let value = String(character)
+        if value.range(of: #"\p{Han}|々"#, options: .regularExpression) != nil { kind = 1 }
+        else if value.range(of: #"[\p{Hiragana}\p{Katakana}ー]"#, options: .regularExpression) != nil { kind = 2 }
+        else if value.range(of: #"[A-Za-z]"#, options: .regularExpression) != nil { kind = 3 }
+        else if value.range(of: #"[0-9]"#, options: .regularExpression) != nil { kind = 4 }
+        else { kind = 0 }
+        if kind != runKind { flush(); runKind = kind }
+        if kind != 0 { run.append(character) }
+    }
+    flush()
+    return output
+}
+
+/// 漢字だけの部分の読み（端末の辞書のローマ字読みをひらがなにする）。
+private func giriKanjiReading(_ text: String) -> String {
     var output = ""
     let range = CFRange(location: 0, length: (text as NSString).length)
     let tokenizer = CFStringTokenizerCreate(nil, text as CFString, range, kCFStringTokenizerUnitWordBoundary, Locale(identifier: "ja_JP") as CFLocale)
@@ -1850,13 +1888,223 @@ func giriFuriganaCandidate(_ name: String) -> String {
     while !type.isEmpty {
         let tokenRange = CFStringTokenizerGetCurrentTokenRange(tokenizer)
         let token = (text as NSString).substring(with: NSRange(location: tokenRange.location, length: tokenRange.length))
-        if token.range(of: #"\p{Han}"#, options: .regularExpression) != nil,
-           let latin = CFStringTokenizerCopyCurrentTokenAttribute(tokenizer, kCFStringTokenizerAttributeLatinTranscription) as? String {
+        if let latin = CFStringTokenizerCopyCurrentTokenAttribute(tokenizer, kCFStringTokenizerAttributeLatinTranscription) as? String {
             output += latin.applyingTransform(.latinToHiragana, reverse: false) ?? token
         } else {
-            output += token.applyingTransform(.hiraganaToKatakana, reverse: true) ?? token
+            output += token
         }
         type = CFStringTokenizerAdvanceToNextToken(tokenizer)
     }
     return output.replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
+}
+
+/// 数の読み（0〜9999万まで。「3」→さん、「100」→ひゃく、「300」→さんびゃく）。
+func giriNumberReading(_ number: Int) -> String {
+    let digits = ["", "いち", "に", "さん", "よん", "ご", "ろく", "なな", "はち", "きゅう"]
+    if number == 0 { return "ぜろ" }
+    if number >= 10000 { return giriNumberReading(number / 10000) + "まん" + (number % 10000 == 0 ? "" : giriNumberReading(number % 10000)) }
+    var output = ""
+    let thousands = number / 1000, hundreds = (number / 100) % 10, tens = (number / 10) % 10, ones = number % 10
+    switch thousands {
+    case 0: break
+    case 1: output += "せん"
+    case 3: output += "さんぜん"
+    case 8: output += "はっせん"
+    default: output += digits[thousands] + "せん"
+    }
+    switch hundreds {
+    case 0: break
+    case 1: output += "ひゃく"
+    case 3: output += "さんびゃく"
+    case 6: output += "ろっぴゃく"
+    case 8: output += "はっぴゃく"
+    default: output += digits[hundreds] + "ひゃく"
+    }
+    switch tens {
+    case 0: break
+    case 1: output += "じゅう"
+    default: output += digits[tens] + "じゅう"
+    }
+    output += digits[ones]
+    return output
+}
+
+// MARK: - 0.15 回答案の投稿・印・並び
+
+/// 投稿フォームのように、回答案を1つ足す（改行は回答の中の改行として残す）。先頭の印（◎・〇・△・× や点数）も読む。
+func giriNoteAddingAnswer(_ note: ThoughtNote, text: String, now: Date = Date()) -> ThoughtNote? {
+    var body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !body.isEmpty else { return nil }
+    var mark = ""
+    let firstLine = body.components(separatedBy: .newlines).first ?? body
+    if let parsed = giriAnswerLines(firstLine).first, !parsed.mark.isEmpty, firstLine.count > parsed.text.count {
+        mark = parsed.mark
+        let rest = body.components(separatedBy: .newlines).dropFirst()
+        body = ([parsed.text] + rest).joined(separator: "\n")
+    }
+    return giriNoteUpdatingAnswers(note, now: now) { answers in answers.append(AnswerRecord(text: body, mark: mark)) }
+}
+
+/// 回答案の文・印を変える、または消す。
+func giriNoteEditingAnswer(_ note: ThoughtNote, id: String, text: String? = nil, mark: String? = nil, delete: Bool = false, now: Date = Date()) -> ThoughtNote {
+    giriNoteUpdatingAnswers(note, now: now) { answers in
+        guard let index = answers.firstIndex(where: { $0.id == id }) else { return }
+        if delete { answers.remove(at: index); return }
+        if let text {
+            let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty { answers[index].text = value }
+        }
+        if let mark { answers[index].mark = mark }
+    }
+}
+
+private func giriNoteUpdatingAnswers(_ note: ThoughtNote, now: Date, _ change: (inout [AnswerRecord]) -> Void) -> ThoughtNote {
+    var updated = note
+    var answers = updated.effectiveAnswerRecords
+    change(&answers)
+    updated.answerRecords = answers
+    updated.usesAnswerRecords = true
+    updated.isOthersAnswer = false
+    updated.answerer = ""
+    updated.answers = answers.map(\.text)
+    updated.updatedAt = now
+    return updated
+}
+
+/// 回答案の並び：追加した順、または印の順（◎ → 点数の高い順 → 〇 → △ → 印なし → ×）。
+enum GiriAnswerOrder: String, CaseIterable, Identifiable {
+    case added, mark
+    var id: String { rawValue }
+    var title: String { self == .added ? "追加順" : "印の順" }
+}
+
+func giriSortedAnswers(_ records: [AnswerRecord], order: GiriAnswerOrder) -> [AnswerRecord] {
+    guard order == .mark else { return records }
+    func key(_ mark: String) -> (Int, Double) {
+        let value = giriHalfwidthAlphanumerics(mark)
+        if value == "◎" { return (0, 0) }
+        if let number = Double(value) { return (1, -number) }
+        switch value {
+        case "〇", "○", "◯": return (2, 0)
+        case "△", "▲": return (3, 0)
+        case "": return (4, 0)
+        case "×", "✕": return (5, 0)
+        default: return (4, 0)
+        }
+    }
+    return records.enumerated().sorted { first, second in
+        let a = key(first.element.mark), b = key(second.element.mark)
+        if a.0 != b.0 { return a.0 < b.0 }
+        if a.1 != b.1 { return a.1 < b.1 }
+        return first.offset < second.offset
+    }.map(\.element)
+}
+
+// MARK: - 0.15 ネット大喜利の結果のスクリーンショット
+
+struct GiriAnswerResultReading: Equatable {
+    var placement: Int? = nil
+    var points: Double? = nil
+}
+
+private func giriResultKey(_ text: String) -> String {
+    giriHalfwidthAlphanumerics(text).replacingOccurrences(of: #"[\s　、。,.・!！?？「」『』（）()]"#, with: "", options: .regularExpression)
+}
+
+/// 結果のページで、その回答の行（回答の文の初めが一致する行）を探し、近くにある「◯位」「◯点」を読む。
+/// サイトごとの決まった並びは使わず、行の位置の近さで決める。見つからなければ nil。
+func giriAnswerResultReading(lines: [GiriOCRLine], answer: String) -> GiriAnswerResultReading? {
+    let target = giriResultKey(answer)
+    guard target.count >= 4 else { return nil }
+    let head = String(target.prefix(10))
+    guard let anchor = lines.first(where: { line in
+        let key = giriResultKey(line.text)
+        return key.count >= 4 && (key.contains(head) || head.hasPrefix(String(key.prefix(min(key.count, 10)))) && key.count >= min(6, head.count))
+    }) else { return nil }
+    let window = max(0.05, anchor.height * 4)
+    let nearby = lines.filter { abs($0.midY - anchor.midY) <= window }
+        .sorted { abs($0.midY - anchor.midY) < abs($1.midY - anchor.midY) }
+    var reading = GiriAnswerResultReading()
+    for line in nearby {
+        let text = giriHalfwidthAlphanumerics(line.text)
+        if reading.placement == nil, let range = text.range(of: #"([0-9]+)\s*位"#, options: .regularExpression) {
+            reading.placement = Int(text[range].filter(\.isNumber))
+        }
+        if reading.points == nil, let range = text.range(of: #"[0-9]+(?:\.[0-9]+)?\s*(?:点|pt|票)"#, options: .regularExpression) {
+            reading.points = Double(String(text[range]).replacingOccurrences(of: #"[^0-9.]"#, with: "", options: .regularExpression))
+        }
+    }
+    return reading.placement == nil && reading.points == nil ? nil : reading
+}
+
+/// ページ全体から投票人数（「投票者数：25人」「25人が投票」など）を読む。
+func giriVoterCountReading(lines: [GiriOCRLine]) -> Int? {
+    for line in lines {
+        let text = giriHalfwidthAlphanumerics(line.text).replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+        if let range = text.range(of: #"投票(?:者数|人数|者|数)?[:：]?([0-9]+)人"#, options: .regularExpression)
+            ?? text.range(of: #"([0-9]+)人(?:が|の)?投票"#, options: .regularExpression) {
+            return Int(text[range].filter(\.isNumber))
+        }
+    }
+    return nil
+}
+
+// MARK: - 0.15 大会の仕組みの読み取り（骨組み）
+
+/// イベントページの「予選：5人1組の横並び・お題3問」「決勝：上位4名でタイマン」のような説明から、
+/// 段階の骨組み（名前・形式・お題数・審査方法・通過枠）を作る。結果は入れない。
+func giriTournamentSkeleton(lines: [GiriOCRLine]) -> [ResultStage] {
+    let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }
+    let names = ["予選", "本戦", "準々決勝", "準決勝", "3位決定戦", "敗者復活戦", "決勝"]
+    var stages: [ResultStage] = []
+    var current: Int? = nil
+    for line in sorted {
+        let text = giriHalfwidthAlphanumerics(line.text).replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+        guard !text.isEmpty, text.count <= 80 else { continue }
+        // 段階名で始まる行（「予選：」「【決勝】」「1回戦」）から新しい段階にする。
+        let stripped = text.replacingOccurrences(of: #"^[【\[［《〈<・■●◆▼★☆\-－]+"#, with: "", options: .regularExpression)
+        var stageName: String? = nil
+        if let range = stripped.range(of: #"^(?:予選|本戦|本選|準々決勝|準決勝|3位決定戦|敗者復活戦?|決勝|[0-9]+回戦)"#, options: .regularExpression) {
+            let candidate = String(stripped[range])
+            // 「決勝進出」「予選通過」のような結果の文は段階の始まりにしない。
+            let rest = stripped[range.upperBound...]
+            if !rest.hasPrefix("進出") && !rest.hasPrefix("通過") && !rest.hasPrefix("敗退") { stageName = candidate == "本選" ? "本戦" : candidate }
+        }
+        if let stageName {
+            if let index = stages.firstIndex(where: { $0.name == stageName }) { current = index }
+            else {
+                var stage = ResultStage()
+                stage.name = stageName
+                stages.append(stage)
+                current = stages.count - 1
+            }
+        }
+        guard let index = current else { continue }
+        var stage = stages[index]
+        if stage.lineup.isEmpty {
+            if text.range(of: #"タイマン|1対1|1vs1|1VS1|一騎打ち"#, options: .regularExpression) != nil { stage.lineup = "タイマン" }
+            else if let range = text.range(of: #"[0-9]+(?=人(?:1組|ずつ|一組|で横並び))|(?<=横並び)[0-9]+(?=人)"#, options: .regularExpression),
+                    let count = Int(text[range]), count >= 2 {
+                stage.lineup = "横並び\(count)人"
+            }
+        }
+        if stage.promptCount == nil, let range = text.range(of: #"(?<=お題)[0-9]+(?=問|題|つ)|(?<=お題は)[0-9]+|[0-9]+(?=問|題)"#, options: .regularExpression) {
+            stage.promptCount = Int(text[range])
+        }
+        if stage.judging.isEmpty {
+            let judged = ["審査", "拍手", "投票", "加点", "挙手"].contains { text.contains($0) }
+            let category = giriJudgingCategory(judged ? text : "")
+            if !category.isEmpty && category != "その他" { stage.judging = category }
+        }
+        if stage.advanceCount == nil, let range = text.range(of: #"(?<=上位)[0-9]+(?=名|人)|[0-9]+(?=(?:名|人)が?(?:通過|勝ち抜け|進出))"#, options: .regularExpression) {
+            stage.advanceCount = Int(text[range])
+        }
+        stages[index] = stage
+    }
+    // 名前の並びを大会の順にする（読み取った順が崩れても 予選 → … → 決勝）。
+    func order(_ name: String) -> Int {
+        if let range = name.range(of: #"^[0-9]+"#, options: .regularExpression), let number = Int(name[range]) { return 10 + number }
+        return [0: "予選", 1: "本戦", 50: "準々決勝", 60: "準決勝", 70: "3位決定戦", 40: "敗者復活戦", 80: "決勝"].first { $0.value == name }?.key ?? (names.contains(name) ? 45 : 90)
+    }
+    return stages.enumerated().sorted { order($0.element.name) == order($1.element.name) ? $0.offset < $1.offset : order($0.element.name) < order($1.element.name) }.map(\.element)
 }
