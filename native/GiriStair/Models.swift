@@ -826,12 +826,14 @@ struct ThoughtNote: Codable, Equatable, Identifiable {
     var memo: String = ""
     /// 0.13：お題の種類（plain 通常・image 画像・fill 穴埋め）。空は以前の版（画像があれば画像お題）。
     var promptStyle: String = ""
+    /// 0.16：このお題に参加したか（false は参加していないブロックのお題などを考えるため）。nil は以前の版で、参加として読む。
+    var participates: Bool? = nil
 }
 
 extension ThoughtNote {
     private enum CodingKeys: String, CodingKey {
         case id, title, kind, createdAt, updatedAt, body, eventId, roundId, prompt, answers, used, imageDataBase64, answerRecords, isOthersAnswer, answerer, usesAnswerRecords, answerCategory
-        case promptAuthor, promptRevised, format, resultStageId, memo, promptStyle
+        case promptAuthor, promptRevised, format, resultStageId, memo, promptStyle, participates
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -871,6 +873,7 @@ extension ThoughtNote {
         resultStageId = try c.decodeIfPresent(String.self, forKey: .resultStageId)
         memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
         promptStyle = try c.decodeIfPresent(String.self, forKey: .promptStyle) ?? ""
+        participates = try c.decodeIfPresent(Bool.self, forKey: .participates)
 
         try validate()
     }
@@ -912,7 +915,7 @@ extension ThoughtNote {
         try c.encode(resultStageId, forKey: .resultStageId)
         try c.encode(memo, forKey: .memo)
         try c.encode(promptStyle, forKey: .promptStyle)
-
+        try c.encodeIfPresent(participates, forKey: .participates)
     }
 }
 

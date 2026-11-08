@@ -2114,3 +2114,64 @@ func giriTournamentSkeleton(lines: [GiriOCRLine]) -> [ResultStage] {
     }
     return stages.enumerated().sorted { order($0.element.name) == order($1.element.name) ? $0.offset < $1.offset : order($0.element.name) < order($1.element.name) }.map(\.element)
 }
+
+// MARK: - 0.16 お題の参加・回答のモード・まとめて入れる
+
+extension ThoughtNote {
+    /// このお題に参加したか（以前の版のお題は参加）。
+    var isParticipatingPrompt: Bool { participates ?? true }
+}
+
+/// 新しいお題の「このお題に参加」の初めの状態：関連する会があり、自分がその会に参加していれば参加。
+func giriDefaultPromptParticipation(event: GiriEvent?) -> Bool {
+    event?.isActualParticipant == true
+}
+
+/// 一覧の並び：参加したお題を上、参加していないお題を下（それぞれの中は元の順）。
+func giriParticipationOrdered(_ notes: [ThoughtNote]) -> [ThoughtNote] {
+    notes.filter(\.isParticipatingPrompt) + notes.filter { !$0.isParticipatingPrompt }
+}
+
+/// 他人の回答（ツボ）を1つ足す。回答者がなければ足さない。
+func giriNoteAddingOtherAnswer(_ note: ThoughtNote, answerer: String, text: String, now: Date = Date()) -> ThoughtNote? {
+    let name = answerer.trimmingCharacters(in: .whitespacesAndNewlines)
+    let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, !body.isEmpty else { return nil }
+    var updated = note
+    var answers = updated.effectiveAnswerRecords
+    answers.append(AnswerRecord(text: body, answerer: name))
+    updated.answerRecords = answers
+    updated.usesAnswerRecords = true
+    updated.isOthersAnswer = false
+    updated.answerer = ""
+    updated.answers = answers.map(\.text)
+    updated.updatedAt = now
+    return updated
+}
+
+/// 会のお題をまとめて入れる：1行に1つのお題。「〇〇」などの穴埋めがあれば穴埋めお題、それ以外は通常お題。
+func giriBulkPromptNotes(text: String, eventID: String?, roundID: String? = nil, resultStageID: String? = nil,
+                         format: EventFormat?, participates: Bool, now: Date = Date()) -> [ThoughtNote] {
+    let lines = text.components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .map { $0.replacingOccurrences(of: #"^(?:[0-9０-９]{1,2}[.．)）:：、]\s*|[・･•\-－]\s*)"#, with: "", options: .regularExpression) }
+        .filter { !$0.isEmpty }
+    return lines.enumerated().map { offset, line in
+        var note = ThoughtNote()
+        note.kind = .answers
+        note.title = line
+        note.prompt = line
+        note.eventId = eventID
+        note.roundId = roundID
+        note.resultStageId = resultStageID
+        note.format = format
+        note.answerCategory = format == .onlineLong ? "long" : "other"
+        note.promptStyle = giriPromptBlankCount(line) > 0 ? GiriPromptStyle.fill.rawValue : GiriPromptStyle.plain.rawValue
+        note.participates = participates
+        note.usesAnswerRecords = true
+        // 並びが入れた順になるように、作った時刻を少しずつずらす。
+        note.createdAt = now.addingTimeInterval(Double(offset) * 0.001)
+        note.updatedAt = note.createdAt
+        return note
+    }
+}

@@ -289,6 +289,12 @@ final class GiriStore: ObservableObject {
         try note.validate()
         try mutate { Self.upsert(note, into: &$0.notes) }
     }
+    /// 0.16：お題をまとめて保存する（会のお題をまとめて入れる）。
+    func saveNotes(_ candidates: [ThoughtNote]) throws {
+        let notes = candidates.map(Self.normalizedNote)
+        try notes.forEach { try $0.validate() }
+        try mutate { next in for note in notes { Self.upsert(note, into: &next.notes) } }
+    }
     /// Own result and per-answer scores form one durable document mutation.
     func saveResult(event candidate: GiriEvent, notes candidates: [ThoughtNote]) throws {
         let event = Self.normalizedEvent(candidate)
