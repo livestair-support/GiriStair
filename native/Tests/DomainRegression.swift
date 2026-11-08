@@ -1428,7 +1428,7 @@ struct DomainRegression {
             try innerStore.deleteEvent(day.id)
             try check(innerStore.events.allSatisfy { $0.parentEventId == nil } && innerStore.events.count == 2, "deleting the day keeps its tournaments")
 
-            try check(giriFuriganaCandidate("カタカナ") == "かたかな" && giriFuriganaCandidate("Kou").isEmpty, "furigana candidates are hiragana and skip latin names")
+            try check(giriFuriganaCandidate("カタカナ") == "かたかな" && giriFuriganaCandidate("Kou") == "こう", "furigana candidates are hiragana and read latin as romaji")
             let reading = giriFuriganaCandidate("山田")
             try check(!reading.isEmpty && reading.range(of: #"^[\p{Hiragana}ー]+$"#, options: .regularExpression) != nil, "kanji names get a hiragana reading candidate")
             let player = innerStore.playerDirectory.first { $0.name == "はるか" }
@@ -1439,6 +1439,45 @@ struct DomainRegression {
             try check(venueJSON["furigana"] == nil, "venues without furigana keep the older JSON shape")
             venue.furigana = "ふるいかいじょう"
             try check(try JSONDecoder().decode(GiriVenue.self, from: JSONEncoder().encode(venue)).furigana == "ふるいかいじょう", "venue furigana roundtrips")
+        }
+
+        // 0.15 furigana keeps long marks and reads letters/numbers, OCR sections by position, posted answers, result screenshots, tournament skeletons.
+        do {
+            try check(giriFuriganaCandidate("スーパー") == "すーぱー" && giriFuriganaCandidate("ラーメン3") == "らーめんさん", "long marks stay as ー and numbers are read")
+            try check(giriFuriganaCandidate("スーパー田中").hasPrefix("すーぱー"), "kana next to kanji keeps its long mark")
+            try check(giriNumberReading(300) == "さんびゃく" && giriNumberReading(1800) == "せんはっぴゃく" && giriNumberReading(21) == "にじゅういち" && giriNumberReading(10) == "じゅう", "number readings")
+            try check(giriFuriganaCandidate("ＡＢＣ１") .hasSuffix("いち"), "full-width digits are read too")
+
+            try check(giriCleanParticipantText("?しゅにく").name == "しゅにく" && giriCleanParticipantText("？ みかん").name == "みかん", "a question-mark icon is not part of the name")
+            func row(_ text: String, _ y: Double, x: Double = 0.2) -> GiriOCRLine { GiriOCRLine(text: text, midX: x, midY: y, height: 0.01) }
+            let stacked = giriParticipantCandidates(lines: [row("参加者 (2人)", 0.1), row("はるか", 0.15), row("?ゆう", 0.2), row("興味あり (1人)", 0.3), row("まこ", 0.35)], known: [])
+            try check(stacked.first { $0.name == "ゆう" }?.section == .participants && stacked.first { $0.name == "まこ" }?.section == .interested, "sections follow the position on the screen, not the icon")
+
+            var note = ThoughtNote(title: "お題", kind: .answers)
+            guard let posted = giriNoteAddingAnswer(note, text: "〇 一つ目の案\n二行目") else { throw GiriDataError.invalid("No posted answer") }
+            try check(posted.answerRecords.count == 1 && posted.answerRecords[0].mark == "〇" && posted.answerRecords[0].text == "一つ目の案\n二行目", "a posted answer keeps its line break and reads the mark")
+            note = posted
+            note = giriNoteAddingAnswer(note, text: "二つ目") ?? note
+            note = giriNoteAddingAnswer(note, text: "3・三つ目") ?? note
+            let second = note.answerRecords[1].id
+            note = giriNoteEditingAnswer(note, id: second, mark: "◎")
+            try check(giriSortedAnswers(note.answerRecords, order: .mark).map(\.text) == ["二つ目", "三つ目", "一つ目の案\n二行目"], "marks sort ◎, points, then 〇")
+            note = giriNoteEditingAnswer(note, id: second, text: "直した案")
+            note = giriNoteEditingAnswer(note, id: note.answerRecords[0].id, delete: true)
+            try check(note.answerRecords.map(\.text) == ["直した案", "三つ目"], "answers can be edited and deleted on the page")
+
+            let page = [row("第12回 結果発表", 0.05), row("投票者数：25人", 0.08), row("1位", 0.2, x: 0.1), row("夜中に散歩する理由が", 0.2, x: 0.5), row("18点", 0.22, x: 0.9),
+                        row("2位", 0.3, x: 0.1), row("別の人の回答です", 0.3, x: 0.5), row("12点", 0.32, x: 0.9)]
+            let reading = giriAnswerResultReading(lines: page, answer: "夜中に散歩する理由がもう思い出せない")
+            try check(reading == GiriAnswerResultReading(placement: 1, points: 18) && giriVoterCountReading(lines: page) == 25, "a result screenshot gives the rank, score and voters of the answer")
+            try check(giriAnswerResultReading(lines: page, answer: "ここにない回答") == nil, "an answer not on the page is not read")
+
+            let structure = [row("【大会の流れ】", 0.05), row("予選：5人1組の横並び、お題3問", 0.1), row("拍手審査で上位2名が通過", 0.13),
+                             row("決勝：タイマン、お題1問", 0.2), row("決勝進出者には景品", 0.25)]
+            let skeleton = giriTournamentSkeleton(lines: structure)
+            try check(skeleton.map(\.name) == ["予選", "決勝"], "the tournament structure gives the stage names")
+            try check(skeleton.first?.lineup == "横並び5人" && skeleton.first?.promptCount == 3 && skeleton.first?.judging == "拍手審査" && skeleton.first?.advanceCount == 2, "the qualifier skeleton reads lineup, prompts, judging and advancing count")
+            try check(skeleton.last?.lineup == "タイマン" && skeleton.last?.promptCount == 1 && skeleton.allSatisfy { $0.outcome == .unrecorded }, "the final is a one-on-one with no result yet")
         }
 
         print("Native domain regressions passed: \(passed)")

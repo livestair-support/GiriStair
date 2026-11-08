@@ -870,7 +870,12 @@ private struct GiriThoughtNoteRows: View {
     /// 0.14：移動せずに足す回答（案）。
     @State private var newAnswer = ""
     @FocusState private var addingAnswer: Bool
+    /// 0.15：回答案の並び（追加順・印の順）。端末に残す。
+    @AppStorage("giriAnswerOrder") private var answerOrder = GiriAnswerOrder.added.rawValue
+    @State private var editingAnswerID: String?
+    @State private var editingAnswerText = ""
     private var isLong: Bool { note.effectiveFormat(event: event) == .onlineLong }
+    private var order: GiriAnswerOrder { GiriAnswerOrder(rawValue: answerOrder) ?? .added }
     var body: some View {
         Text(thoughtTitle(note)).font(.headline).textSelection(.enabled)
         if !note.imageDataBase64.isEmpty { GiriThoughtImage(base64: note.imageDataBase64) }
@@ -884,11 +889,23 @@ private struct GiriThoughtNoteRows: View {
         if note.kind == .answers {
             let own = note.ownAnswerRecords
             let others = note.otherAnswerRecords
+            // 長考はお題と分けて、投稿フォームのような箱から回答案を足す。
+            if isLong { postingForm }
             if !own.isEmpty {
-                Text(isLong ? "回答案（採用した回答に印）" : "自分の回答").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Text(isLong ? "回答案（出す回答に印）" : "自分の回答").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    if own.count > 1 {
+                        Picker("並び", selection: $answerOrder) {
+                            ForEach(GiriAnswerOrder.allCases) { Text($0.title).tag($0.rawValue) }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 170)
+                    }
+                }
             }
-            ForEach(own) { record in ownRow(record) }
-            quickAddRow
+            ForEach(giriSortedAnswers(own, order: order)) { record in ownRow(record) }
+            if !isLong { quickAddRow }
             if !others.isEmpty {
                 Text("ツボ（他の人の回答）").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
@@ -913,9 +930,7 @@ private struct GiriThoughtNoteRows: View {
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel(record.isSubmitted ? "提出した回答の印を外す" : "提出した回答にする")
-                if !record.mark.isEmpty {
-                    Text(record.mark).font(.subheadline.weight(.bold)).foregroundStyle(AppSectionAccent.ticket)
-                }
+                markMenu(record)
                 Group {
                     if note.effectivePromptStyle == .fill { GiriFilledPromptText(prompt: note.prompt, answer: record.text) }
                     else { Text(record.text) }
@@ -924,13 +939,96 @@ private struct GiriThoughtNoteRows: View {
                 if record.isSubmitted {
                     Text(isLong ? "採用" : "出した").font(.caption.weight(.semibold)).foregroundStyle(accentActionColor)
                 }
-                Menu { GiriThoughtShareActions(note: note, event: event, record: record) } label: {
+                Menu {
+                    Button("編集", systemImage: "pencil") { editingAnswerText = record.text; editingAnswerID = record.id }
+                    Button("削除", systemImage: "trash", role: .destructive) { saveAnswer(id: record.id, delete: true) }
+                    Divider()
+                    GiriThoughtShareActions(note: note, event: event, record: record)
+                } label: {
                     Image(systemName: "ellipsis").frame(minWidth: 28, minHeight: 28)
-                }.accessibilityLabel("この回答を共有")
+                }.accessibilityLabel("この回答の編集・共有")
             }
             let result = thoughtAnswerResult(record)
             if !result.isEmpty { Text(result).font(.caption.weight(.medium)).foregroundStyle(AppSectionAccent.ticket) }
-        }.padding(.vertical, 2)
+        }
+        .padding(.vertical, 2)
+        .contextMenu {
+            Button("編集", systemImage: "pencil") { editingAnswerText = record.text; editingAnswerID = record.id }
+            Button("削除", systemImage: "trash", role: .destructive) { saveAnswer(id: record.id, delete: true) }
+        }
+    }
+
+    private var editingAnswerShown: Binding<Bool> {
+        Binding(get: { editingAnswerID != nil }, set: { if !$0 { editingAnswerID = nil } })
+    }
+
+    private var answerEditSheet: some View {
+        NavigationStack {
+            GiriAnswerTextEditor(text: $editingAnswerText) {
+                if let id = editingAnswerID { saveAnswer(id: id, text: editingAnswerText) }
+                editingAnswerID = nil
+            } onCancel: { editingAnswerID = nil }
+        }
+    }
+
+    /// 印（◎・〇・△・× や点数）は、押して選ぶ。自分の好きな印で回答案を見比べられる。
+    private func markMenu(_ record: AnswerRecord) -> some View {
+        Menu {
+            ForEach(["◎", "〇", "△", "×"], id: \.self) { mark in
+                Button(mark) { saveAnswer(id: record.id, mark: mark) }
+            }
+            Menu("点数") {
+                ForEach(1...10, id: \.self) { point in Button("\(point)点") { saveAnswer(id: record.id, mark: String(point)) } }
+            }
+            if !record.mark.isEmpty { Button("印を外す", role: .destructive) { saveAnswer(id: record.id, mark: "") } }
+        } label: {
+            Text(record.mark.isEmpty ? "・" : record.mark)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(record.mark.isEmpty ? Color.secondary : AppSectionAccent.ticket)
+                .frame(minWidth: 24, minHeight: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("印を付ける")
+    }
+
+    /// 長考の投稿フォーム：回答案を1つずつ書いて「投稿」で足す（改行は回答の中の改行）。
+    private var postingForm: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("回答案を投稿").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            TextField("回答案を入力してください", text: $newAnswer, axis: .vertical)
+                .lineLimit(2...6)
+                .focused($addingAnswer)
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(.secondarySystemBackground)))
+            HStack {
+                Spacer()
+                Button("投稿", action: postAnswer)
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.borderedProminent)
+                    .tint(accentActionColor)
+                    .disabled(newAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(.vertical, 4)
+        .sheet(isPresented: editingAnswerShown) { answerEditSheet }
+    }
+
+    private func postAnswer() {
+        guard let updated = giriNoteAddingAnswer(note, text: newAnswer) else { return }
+        store.run {
+            try store.saveNote(updated)
+            newAnswer = ""
+            addingAnswer = true
+        }
+    }
+
+    private func saveAnswer(id: String, text: String? = nil, mark: String? = nil, delete: Bool = false) {
+        let updated = giriNoteEditingAnswer(note, id: id, text: text, mark: mark, delete: delete)
+        store.run {
+            try store.saveNote(updated)
+            if delete { playLiveStairDeleteFeedback() }
+        }
     }
 
     private func otherRow(_ record: AnswerRecord) -> some View {
@@ -963,6 +1061,7 @@ private struct GiriThoughtNoteRows: View {
             }
         }
         .padding(.vertical, 2)
+        .sheet(isPresented: editingAnswerShown) { answerEditSheet }
     }
 
     private func addAnswer() {
@@ -1064,8 +1163,12 @@ struct GiriThoughtEditor: View {
     @State private var error: String?
     @State private var discard = false
 
+    /// 0.15：新しく作る時だけ true。登録済みのお題の編集には回答の欄を出さない（回答はお題の画面で足す・直す）。
+    private let isNewNote: Bool
+
     init(note: ThoughtNote? = nil, kind: NoteKind = .answers, eventID: String? = nil, roundID: String? = nil,
          resultStageID: String? = nil, preferredFormat: EventFormat? = nil) {
+        isNewNote = note == nil
         var value = note ?? ThoughtNote()
         if note == nil {
             value.kind = kind
@@ -1097,7 +1200,18 @@ struct GiriThoughtEditor: View {
             relationSection
             promptSection
             if draft.kind == .answers {
-                ownSection
+                // 0.15：長考はお題の登録と回答の登録を分ける。回答案はお題の画面の投稿フォームから足す。
+                // 回答はお題の画面（回答一覧）で足す・直す・印を付ける・出す回答を選ぶ。
+                // 長考以外の新しい記録だけ、まとめて書ける欄を残す。
+                if isNewNote && !isLong {
+                    ownSection
+                } else {
+                    Section {
+                        Label(isNewNote ? "回答案は、お題を保存したあとにお題の画面の「回答案を投稿」から足します。"
+                                        : "回答はお題の画面で足す・直す・印を付けられます。", systemImage: "info.circle")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+                }
                 othersSection
                 if ownAnswers.contains(where: \.isSubmitted) {
                     Section {
@@ -1129,7 +1243,7 @@ struct GiriThoughtEditor: View {
         }
         .appEditorFormStyle().scrollDismissesKeyboard(.interactively)
         .environment(\.defaultMinListRowHeight, 48)
-        .navigationTitle(draft.kind == .prompts ? "お題を作る" : draft.kind == .answers ? (isLong ? "回答を考える" : "お題・回答を記録") : "メモ")
+        .navigationTitle(draft.kind == .prompts ? "お題を作る" : draft.kind == .answers ? (isNewNote ? (isLong ? "お題を登録" : "お題・回答を記録") : "お題を編集") : "メモ")
         .navigationBarTitleDisplayMode(.inline).giriNavigationBarStyle()
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -1588,11 +1702,22 @@ func giriAuthorFromOCR(_ line: String) -> String {
 /// Result entry and Thinking use the same submitted-answer fields. Unsubmitted
 /// drafts and other people's answers stay in the binding unchanged.
 struct GiriAnswerResultFields: View {
+    @EnvironmentObject private var store: GiriStore
     @Binding var records: [AnswerRecord]
+    /// 0.15：結果のページのスクリーンショットから、出した回答の順位・得点・投票人数を読む。
+    @State private var resultPhoto: PhotosPickerItem?
+    @State private var readingResult = false
     var body: some View {
         let submitted = records.filter { $0.isOwn && $0.isSubmitted }
         if submitted.isEmpty {
             Text("提出した回答をお題/回答で選んでください。").font(.subheadline).foregroundStyle(.secondary)
+        } else {
+            PhotosPicker(selection: $resultPhoto, matching: .images, photoLibrary: .shared()) {
+                Label(readingResult ? "読み取り中" : "結果のスクショから読み取る", systemImage: "text.viewfinder")
+            }
+            .disabled(readingResult)
+            .tint(accentActionColor)
+            .onChange(of: resultPhoto) { _, item in readResult(item) }
         }
         ForEach(submitted) { record in
             VStack(alignment: .leading, spacing: 6) {
@@ -1610,6 +1735,29 @@ struct GiriAnswerResultFields: View {
             }.padding(.vertical, 4)
         }
     }
+    /// 回答の文が載っている行の近くの「◯位」「◯点」と、ページの投票人数を、まだ入れていない欄にだけ入れる。
+    private func readResult(_ item: PhotosPickerItem?) {
+        guard let item else { return }
+        readingResult = true
+        Task {
+            defer { readingResult = false; resultPhoto = nil }
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
+                let lines = try await GiriParticipantOCR.recognizeLines(data)
+                let voters = giriVoterCountReading(lines: lines)
+                var found = 0
+                for index in records.indices where records[index].isOwn && records[index].isSubmitted {
+                    let reading = giriAnswerResultReading(lines: lines, answer: records[index].text)
+                    if reading != nil { found += 1 }
+                    if records[index].placement == nil, let value = reading?.placement { records[index].placement = value }
+                    if records[index].points == nil, let value = reading?.points { records[index].points = value }
+                    if records[index].voterCount == nil, let voters { records[index].voterCount = voters }
+                }
+                if found == 0 { store.errorMessage = "結果の画像から、出した回答が見つかりませんでした。回答の文が写っている画面を選んでください。" }
+            } catch { store.errorMessage = error.localizedDescription }
+        }
+    }
+
     private func recordBinding(_ id: String) -> Binding<AnswerRecord> {
         Binding(get: { records.first { $0.id == id } ?? AnswerRecord(id: id) }, set: { value in
             if let index = records.firstIndex(where: { $0.id == id }) { records[index] = value }
@@ -1980,3 +2128,29 @@ struct GiriFilledPromptText: View {
     }
 }
 
+/// 0.15：回答案の文を直す（改行も入れられる）。
+struct GiriAnswerTextEditor: View {
+    @Binding var text: String
+    let onSave: () -> Void
+    let onCancel: () -> Void
+    var body: some View {
+        Form {
+            Section {
+                AppCardSectionTitle(title: "回答", systemImage: "text.bubble", accentColor: AppSectionAccent.memo)
+                    .listRowSeparator(.hidden)
+                TextField("回答", text: $text, axis: .vertical).lineLimit(3...10)
+            }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+        }
+        .appEditorFormStyle()
+        .navigationTitle("回答を編集").navigationBarTitleDisplayMode(.inline)
+        .giriNavigationBarStyle()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("キャンセル", action: onCancel) }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("保存", action: onSave).fontWeight(.bold)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .presentationDetents([.medium])
+    }
+}

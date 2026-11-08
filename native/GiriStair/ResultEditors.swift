@@ -196,6 +196,9 @@ struct GiriResultEntry: View {
     @State private var editingStageID: String?
     /// 最終結果を段階の記録から自動で入れた時（ユーザーが選び直したら自動では変えない）。
     @State private var autoFinal = false
+    /// 0.15：イベントページの大会の説明から段階の骨組みを読む。
+    @State private var skeletonPhoto: PhotosPickerItem?
+    @State private var readingSkeleton = false
 
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
@@ -289,6 +292,43 @@ struct GiriResultEntry: View {
         stage.laps = giriNormalizedLaps(stage, lapCount: 1)
         result.stages.append(stage)
         existing.insert(stage.id)
+    }
+
+    /// 0.15：段階がまだない時だけ、大会の仕組みの画像から骨組みを作る。
+    private func skeletonReadRow(_ event: GiriEvent) -> some View {
+        PhotosPicker(selection: $skeletonPhoto, matching: .images, photoLibrary: .shared()) {
+            VStack(alignment: .leading, spacing: 3) {
+                Label(readingSkeleton ? "読み取り中" : "大会の仕組みを画像から読み取る", systemImage: "text.viewfinder")
+                Text("イベントページの「予選：5人1組・お題3問」などから、段階の骨組みだけを作ります。").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(readingSkeleton)
+        .tint(accentActionColor)
+        .onChange(of: skeletonPhoto) { _, item in readSkeleton(item, event: event) }
+    }
+
+    private func readSkeleton(_ item: PhotosPickerItem?, event: GiriEvent) {
+        guard let item else { return }
+        readingSkeleton = true
+        Task {
+            defer { readingSkeleton = false; skeletonPhoto = nil }
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
+                let stages = giriTournamentSkeleton(lines: try await GiriParticipantOCR.recognizeLines(data))
+                guard !stages.isEmpty else {
+                    store.errorMessage = "大会の段階（予選・決勝など）を読み取れませんでした。大会の仕組みが書いてある画面を選んでください。"
+                    return
+                }
+                for var stage in stages {
+                    if stage.judging.isEmpty { stage.judging = event.judging }
+                    if stage.lineup.isEmpty && event.knockout { stage.lineup = "タイマン" }
+                    if !event.eventFormat.hasOnlineRounds { stage.laps = giriNormalizedLaps(stage, lapCount: 1) }
+                    result.stages.append(stage)
+                    existing.insert(stage.id)
+                }
+                playLiveStairSaveFeedback()
+            } catch { store.errorMessage = error.localizedDescription }
+        }
     }
 
     /// 段階の記録から自動で入れる：トーナメント表で勝った時の次の回戦、決勝・敗退からの最終結果。
@@ -387,6 +427,7 @@ struct GiriResultEntry: View {
                 Button { editingStageID = round.id } label: { stageRow(round, nested: true) }
                     .buttonStyle(.plain)
             }
+            if wide.isEmpty && rounds.isEmpty { skeletonReadRow(event) }
             if wide.isEmpty && rounds.isEmpty, let source = giriStageTemplateSource(for: event, in: store.events) {
                 Button { applyTemplate(from: source) } label: {
                     VStack(alignment: .leading, spacing: 3) {
