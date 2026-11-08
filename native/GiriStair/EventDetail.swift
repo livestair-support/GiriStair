@@ -14,6 +14,8 @@ struct GiriEventDetail: View {
     @State private var nextDraft: GiriRoundDraftAction?
     /// 0.14：この会の中に足した大会（その編集を開く）。
     @State private var newTournamentID: String?
+    /// 0.17：畳む／開くを切り替えた段階（ネット大喜利の回）。
+    @State private var roundToggles: Set<String> = []
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
 
@@ -33,7 +35,8 @@ struct GiriEventDetail: View {
                     teams(event)
                     thoughtsLink(event)
                     if event.eventFormat.hasOnlineRounds {
-                        ForEach(event.effectiveRounds) { round in
+                        // 0.17：新しい段階を上に。各段階は畳める（いちばん新しい段階だけ開いておく）。
+                        ForEach(Array(event.effectiveRounds.reversed())) { round in
                             roundSection(event, round: round)
                         }
                         if event.meetingType == .tournament {
@@ -472,8 +475,37 @@ struct GiriEventDetail: View {
     }
 
     private func roundSection(_ event: GiriEvent, round: EventRound) -> some View {
-        Section {
-            GiriEventCardSectionTitle(title: roundTitle(round), systemImage: "calendar", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
+        let isNewest = event.effectiveRounds.last?.id == round.id
+        return Section {
+            Button {
+                withAnimation { toggleRound(round.id, newest: isNewest) }
+            } label: {
+                HStack {
+                    GiriEventCardSectionTitle(title: roundTitle(round), systemImage: "calendar", accentColor: AppSectionAccent.artist)
+                    Spacer(minLength: 8)
+                    if !roundExpanded(round.id, newest: isNewest), !round.block.isEmpty {
+                        Text(round.block).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Image(systemName: roundExpanded(round.id, newest: isNewest) ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .listRowSeparator(.hidden)
+            if roundExpanded(round.id, newest: isNewest) { roundRows(event, round: round) }
+        }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
+    }
+
+    /// 畳んだ／開いた段階。何も触っていない時は、いちばん新しい段階だけ開く。
+    private func roundExpanded(_ id: String, newest: Bool) -> Bool {
+        roundToggles.contains(id) ? !newest : newest
+    }
+
+    private func toggleRound(_ id: String, newest: Bool) {
+        if roundToggles.contains(id) { roundToggles.remove(id) } else { roundToggles.insert(id) }
+    }
+
+    @ViewBuilder private func roundRows(_ event: GiriEvent, round: EventRound) -> some View {
             if !round.block.isEmpty { detailValue("ブロック", round.block) }
             scheduleValue("投稿開始", round.submissionStart)
             scheduleValue("投稿締切", round.submissionEnd)
@@ -494,7 +526,6 @@ struct GiriEventDetail: View {
                 }
                 .buttonStyle(.plain)
             }
-        }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
     }
 
     private func scheduleValue(_ title: String, _ date: Date?) -> some View {

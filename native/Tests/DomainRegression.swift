@@ -1502,6 +1502,11 @@ struct DomainRegression {
             try check(bulk[0].createdAt < bulk[1].createdAt && bulk[1].createdAt < bulk[2].createdAt, "bulk prompts keep their order")
         }
 
+        // 0.17 answers wrap by characters.
+        do {
+            try check(giriCharacterWrapped("あいう") == "あ\u{200B}い\u{200B}う" && giriCharacterWrapped("あ\nい") == "あ\nい", "answers can wrap between any characters and keep line breaks")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }
