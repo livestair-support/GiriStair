@@ -1480,6 +1480,28 @@ struct DomainRegression {
             try check(skeleton.last?.lineup == "タイマン" && skeleton.last?.promptCount == 1 && skeleton.allSatisfy { $0.outcome == .unrecorded }, "the final is a one-on-one with no result yet")
         }
 
+        // 0.16 prompts are registered alone; participation, own/others modes and bulk prompts.
+        do {
+            var legacyPrompt = ThoughtNote(title: "以前のお題", kind: .answers)
+            try check(legacyPrompt.isParticipatingPrompt, "older prompts count as participating")
+            let legacyJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacyPrompt)) as? [String: Any] ?? [:]
+            try check(legacyJSON["participates"] == nil, "prompts without the flag keep the older JSON shape")
+            legacyPrompt.participates = false
+            try check(try JSONDecoder().decode(ThoughtNote.self, from: JSONEncoder().encode(legacyPrompt)).participates == false, "the participation flag roundtrips")
+            var joinedEvent = GiriEvent(title: "参加した会"); joinedEvent.eventFormat = .live
+            var watchedEvent = joinedEvent; watchedEvent.isParticipating = false
+            try check(giriDefaultPromptParticipation(event: joinedEvent) && !giriDefaultPromptParticipation(event: watchedEvent) && !giriDefaultPromptParticipation(event: nil), "new prompts join only when the user joined the event")
+            var joinedPrompt = ThoughtNote(title: "参加したお題", kind: .answers); joinedPrompt.participates = true
+            try check(giriParticipationOrdered([legacyPrompt, joinedPrompt]).map(\.title) == ["参加したお題", "以前のお題"], "prompts not joined go to the bottom")
+            let withOther = giriNoteAddingOtherAnswer(joinedPrompt, answerer: "はるか", text: "ツボの回答")
+            try check(withOther?.otherAnswerRecords.first?.answerer == "はるか" && withOther?.ownAnswerRecords.isEmpty == true, "others' answers keep their answerer")
+            try check(giriNoteAddingOtherAnswer(joinedPrompt, answerer: " ", text: "回答") == nil, "others' answers need an answerer")
+            let bulk = giriBulkPromptNotes(text: "1. 最初のお題\n・〇〇な先生\n\n3）三つ目", eventID: joinedEvent.id, format: .live, participates: true)
+            try check(bulk.map(\.prompt) == ["最初のお題", "〇〇な先生", "三つ目"], "bulk prompts drop numbers and bullets")
+            try check(bulk[1].effectivePromptStyle == .fill && bulk[0].effectivePromptStyle == .plain && bulk.allSatisfy { $0.eventId == joinedEvent.id && $0.participates == true }, "bulk prompts detect fill-in prompts and keep the event")
+            try check(bulk[0].createdAt < bulk[1].createdAt && bulk[1].createdAt < bulk[2].createdAt, "bulk prompts keep their order")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }
