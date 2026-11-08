@@ -939,17 +939,35 @@ private struct GiriThoughtNoteRows: View {
                 if record.isSubmitted {
                     Text(isLong ? "採用" : "出した").font(.caption.weight(.semibold)).foregroundStyle(accentActionColor)
                 }
-                Menu { GiriThoughtShareActions(note: note, event: event, record: record) } label: {
+                Menu {
+                    Button("編集", systemImage: "pencil") { editingAnswerText = record.text; editingAnswerID = record.id }
+                    Button("削除", systemImage: "trash", role: .destructive) { saveAnswer(id: record.id, delete: true) }
+                    Divider()
+                    GiriThoughtShareActions(note: note, event: event, record: record)
+                } label: {
                     Image(systemName: "ellipsis").frame(minWidth: 28, minHeight: 28)
-                }.accessibilityLabel("この回答を共有")
+                }.accessibilityLabel("この回答の編集・共有")
             }
             let result = thoughtAnswerResult(record)
             if !result.isEmpty { Text(result).font(.caption.weight(.medium)).foregroundStyle(AppSectionAccent.ticket) }
         }
         .padding(.vertical, 2)
         .contextMenu {
-            Button("文を直す", systemImage: "pencil") { editingAnswerText = record.text; editingAnswerID = record.id }
+            Button("編集", systemImage: "pencil") { editingAnswerText = record.text; editingAnswerID = record.id }
             Button("削除", systemImage: "trash", role: .destructive) { saveAnswer(id: record.id, delete: true) }
+        }
+    }
+
+    private var editingAnswerShown: Binding<Bool> {
+        Binding(get: { editingAnswerID != nil }, set: { if !$0 { editingAnswerID = nil } })
+    }
+
+    private var answerEditSheet: some View {
+        NavigationStack {
+            GiriAnswerTextEditor(text: $editingAnswerText) {
+                if let id = editingAnswerID { saveAnswer(id: id, text: editingAnswerText) }
+                editingAnswerID = nil
+            } onCancel: { editingAnswerID = nil }
         }
     }
 
@@ -993,11 +1011,7 @@ private struct GiriThoughtNoteRows: View {
             }
         }
         .padding(.vertical, 4)
-        .alert("回答を直す", isPresented: Binding(get: { editingAnswerID != nil }, set: { if !$0 { editingAnswerID = nil } })) {
-            TextField("回答", text: $editingAnswerText)
-            Button("保存") { if let id = editingAnswerID { saveAnswer(id: id, text: editingAnswerText) }; editingAnswerID = nil }
-            Button("キャンセル", role: .cancel) { editingAnswerID = nil }
-        }
+        .sheet(isPresented: editingAnswerShown) { answerEditSheet }
     }
 
     private func postAnswer() {
@@ -1047,11 +1061,7 @@ private struct GiriThoughtNoteRows: View {
             }
         }
         .padding(.vertical, 2)
-        .alert("回答を直す", isPresented: Binding(get: { editingAnswerID != nil }, set: { if !$0 { editingAnswerID = nil } })) {
-            TextField("回答", text: $editingAnswerText)
-            Button("保存") { if let id = editingAnswerID { saveAnswer(id: id, text: editingAnswerText) }; editingAnswerID = nil }
-            Button("キャンセル", role: .cancel) { editingAnswerID = nil }
-        }
+        .sheet(isPresented: editingAnswerShown) { answerEditSheet }
     }
 
     private func addAnswer() {
@@ -1153,8 +1163,12 @@ struct GiriThoughtEditor: View {
     @State private var error: String?
     @State private var discard = false
 
+    /// 0.15：新しく作る時だけ true。登録済みのお題の編集には回答の欄を出さない（回答はお題の画面で足す・直す）。
+    private let isNewNote: Bool
+
     init(note: ThoughtNote? = nil, kind: NoteKind = .answers, eventID: String? = nil, roundID: String? = nil,
          resultStageID: String? = nil, preferredFormat: EventFormat? = nil) {
+        isNewNote = note == nil
         var value = note ?? ThoughtNote()
         if note == nil {
             value.kind = kind
@@ -1187,16 +1201,19 @@ struct GiriThoughtEditor: View {
             promptSection
             if draft.kind == .answers {
                 // 0.15：長考はお題の登録と回答の登録を分ける。回答案はお題の画面の投稿フォームから足す。
-                if isLong {
+                // 回答はお題の画面（回答一覧）で足す・直す・印を付ける・出す回答を選ぶ。
+                // 長考以外の新しい記録だけ、まとめて書ける欄を残す。
+                if isNewNote && !isLong {
+                    ownSection
+                } else {
                     Section {
-                        Label("回答案は、お題を保存したあとにお題の画面の「回答案を投稿」から足します。", systemImage: "info.circle")
+                        Label(isNewNote ? "回答案は、お題を保存したあとにお題の画面の「回答案を投稿」から足します。"
+                                        : "回答はお題の画面で足す・直す・印を付けられます。", systemImage: "info.circle")
                             .font(.subheadline).foregroundStyle(.secondary)
                     }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
-                } else {
-                    ownSection
                 }
                 othersSection
-                if !isLong && ownAnswers.contains(where: \.isSubmitted) {
+                if ownAnswers.contains(where: \.isSubmitted) {
                     Section {
                         AppCardSectionTitle(title: isLong ? "採用した回答の結果" : "出した回答の結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket)
                             .listRowSeparator(.hidden)
@@ -1226,7 +1243,7 @@ struct GiriThoughtEditor: View {
         }
         .appEditorFormStyle().scrollDismissesKeyboard(.interactively)
         .environment(\.defaultMinListRowHeight, 48)
-        .navigationTitle(draft.kind == .prompts ? "お題を作る" : draft.kind == .answers ? (isLong ? "お題を登録" : "お題・回答を記録") : "メモ")
+        .navigationTitle(draft.kind == .prompts ? "お題を作る" : draft.kind == .answers ? (isNewNote ? (isLong ? "お題を登録" : "お題・回答を記録") : "お題を編集") : "メモ")
         .navigationBarTitleDisplayMode(.inline).giriNavigationBarStyle()
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -2111,3 +2128,29 @@ struct GiriFilledPromptText: View {
     }
 }
 
+/// 0.15：回答案の文を直す（改行も入れられる）。
+struct GiriAnswerTextEditor: View {
+    @Binding var text: String
+    let onSave: () -> Void
+    let onCancel: () -> Void
+    var body: some View {
+        Form {
+            Section {
+                AppCardSectionTitle(title: "回答", systemImage: "text.bubble", accentColor: AppSectionAccent.memo)
+                    .listRowSeparator(.hidden)
+                TextField("回答", text: $text, axis: .vertical).lineLimit(3...10)
+            }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+        }
+        .appEditorFormStyle()
+        .navigationTitle("回答を編集").navigationBarTitleDisplayMode(.inline)
+        .giriNavigationBarStyle()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("キャンセル", action: onCancel) }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("保存", action: onSave).fontWeight(.bold)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .presentationDetents([.medium])
+    }
+}
