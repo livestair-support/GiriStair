@@ -1577,6 +1577,21 @@ struct DomainRegression {
             try check(reopenedTrash.document.deletedEvents.isEmpty, "recently deleted meetings can be emptied")
         }
 
+        // 0.20 answers are edited in the posting field, including the answerer of others' answers.
+        do {
+            let prompt = ThoughtNote(title: "編集するお題", kind: .answers)
+            guard let withOwn = giriNoteAddingAnswer(prompt, text: "最初の回答"),
+                  let withOther = giriNoteAddingOtherAnswer(withOwn, answerer: "はるか", text: "ツボ") else { throw NSError(domain: "answers", code: 1) }
+            let ownID = withOther.ownAnswerRecords[0].id
+            let otherID = withOther.otherAnswerRecords[0].id
+            let editedOwn = giriNoteEditingAnswer(withOther, id: ownID, text: "直した回答", answerer: "だれか")
+            try check(editedOwn.ownAnswerRecords.map(\.text) == ["直した回答"] && editedOwn.ownAnswerRecords[0].isOwn, "editing one's own answer never gives it an answerer")
+            let editedOther = giriNoteEditingAnswer(editedOwn, id: otherID, text: "直したツボ", answerer: "あおい")
+            try check(editedOther.otherAnswerRecords.first?.answerer == "あおい" && editedOther.otherAnswerRecords.first?.text == "直したツボ", "others' answers can change text and answerer")
+            let blank = giriNoteEditingAnswer(editedOther, id: otherID, text: " ", answerer: " ")
+            try check(blank.otherAnswerRecords.first?.answerer == "あおい" && blank.otherAnswerRecords.first?.text == "直したツボ", "blank edits keep the answer and answerer")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }
