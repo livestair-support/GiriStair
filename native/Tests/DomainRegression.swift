@@ -1113,7 +1113,7 @@ struct DomainRegression {
             var reserve = host; reserve.organizer = ""; reserve.hasReserves = true; reserve.reserves = ["わたし", " "]
             try check(reserve.derivedSelfRole(isSelf: isMe) == .reserve && reserve.reserveNames == ["わたし"], "the reserve list decides the reserve role")
             var casualReserve = reserve; casualReserve.meetingType = .casual
-            try check(casualReserve.derivedSelfRole(isSelf: isMe) == .player && casualReserve.reserveNames.isEmpty, "casual meetings have no reserves")
+            try check(casualReserve.derivedSelfRole(isSelf: isMe) == .reserve && casualReserve.reserveNames == ["わたし"], "casual meetings can have reserves too")
             var watching = live; watching.selfRole = .spectator
             try check(watching.derivedSelfRole(isSelf: isMe) == .spectator, "spectating is chosen in the participation status")
             var online = live; online.eventFormat = .onlineLong; online.selfRole = .spectator
@@ -1505,6 +1505,76 @@ struct DomainRegression {
         // 0.17 answers wrap by characters.
         do {
             try check(giriCharacterWrapped("あいう") == "あ\u{200B}い\u{200B}う" && giriCharacterWrapped("あ\nい") == "あ\nい", "answers can wrap between any characters and keep line breaks")
+        }
+
+        // 0.19 組手, 募集期間 notifications and recently deleted meetings.
+        do {
+            var kumite = GiriEvent(title: "組手の会"); kumite.eventFormat = .live; kumite.meetingType = .casual
+            let plainJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(kumite)) as? [String: Any] ?? [:]
+            try check(plainJSON["isKumite"] == nil && plainJSON["kumiteMains"] == nil && plainJSON["kumiteBouts"] == nil, "events without 組手 keep the older JSON shape")
+            kumite.isKumite = true; kumite.isProject = true
+            kumite.kumiteMains = ["主役A", "主役B"]
+            kumite.participants = ["相手1", "相手2", "わたし"]
+            kumite.kumiteBouts = [
+                KumiteBout(mains: [], opponents: ["相手1", "相手2"], outcome: "win"),
+                KumiteBout(mains: ["主役A"], opponents: ["わたし"], outcome: "lose"),
+                KumiteBout(mains: [], opponents: ["相手1"], outcome: "draw"),
+                KumiteBout(mains: [], opponents: ["相手2"], outcome: "")
+            ]
+            try check(kumite.isKumiteEvent && kumite.meetingFilterKey == "kumite" && kumite.meetingTitle == "組手", "組手 is its own meeting kind for filters and titles")
+            let record = giriKumiteRecord(kumite.kumiteBouts)
+            try check(record.wins == 1 && record.losses == 1 && record.draws == 1 && record.text == "1勝1敗1分", "the day total counts wins, losses and draws from the main's side")
+            try check(kumite.kumiteMains(of: kumite.kumiteBouts[0]) == ["主役A", "主役B"] && kumite.kumiteMains(of: kumite.kumiteBouts[1]) == ["主役A"], "a bout without its own mains uses every main (tag 組手)")
+            try check(kumite.kumiteIncludesSelf(kumite.kumiteBouts[1]) { $0 == "わたし" } && !kumite.kumiteIncludesSelf(kumite.kumiteBouts[0]) { $0 == "わたし" }, "bouts the user fought are found")
+            let kumiteJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(kumite)) as? [String: Any] ?? [:]
+            try check(kumiteJSON["meetingType"] as? String == "casual" && kumiteJSON["isKumite"] as? Bool == true, "older readers still see a casual meeting")
+            let roundtrip = try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(kumite))
+            try check(roundtrip.kumiteBouts == kumite.kumiteBouts && roundtrip.kumiteMains == kumite.kumiteMains, "組手 bouts roundtrip")
+            var onlineKumite = kumite; onlineKumite.eventFormat = .onlineLong
+            try check(!onlineKumite.isKumiteEvent, "組手 is only for the formats that allow 企画")
+
+            var casualReserve = GiriEvent(title: "通常会のリザーバー"); casualReserve.eventFormat = .live; casualReserve.meetingType = .casual
+            casualReserve.hasReserves = true; casualReserve.reserves = ["わたし"]
+            try check(casualReserve.reserveNames == ["わたし"], "reserves can be set outside tournaments")
+
+            let oldPreferences = try JSONDecoder().decode(AppPreferences.self, from: Data("{}".utf8))
+            try check(oldPreferences.entryNotifyBefore && oldPreferences.entryLeadMinutes == nil && !oldPreferences.entryNotifyAtStart, "older preferences decode the 募集期間 notification defaults")
+            let entryNow = GiriDates.parse("2026-11-05T00:00:00Z") ?? Date()
+            var recruiting = GiriEvent(title: "募集のある会"); recruiting.eventFormat = .live; recruiting.isInterested = true
+            recruiting.entryStart = entryNow.addingTimeInterval(86400)
+            var both = AppPreferences(notificationsEnabled: true); both.entryLeadMinutes = 120; both.entryNotifyAtStart = true
+            let bothReminders = planNativeReminders(events: [recruiting], preferences: both, now: entryNow)
+            try check(bothReminders.contains { $0.id.hasSuffix(":entry-start") && $0.date == entryNow.addingTimeInterval(86400 - 7200) }, "the before-start notice uses its own lead time")
+            try check(bothReminders.contains { $0.id.hasSuffix(":entry-open") && $0.date == entryNow.addingTimeInterval(86400) }, "the at-start notice is separate")
+            var startOnly = both; startOnly.entryNotifyBefore = false
+            let startReminders = planNativeReminders(events: [recruiting], preferences: startOnly, now: entryNow)
+            try check(!startReminders.contains { $0.id.hasSuffix(":entry-start") } && startReminders.contains { $0.id.hasSuffix(":entry-open") }, "turning off the before-start notice keeps only the at-start one")
+            try check(giriLeadText(120) == "2時間" && giriLeadText(1440) == "1日" && giriLeadText(45) == "45分", "lead times read as days, hours or minutes")
+
+            let trashDirectory = temp.appendingPathComponent("trash", isDirectory: true)
+            let trashStore = GiriStore(directory: trashDirectory)
+            var doomed = GiriEvent(title: "消す会"); doomed.eventFormat = .live
+            try trashStore.saveEvent(doomed)
+            var linkedNote = ThoughtNote(title: "消す会のお題", kind: .answers); linkedNote.eventId = doomed.id
+            try trashStore.saveNote(linkedNote)
+            let emptyTrashJSON = try JSONSerialization.jsonObject(with: trashStore.exportBackup()) as? [String: Any] ?? [:]
+            try check(emptyTrashJSON["deletedEvents"] == nil, "documents without deleted meetings keep the older JSON shape")
+            let deletedAt = entryNow
+            try trashStore.deleteEvent(doomed.id, keepsInTrash: true, now: deletedAt)
+            try check(trashStore.events.isEmpty && trashStore.document.deletedEvents.count == 1 && trashStore.notes[0].eventId == nil, "deleting keeps the meeting in recently deleted and unlinks its prompts")
+            try check(giriDeletedEventRemainingDays(trashStore.document.deletedEvents[0], now: deletedAt.addingTimeInterval(86400)) == 29, "recently deleted meetings stay 30 days")
+            try check(giriDeletedEventRemainingDays(trashStore.document.deletedEvents[0], now: deletedAt.addingTimeInterval(31 * 86400)) == 0, "expired meetings are no longer listed")
+            let reopenedTrash = GiriStore(directory: trashDirectory)
+            try check(reopenedTrash.document.deletedEvents.first?.event.title == "消す会", "recently deleted meetings survive restart")
+            try reopenedTrash.restoreDeletedEvent(doomed.id)
+            try check(reopenedTrash.events.map(\.id) == [doomed.id] && reopenedTrash.notes[0].eventId == doomed.id && reopenedTrash.document.deletedEvents.isEmpty, "restoring brings back the meeting and relinks its prompts")
+            try reopenedTrash.deleteEvent(doomed.id, keepsInTrash: true, now: deletedAt)
+            var other = GiriEvent(title: "あとで消す会"); other.eventFormat = .live
+            try reopenedTrash.saveEvent(other)
+            try reopenedTrash.deleteEvent(other.id, keepsInTrash: true, now: deletedAt.addingTimeInterval(31 * 86400))
+            try check(reopenedTrash.document.deletedEvents.map(\.event.title) == ["あとで消す会"], "a later delete purges meetings older than 30 days")
+            try reopenedTrash.purgeDeletedEvents()
+            try check(reopenedTrash.document.deletedEvents.isEmpty, "recently deleted meetings can be emptied")
         }
 
         print("Native domain regressions passed: \(passed)")

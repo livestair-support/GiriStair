@@ -251,8 +251,15 @@ final class GiriStore: ObservableObject {
             }
         }
     }
-    func deleteEvent(_ id: String) throws {
+    /// keepsInTrash：画面から消した時は「最近削除した会」に30日残して戻せるようにする（自動で作った回は残さない）。
+    func deleteEvent(_ id: String, keepsInTrash: Bool = false, now: Date = Date()) throws {
         try mutate { next in
+            if keepsInTrash, let removed = next.events.first(where: { $0.id == id }) {
+                let links = next.notes.filter { $0.eventId == id }.map { GiriDeletedNoteLink(noteID: $0.id, roundID: $0.roundId) }
+                next.deletedEvents.removeAll { $0.id == id }
+                next.deletedEvents.insert(GiriDeletedEvent(event: removed, deletedAt: now, noteLinks: links), at: 0)
+            }
+            next.deletedEvents.removeAll { now.timeIntervalSince($0.deletedAt) > giriDeletedEventRetention }
             next.events.removeAll { $0.id == id }
             // 会の中の大会は、元の会を消しても大会として残す。
             for index in next.events.indices where next.events[index].parentEventId == id { next.events[index].parentEventId = nil }
@@ -267,6 +274,30 @@ final class GiriStore: ObservableObject {
                 }
             }
             for index in next.notes.indices where next.notes[index].eventId == id { next.notes[index].eventId = nil; next.notes[index].roundId = nil }
+        }
+    }
+    /// 0.19：最近削除した会（新しい順）。
+    /// 30日を過ぎた分は、次に削除した時に記録から消す（それまでは表示しない）。
+    var deletedEvents: [GiriDeletedEvent] { document.deletedEvents.filter { giriDeletedEventRemainingDays($0) > 0 } }
+    /// 最近削除した会を戻す（お題・回答も付け直す）。同じIDの会がもうあれば戻さない。
+    func restoreDeletedEvent(_ id: String) throws {
+        guard let entry = document.deletedEvents.first(where: { $0.id == id }) else { return }
+        guard !events.contains(where: { $0.id == id }) else { throw GiriDataError.invalid("同じ会がすでにあります。") }
+        try mutate { next in
+            next.events.append(entry.event)
+            for link in entry.noteLinks {
+                if let index = next.notes.firstIndex(where: { $0.id == link.noteID && $0.eventId == nil }) {
+                    next.notes[index].eventId = entry.event.id
+                    next.notes[index].roundId = link.roundID
+                }
+            }
+            next.deletedEvents.removeAll { $0.id == id }
+        }
+    }
+    /// 最近削除した会から完全に消す（nil は全部）。
+    func purgeDeletedEvents(_ id: String? = nil) throws {
+        try mutate { next in
+            if let id { next.deletedEvents.removeAll { $0.id == id } } else { next.deletedEvents.removeAll() }
         }
     }
     private static func normalizedEvent(_ candidate: GiriEvent) -> GiriEvent {
@@ -935,4 +966,13 @@ final class GiriStore: ObservableObject {
     private static func upsert<T: Identifiable>(_ value: T, into values: inout [T]) where T.ID: Equatable {
         if let index = values.firstIndex(where: { $0.id == value.id }) { values[index] = value } else { values.append(value) }
     }
+}
+
+/// 0.19：最近削除した会を残す期間（LiveStair と同じ30日）。
+let giriDeletedEventRetention: TimeInterval = 30 * 86400
+
+/// 完全に削除するまでの残り日数（切り上げ。0 は期限切れ）。
+func giriDeletedEventRemainingDays(_ entry: GiriDeletedEvent, now: Date = Date()) -> Int {
+    let remaining = giriDeletedEventRetention - now.timeIntervalSince(entry.deletedAt)
+    return remaining <= 0 ? 0 : Int((remaining / 86400).rounded(.up))
 }

@@ -18,13 +18,16 @@ struct GiriEventDetail: View {
     @State private var roundToggles: Set<String> = []
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
+    @State private var addingToCalendar = false
 
     var body: some View {
         Group {
             if let event {
                 Form {
                     basic(event)
-                    if event.eventFormat == .live { innerTournaments(event) }
+                    if event.eventFormat == .live && (event.parentEventId != nil || store.events.contains { $0.parentEventId == event.id }) {
+                        innerTournaments(event)
+                    }
                     if event.meetingType == .tournament && event.tournamentFormat != .individual {
                         // チーム戦はチームとして表示し、チームに分けていない参加者（即席チーム）だけを出す。
                         if !event.unassignedParticipants.isEmpty { participants(event.unassignedParticipants, title: "チーム未定の参加者", numbered: false) }
@@ -33,6 +36,7 @@ struct GiriEventDetail: View {
                         participants(event.participants, title: bracket ? "トーナメント表" : "参加者", numbered: bracket)
                     }
                     teams(event)
+                    if event.isKumiteEvent { kumiteSection(event) }
                     thoughtsLink(event)
                     if event.eventFormat.hasOnlineRounds {
                         // 0.17：新しい段階を上に。各段階は畳める（いちばん新しい段階だけ開いておく）。
@@ -73,6 +77,10 @@ struct GiriEventDetail: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Menu {
                         ShareLink(item: shareText(event)) { Label("共有", systemImage: "square.and.arrow.up") }
+                        // 0.19：LiveStair と同じく、1件ずつ iPhone のカレンダーに追加できる。
+                        if event.eventFormat.hasLiveTiming && (event.startsAt ?? event.eventDate) != nil {
+                            Button { addingToCalendar = true } label: { Label("カレンダーに追加", systemImage: "calendar.badge.plus") }
+                        }
                     } label: {
                         Image(systemName: "ellipsis.circle").foregroundStyle(accentActionColor).frame(width: 32, height: 32)
                     }
@@ -86,9 +94,9 @@ struct GiriEventDetail: View {
             }
         }
         .giriDeleteAlert("記録を削除しますか？", isPresented: $deleteQuestion,
-                         message: "「\(event?.title ?? "")」を削除します。お題と回答のメモは残ります。") {
+                         message: "「\(event?.title ?? "")」を削除します。設定の「最近削除した会」に30日間残ります。") {
             do {
-                try store.deleteEvent(eventID)
+                try store.deleteEvent(eventID, keepsInTrash: true)
                 playLiveStairDeleteFeedback()
                 dismiss()
             } catch { store.errorMessage = error.localizedDescription }
@@ -102,12 +110,28 @@ struct GiriEventDetail: View {
             }
         } message: { Text(resultPromptMessage) }
         .navigationDestination(isPresented: $showCycleEditor) { GiriCycleResultEditor(eventID: eventID) }
+        .sheet(isPresented: $addingToCalendar) {
+            if let event { GiriCalendarEventEditor(event: event) { addingToCalendar = false }.ignoresSafeArea() }
+        }
         .sheet(item: $nextDraft) { action in
             NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
         }
         .navigationDestination(item: $newTournamentID) { id in
             if let child = store.events.first(where: { $0.id == id }) { GiriEventEditor(event: child) }
         }
+    }
+
+    /// 0.19：組手の主役と通算の成績。対戦ごとの記録は「組手の結果」で入れる。
+    private func kumiteSection(_ event: GiriEvent) -> some View {
+        Section {
+            GiriEventCardSectionTitle(title: "組手", systemImage: "star", accentColor: AppSectionAccent.favorite).listRowSeparator(.hidden)
+            detailValue("主役", event.kumiteMains.isEmpty ? "未設定" : event.kumiteMains.joined(separator: "・"))
+            if !event.kumiteBouts.isEmpty { detailValue("通算", giriKumiteRecord(event.kumiteBouts).text + "（\(event.kumiteBouts.count)戦）") }
+            NavigationLink { GiriKumiteResultEditor(eventID: event.id) } label: {
+                Label(event.kumiteBouts.isEmpty ? "組手の結果を記録" : "組手の結果を見る・直す", systemImage: "square.and.pencil")
+            }
+            .tint(accentActionColor)
+        }.appEventDetailCardStyle(accentColor: AppSectionAccent.favorite)
     }
 
     /// 0.14：同じ日の会の中の大会。元の会と、この会の中の大会を行き来でき、ここから大会を足せる。
@@ -135,14 +159,7 @@ struct GiriEventDetail: View {
                     }
                 }
             }
-            Button {
-                store.run {
-                    let child = try store.addTournament(inside: event.id)
-                    playLiveStairSaveFeedback()
-                    newTournamentID = child.id
-                }
-            } label: { Label("この会の中に大会を追加", systemImage: "plus.circle") }
-            .tint(accentActionColor)
+            // 0.19：大会を足すのは、戦績の結果の入力（この会の中の大会）から。
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
     }
 
@@ -247,9 +264,9 @@ struct GiriEventDetail: View {
                     detailValue("参加費", event.entryFee.map(giriYenText) ?? "未入力")
                 }
             }
-            // 応募の開始・締切（入れた時だけ）。
-            if let start = event.entryStart { detailValue("応募開始", GiriDateText.dateTime(start)) }
-            if let end = event.entryEnd { detailValue("応募締切", GiriDateText.dateTime(end)) }
+            // 募集期間の開始・締切（入れた時だけ）。
+            if let start = event.entryStart { detailValue("募集開始", GiriDateText.dateTime(start)) }
+            if let end = event.entryEnd { detailValue("募集締切", GiriDateText.dateTime(end)) }
             // イベントページ・サイトのURL（どの形式でも）。
             if !event.siteUrl.isEmpty, let url = URL(string: event.siteUrl), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
                 Link(destination: url) { Label(event.siteUrl, systemImage: "globe").lineLimit(2) }

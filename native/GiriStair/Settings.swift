@@ -7,11 +7,6 @@ struct GiriSettingsView: View {
     // LiveStair SettingsView と同じく、折りたたんだセクションは次に開いた時も保つ。
     @AppStorage("giriSettingsCollapsedSections") private var collapsedRaw = "data,notifications"
     private var collapsed: Set<String> { Set(collapsedRaw.split(separator: ",").map(String.init)) }
-    @State private var importing = false
-    @State private var restoreData: Data?
-    @State private var confirmRestore = false
-    @State private var shareURL: URL?
-    @State private var sharing = false
     @State private var notificationBusy = false
 
     var body: some View {
@@ -49,12 +44,8 @@ struct GiriSettingsView: View {
                 defaultSettingsGroupTitle("ネット大喜利の日程", systemImage: "calendar")
                 Stepper("投稿期間　\(store.preferences.submissionDays)日", value: preference(\.submissionDays), in: 1...365)
                 Stepper("投票期間　\(store.preferences.votingDays)日", value: preference(\.votingDays), in: 1...365)
-                Picker("投稿開始の日", selection: preference(\.submissionStartDayOffset)) {
-                    ForEach(Array(Set(Array(-7...1) + [store.preferences.submissionStartDayOffset])).sorted(), id: \.self) { offset in
-                        Text(offset == -1 ? "開催日の前日" : offset == 0 ? "開催日当日" : offset == 1 ? "翌日" : "\(-offset)日前").tag(offset)
-                    }
-                }.pickerStyle(.menu).tint(.primary)
-                OptionalDateRow(title: "投稿開始の時刻", selection: defaultStartTime, components: .hourAndMinute)
+                // 0.19：分かりにくい「投稿開始の日」は出さない（保存済みの値はそのまま使う）。
+                settingsTimeRow("投稿開始の時刻", selection: defaultStartTime)
             }
             settingSection("notifications", "通知", "bell", AppSectionAccent.scan) {
                 Toggle("予定・締切の通知", isOn: Binding(get: { store.preferences.notificationsEnabled }, set: enableNotifications))
@@ -65,15 +56,23 @@ struct GiriSettingsView: View {
                             Text(minute == 0 ? "時刻ちょうど" : minute < 60 ? "\(minute)分" : minute == 1440 ? "1日" : "\(minute / 60)時間").tag(minute)
                         }
                     }.pickerStyle(.menu).tint(.primary)
-                    OptionalDateRow(title: "時刻未定の当日通知", selection: morningTime, components: .hourAndMinute)
+                    settingsTimeRow("時刻未定の当日通知", selection: morningTime)
+                    // 0.19：募集期間の通知（LiveStair のチケット通知と同じく、開始前と開始時を分ける）。
+                    defaultSettingsGroupTitle("募集期間", systemImage: "calendar.badge.clock")
+                    Toggle("募集開始前の通知", isOn: preference(\.entryNotifyBefore)).tint(AppSectionAccent.scan)
+                    if store.preferences.entryNotifyBefore {
+                        Picker("どのくらい前", selection: entryLead) {
+                            ForEach(Array(Set([5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, entryLead.wrappedValue])).sorted(), id: \.self) { minute in
+                                Text(giriLeadText(minute) + "前").tag(minute)
+                            }
+                        }.pickerStyle(.menu).tint(.primary)
+                    }
+                    Toggle("募集開始時の通知", isOn: preference(\.entryNotifyAtStart)).tint(AppSectionAccent.scan)
                 }
             }
             settingSection("data", "データ管理", "externaldrive", AppSectionAccent.memo) {
-                Button("バックアップを書き出す", action: exportBackup)
-                Button("バックアップから復元") { importing = true }
-                if let backup = store.document.lastBackupAt {
-                    settingsValueRow(title: "最終書き出し", value: GiriDateText.backupDateTime(backup))
-                }
+                // 0.19：LiveStair と同じく自動バックアップ・最近削除・カレンダー・詳細データ管理を並べる。
+                GiriDataSettingsRows()
             }
             settingSection("support", "サポート", "questionmark.circle", AppSectionAccent.venue) {
                 settingsValueRow(title: "使い方ガイド", value: "準備中")
@@ -88,21 +87,14 @@ struct GiriSettingsView: View {
             AppPageHeader(title: "設定", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.memo)
         }
         .toolbar(.hidden, for: .navigationBar)
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.json], allowsMultipleSelection: false, onCompletion: importBackup)
-        .alert("バックアップから復元しますか？", isPresented: $confirmRestore) {
-            Button("キャンセル", role: .cancel) { restoreData = nil }
-            Button("復元する", role: .destructive) {
-                guard let data = restoreData else { return }
-                store.run { try store.restoreBackup(data) }
-                restoreData = nil
-            }
-        } message: { Text("現在の記録をバックアップの内容に置き換えます。") }
-        .sheet(isPresented: $sharing) {
-            if let shareURL {
-                GiriShareSheet(items: [shareURL]) { completed in
-                    if completed { store.run { try store.recordBackupExported() } }
-                }
-            }
+    }
+
+    /// 0.19：ほかの設定の行と同じ濃さの名前で、時刻を選ぶ。
+    private func settingsTimeRow(_ title: String, selection: Binding<Date?>) -> some View {
+        HStack(spacing: 8) {
+            Text(title).font(.body).foregroundStyle(.primary)
+            Spacer(minLength: 8)
+            GiriTimeCapsulePicker(selection: selection) { Date() }
         }
     }
 
@@ -172,6 +164,15 @@ struct GiriSettingsView: View {
             store.run { try store.savePreferences(preferences) }
         })
     }
+    /// 募集開始前の通知の分数（以前の版の値がなければ「開始・締切の前」の分数。0 は60分にする）。
+    private var entryLead: Binding<Int> {
+        Binding(get: { max(5, store.preferences.entryLeadMinutes ?? (store.preferences.reminderMinutes == 0 ? 60 : store.preferences.reminderMinutes)) },
+                set: { value in
+                    var preferences = store.preferences
+                    preferences.entryLeadMinutes = value
+                    store.run { try store.savePreferences(preferences) }
+                })
+    }
     private var morningTime: Binding<Date?> {
         Binding(get: { Calendar.current.date(from: DateComponents(year: 2000, month: 1, day: 1, hour: store.preferences.reminderHour, minute: store.preferences.reminderMinute)) }, set: { date in
             guard let date else { return }
@@ -200,35 +201,6 @@ struct GiriSettingsView: View {
             } catch { store.errorMessage = error.localizedDescription }
         }
     }
-    private func exportBackup() {
-        store.run {
-            let data = try store.exportBackup()
-            let name = "GiriStair-\(Date().formatted(.iso8601.year().month().day().dateSeparator(.dash))).json"
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-            try data.write(to: url, options: .atomic)
-            shareURL = url
-            sharing = true
-        }
-    }
-    private func importBackup(_ result: Result<[URL], Error>) {
-        do {
-            guard let url = try result.get().first else { return }
-            let access = url.startAccessingSecurityScopedResource()
-            defer { if access { url.stopAccessingSecurityScopedResource() } }
-            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-            guard size <= 32 * 1024 * 1024 else { throw GiriSettingsError.invalidBackup }
-            let data = try Data(contentsOf: url)
-            guard data.count <= 32 * 1024 * 1024 else { throw GiriSettingsError.invalidBackup }
-            _ = try JSONSerialization.jsonObject(with: data)
-            restoreData = data
-            confirmRestore = true
-        } catch { store.errorMessage = error.localizedDescription }
-    }
-}
-
-private enum GiriSettingsError: LocalizedError {
-    case invalidBackup
-    var errorDescription: String? { "バックアップを読み込めませんでした。GiriStairで書き出した32MB以下のJSONファイルを選んでください。" }
 }
 
 struct GiriSelfProfileEditor: View {

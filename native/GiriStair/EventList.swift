@@ -80,6 +80,7 @@ struct GiriListView: View {
     private var meetingOptions: [(String, String)] {
         var options = [("all", "すべて"), ("casual", "通常"), ("tournament", "大会")]
         if selectedFormat.allowsProject || meeting == "project" { options.append(("project", "企画")) }
+        if selectedFormat.allowsProject || meeting == "kumite" { options.append(("kumite", "組手")) }
         return options
     }
     /// 2回以上ある生大喜利のシリーズ（照合キー, 表示名）。
@@ -235,9 +236,9 @@ struct GiriListView: View {
         }
         .navigationDestination(item: $siteRoute) { GiriSiteRouteView(route: $0) }
         .giriDeleteAlert("記録を削除しますか？", isPresented: Binding(get: { deletingEvent != nil }, set: { if !$0 { deletingEvent = nil } }),
-                         message: "「\(deletingEvent?.title ?? "")」を削除します。お題と回答のメモは残ります。") {
+                         message: "「\(deletingEvent?.title ?? "")」を削除します。設定の「最近削除した会」に30日間残ります。") {
             guard let event = deletingEvent else { return }
-            store.run { try store.deleteEvent(event.id); playLiveStairDeleteFeedback() }
+            store.run { try store.deleteEvent(event.id, keepsInTrash: true); playLiveStairDeleteFeedback() }
             deletingEvent = nil
         }
     }
@@ -978,7 +979,7 @@ enum GiriBadgeColors {
         type == .tournament ? AppSectionAccent.ticket : AppSectionAccent.artist
     }
     static func meeting(_ event: GiriEvent) -> Color {
-        event.isProjectEvent ? AppSectionAccent.venue : meeting(event.meetingType)
+        event.isKumiteEvent ? AppSectionAccent.favorite : event.isProjectEvent ? AppSectionAccent.venue : meeting(event.meetingType)
     }
 }
 
@@ -1015,6 +1016,7 @@ enum GiriEventPresentation {
     static func cardAccent(_ event: GiriEvent) -> Color {
         // 大会・企画は、通常の会と色を分ける（企画は札と同じ色）。
         let base = event.meetingType == .tournament ? AppSectionAccent.ticket
+            : event.isKumiteEvent ? AppSectionAccent.favorite
             : event.isProjectEvent ? AppSectionAccent.venue : accent(event.eventFormat)
         // 観覧の会は、参加する会と見分けられるように少し色を変える。
         if event.eventFormat == .live && event.selfRole == .spectator { return base.mix(with: GiriBadgeColors.spectator, by: 0.55) }

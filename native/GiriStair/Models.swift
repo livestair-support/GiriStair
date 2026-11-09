@@ -537,6 +537,12 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var entryEnd: Date? = nil
     /// 0.14：同じ日の会の中で行う大会の時、元の会のID（集計の参加回数は会として1回）。
     var parentEventId: String? = nil
+    /// 0.19：組手（主役に対してたくさんのメンバーが対戦する企画）。会の種類の保存値は通常（casual）のまま。
+    var isKumite: Bool = false
+    /// 組手の主役（タッグなどは複数）。
+    var kumiteMains: [String] = []
+    /// 組手の対戦ごとの記録（主役から見た勝敗）。
+    var kumiteBouts: [KumiteBout] = []
     /// 0.10（生大喜利）：シリーズ名（「#5」などの回数を除いた名前）。空なら会の名前から判断する。
     var series: String = ""
 }
@@ -568,7 +574,7 @@ enum GiriSelfRole: String, CaseIterable, Identifiable {
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -683,6 +689,9 @@ extension GiriEvent {
         entryStart = try c.giriDate(forKey: .entryStart, required: false, calendarOnly: false)
         entryEnd = try c.giriDate(forKey: .entryEnd, required: false, calendarOnly: false)
         parentEventId = try c.decodeIfPresent(String.self, forKey: .parentEventId)
+        isKumite = try c.decodeIfPresent(Bool.self, forKey: .isKumite) ?? false
+        kumiteMains = try c.decodeIfPresent([String].self, forKey: .kumiteMains) ?? []
+        kumiteBouts = try c.decodeIfPresent([KumiteBout].self, forKey: .kumiteBouts) ?? []
 
         try validate()
     }
@@ -793,6 +802,10 @@ extension GiriEvent {
         try c.encode(entryStart.map(GiriDates.timestamp), forKey: .entryStart)
         try c.encode(entryEnd.map(GiriDates.timestamp), forKey: .entryEnd)
         try c.encodeIfPresent(parentEventId, forKey: .parentEventId)
+        // 組手の項目は入れた時だけ書く（以前の版のJSONの形を保つ）。
+        if isKumite { try c.encode(isKumite, forKey: .isKumite) }
+        if !kumiteMains.isEmpty { try c.encode(kumiteMains, forKey: .kumiteMains) }
+        if !kumiteBouts.isEmpty { try c.encode(kumiteBouts, forKey: .kumiteBouts) }
 
     }
 }
@@ -1012,11 +1025,18 @@ struct AppPreferences: Codable, Equatable {
     var selfAliases: [String] = []
     /// 0.12：自分の別名義をプレイヤー一覧で自分にまとめて表示する（以前の版はそれぞれ表示）。
     var mergesSelfAliases: Bool = false
+    /// 0.19：募集期間の通知（LiveStair のチケット通知と同じく、開始前と開始時を分ける）。
+    /// 開始前の通知。以前の版は開始前に通知していたので true。
+    var entryNotifyBefore: Bool = true
+    /// 開始前の通知を何分前にするか。nil は以前の版と同じく「開始・締切の前」の分数。
+    var entryLeadMinutes: Int? = nil
+    /// 募集開始の時刻ちょうどの通知。
+    var entryNotifyAtStart: Bool = false
 }
 
 extension AppPreferences {
     private enum CodingKeys: String, CodingKey {
-        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder, hiddenFormats, selfAliases, mergesSelfAliases
+        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder, hiddenFormats, selfAliases, mergesSelfAliases, entryNotifyBefore, entryLeadMinutes, entryNotifyAtStart
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1054,6 +1074,9 @@ extension AppPreferences {
         hiddenFormats = try c.decodeIfPresent([EventFormat].self, forKey: .hiddenFormats) ?? []
         selfAliases = try c.decodeIfPresent([String].self, forKey: .selfAliases) ?? []
         mergesSelfAliases = try c.decodeIfPresent(Bool.self, forKey: .mergesSelfAliases) ?? false
+        entryNotifyBefore = try c.decodeIfPresent(Bool.self, forKey: .entryNotifyBefore) ?? true
+        entryLeadMinutes = try c.decodeIfPresent(Int.self, forKey: .entryLeadMinutes)
+        entryNotifyAtStart = try c.decodeIfPresent(Bool.self, forKey: .entryNotifyAtStart) ?? false
 
         try validate()
     }
@@ -1093,6 +1116,9 @@ extension AppPreferences {
         try c.encode(hiddenFormats, forKey: .hiddenFormats)
         try c.encode(selfAliases, forKey: .selfAliases)
         try c.encode(mergesSelfAliases, forKey: .mergesSelfAliases)
+        try c.encode(entryNotifyBefore, forKey: .entryNotifyBefore)
+        try c.encodeIfPresent(entryLeadMinutes, forKey: .entryLeadMinutes)
+        try c.encode(entryNotifyAtStart, forKey: .entryNotifyAtStart)
 
     }
 }
@@ -1352,6 +1378,37 @@ struct GiriDocument: Codable, Equatable {
     var lastBackupAt: Date? = nil
     /// 0.10：主催する団体（プレイヤーとは別）。旧データにはないため空で読む。
     var groups: [GiriGroup] = []
+    /// 0.19：最近削除した会（30日残して戻せる）。ない時はキーを書かない。
+    var deletedEvents: [GiriDeletedEvent] = []
+}
+
+/// 0.19：削除した会と、その会に付いていたお題・回答（戻す時に付け直す）。
+struct GiriDeletedEvent: Codable, Equatable, Identifiable {
+    var event: GiriEvent
+    var deletedAt: Date
+    var noteLinks: [GiriDeletedNoteLink] = []
+    var id: String { event.id }
+}
+
+struct GiriDeletedNoteLink: Codable, Equatable {
+    var noteID: String
+    var roundID: String?
+}
+
+extension GiriDeletedEvent {
+    private enum CodingKeys: String, CodingKey { case event, deletedAt, noteLinks }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        event = try c.decode(GiriEvent.self, forKey: .event)
+        deletedAt = try c.giriRequiredDate(forKey: .deletedAt)
+        noteLinks = try c.decodeIfPresent([GiriDeletedNoteLink].self, forKey: .noteLinks) ?? []
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(event, forKey: .event)
+        try c.encode(GiriDates.timestamp(deletedAt), forKey: .deletedAt)
+        try c.encode(noteLinks, forKey: .noteLinks)
+    }
 }
 
 /// 主催する団体。所属メンバーはプレイヤーの名前で持つ。
@@ -1389,7 +1446,7 @@ extension GiriGroup {
 
 extension GiriDocument {
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, events, notes, players, onlineSites, venues, preferences, lastBackupAt, groups
+        case schemaVersion, events, notes, players, onlineSites, venues, preferences, lastBackupAt, groups, deletedEvents
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1411,6 +1468,7 @@ extension GiriDocument {
         lastBackupAt = try c.giriDate(forKey: .lastBackupAt, required: false, calendarOnly: false)
 
         groups = try c.decodeIfPresent([GiriGroup].self, forKey: .groups) ?? []
+        deletedEvents = try c.decodeIfPresent([GiriDeletedEvent].self, forKey: .deletedEvents) ?? []
 
         try validate()
     }
@@ -1434,6 +1492,7 @@ extension GiriDocument {
         try c.encode(lastBackupAt.map(GiriDates.timestamp), forKey: .lastBackupAt)
 
         try c.encode(groups, forKey: .groups)
+        if !deletedEvents.isEmpty { try c.encode(deletedEvents, forKey: .deletedEvents) }
     }
 }
 
@@ -1725,4 +1784,26 @@ func playerSearchKey(_ value: String) -> String {
     }
     let hiragana = scalars.compactMap { UnicodeScalar((0x30A1...0x30F6).contains($0) ? $0 - 0x60 : $0) }
     return String(String.UnicodeScalarView(hiragana)).lowercased().replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// 0.19：組手の1つの対戦。主役側（空は主役全員）と相手側の人数は自由（1対1・2対2・3対3など）。
+struct KumiteBout: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    var mains: [String] = []
+    var opponents: [String] = []
+    /// 主役から見た勝敗（win・lose・draw、空は未入力）。
+    var outcome: String = ""
+    var memo: String = ""
+}
+
+extension KumiteBout {
+    private enum CodingKeys: String, CodingKey { case id, mains, opponents, outcome, memo }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        mains = try c.decodeIfPresent([String].self, forKey: .mains) ?? []
+        opponents = try c.decodeIfPresent([String].self, forKey: .opponents) ?? []
+        outcome = try c.decodeIfPresent(String.self, forKey: .outcome) ?? ""
+        memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
+    }
 }
