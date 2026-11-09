@@ -2611,7 +2611,7 @@ struct GiriPinnedPrompt: View {
 let giriPostingFormID = "giri-posting-form"
 
 /// お題の画面の画像の高さ（固定した時も同じ）。
-let giriPromptImageHeight: CGFloat = 125
+let giriPromptImageHeight: CGFloat = 130
 
 private struct GiriRevealPostingKey: EnvironmentKey {
     static let defaultValue: (() -> Void)? = nil
