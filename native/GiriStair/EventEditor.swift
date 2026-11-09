@@ -38,6 +38,8 @@ struct GiriEventEditor: View {
     @State private var showsEntry = false
     /// 参加者を外す時に、リザーバー1を繰り上げるかを聞く。
     @State private var removingParticipant: Int?
+    /// 0.19：募集期間の開始・締切を選ぶシート。
+    @State private var entryEndpoint: GiriEntryEndpoint?
 
     init(event: GiriEvent? = nil, onSaved: (() -> Void)? = nil) {
         self.event = event
@@ -108,8 +110,9 @@ struct GiriEventEditor: View {
 
     /// 会の種類（企画は通常の会として保存し、企画の印を付ける）。
     private var meetingChoice: Binding<String> {
-        Binding(get: { draft.isProjectEvent ? "project" : draft.meetingType.rawValue }, set: { value in
+        Binding(get: { draft.isKumiteEvent ? "kumite" : draft.isProjectEvent ? "project" : draft.meetingType.rawValue }, set: { value in
             draft.isProject = value == "project"
+            draft.isKumite = value == "kumite"
             draft.meetingType = value == "tournament" ? .tournament : .casual
         })
     }
@@ -127,7 +130,8 @@ struct GiriEventEditor: View {
         })
     }
     /// 生大喜利の大会だけ：参加者の一番下でリザーバーのあり・なしと名前を入れる。
-    private var showsReserves: Bool { isLive && isTournament }
+    /// 0.19：リザーバーは生大喜利のどの会でも入れられる。
+    private var showsReserves: Bool { isLive }
     /// リザーバーはオンにした下に、繰り上がる順の番号を付けて並べる（並び替えられる）。
     @ViewBuilder private var reserveRows: some View {
         Toggle(isOn: hasReservesBinding) { GiriEditorLabel("リザーバー") }
@@ -218,11 +222,13 @@ struct GiriEventEditor: View {
             basicSection
             if isSite { siteSection }
             if !isSite {
+                // 0.19：組手は主役の枠と対戦相手の枠を分ける（対戦相手は参加者の欄）。
+                if draft.isKumiteEvent { kumiteMainSection }
                 if showsParticipantSection { participantSection }
                 if draft.meetingType == .tournament { teamSections }
                 if showsReserves && !showsParticipantSection { reserveSection }
                 // 応募の日程は参加者の下。入れる時だけ欄を出す。
-                if showsEntry { entrySection } else { entryAddSection }
+                entrySection
                 if draft.eventFormat.hasOnlineRounds { scheduleSections }
                 Section {
                     GiriEventCardSectionTitle(title: "メモ", systemImage: "text.alignleft", accentColor: AppSectionAccent.memo)
@@ -511,6 +517,8 @@ struct GiriEventEditor: View {
                 Text("大会").tag("tournament")
                 // 生大喜利・スプシ系は、通常・大会とは別に「企画」も選べる。
                 if draft.eventFormat.allowsProject { Text("企画").tag("project") }
+                // 0.19：組手（主役に対してたくさんのメンバーが対戦する企画）。
+                if draft.eventFormat.allowsProject { Text("組手").tag("kumite") }
             } label: { GiriEditorLabel("会の種類") }.pickerStyle(.menu).tint(.primary)
             // 大会は生・ネットを問わず、ここで個人戦／チーム戦と人数を選ぶ（結果入力もこれに合わせる）。
             if draft.meetingType == .tournament {
@@ -599,7 +607,7 @@ struct GiriEventEditor: View {
     private var participantSection: some View {
         Section {
             HStack(spacing: 6) {
-                GiriEventCardSectionTitle(title: isTeamTournament ? "参加者（チーム分け前）" : isKnockoutBracket ? "トーナメント表（上から順）" : "参加者",
+                GiriEventCardSectionTitle(title: isTeamTournament ? "参加者（チーム分け前）" : isKnockoutBracket ? "トーナメント表（上から順）" : draft.isKumiteEvent ? "対戦相手" : "参加者",
                                           systemImage: isKnockoutBracket ? "list.number" : "person.2", accentColor: AppSectionAccent.artist)
                 Text(isTeamTournament ? "未振り分け\(unassignedNames.count)人" : "\(participants.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count)人")
                     .font(.caption).foregroundStyle(.secondary).fixedSize()
@@ -637,36 +645,74 @@ struct GiriEventEditor: View {
         }.appEventEditorCardStyle(accentColor: AppSectionAccent.artist)
     }
 
-    private var entryAddSection: some View {
+    /// 0.19：組手の主役（タッグなどは複数）。
+    private var kumiteMainSection: some View {
         Section {
-            Button { showsEntry = true } label: { Label("応募の日程を追加", systemImage: "calendar.badge.plus") }
-                .tint(accentActionColor)
-        }.appEventEditorCardStyle(accentColor: AppSectionAccent.ticket)
+            GiriEventCardSectionTitle(title: "主役", systemImage: "star", accentColor: AppSectionAccent.favorite)
+                .listRowSeparator(.hidden)
+            GiriNamesField(title: "", names: $draft.kumiteMains, priorityNames: participants.filter { !$0.isEmpty })
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.favorite)
     }
 
-    /// 応募の開始・締切（任意）。LiveStair のチケット予定と同じく、日時だけを入れて開始の前に通知する。
+    /// 0.19：募集期間。見出しは最初から出し、「日程を追加」で開始（今日から）を入れる。
+    /// 締切はチェックを入れた時だけ。日時は LiveStair のチケット予定管理と同じボタンとシートで選ぶ。
     private var entrySection: some View {
         Section {
-            HStack {
-                GiriEventCardSectionTitle(title: "応募", systemImage: "calendar.badge.clock", accentColor: AppSectionAccent.ticket)
-                Spacer(minLength: 8)
-                Button("外す", role: .destructive) {
-                    draft.entryStart = nil
-                    draft.entryEnd = nil
-                    showsEntry = false
+            HStack(spacing: 8) {
+                GiriEventCardSectionTitle(title: "募集期間", systemImage: "calendar.badge.clock", accentColor: AppSectionAccent.ticket)
+                if showsEntry {
+                    Spacer(minLength: 8)
+                    Button(role: .destructive) {
+                        draft.entryStart = nil
+                        draft.entryEnd = nil
+                        showsEntry = false
+                    } label: { Image(systemName: "xmark.circle").foregroundStyle(.secondary) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("募集期間を外す")
                 }
-                .font(.subheadline).buttonStyle(.borderless)
             }
             .listRowSeparator(.hidden)
-            OptionalDateRow(title: "応募開始", selection: $draft.entryStart)
-            OptionalDateRow(title: "応募締切", selection: $draft.entryEnd)
-            if draft.entryStart != nil {
-                Text(store.preferences.notificationsEnabled
-                     ? (store.preferences.reminderMinutes == 0 ? "応募開始の時刻に通知します。" : "応募開始の\(store.preferences.reminderMinutes)分前に通知します。")
-                     : "設定で通知をオンにすると、応募開始の前に通知します。")
-                    .font(.caption).foregroundStyle(.secondary)
+            if showsEntry {
+                HStack(spacing: 8) {
+                    GiriEndpointButton(title: "開始", date: draft.entryStart) { entryEndpoint = .start }
+                    if draft.entryEnd != nil {
+                        Text("〜").foregroundStyle(.secondary)
+                        GiriEndpointButton(title: "締切", date: draft.entryEnd) { entryEndpoint = .end }
+                    }
+                }
+                Toggle(isOn: Binding(get: { draft.entryEnd != nil }, set: { on in
+                    draft.entryEnd = on ? addCalendarDays(draft.entryStart ?? Date(), 7) : nil
+                })) { GiriEditorLabel("締切を入れる") }
+                .tint(AppSectionAccent.ticket)
+                if let start = draft.entryStart, let end = draft.entryEnd, end < start {
+                    Text("締切を開始以降の日時にしてください。").font(.caption).foregroundStyle(.red)
+                }
+                Text(entryNotificationCaption).font(.caption).foregroundStyle(.secondary)
+            } else {
+                Button {
+                    if draft.entryStart == nil { draft.entryStart = giriFiveMinuteRounded(Date()) }
+                    showsEntry = true
+                } label: { Label("日程を追加", systemImage: "plus.circle") }
+                .tint(accentActionColor)
             }
-        }.appEventEditorCardStyle(accentColor: AppSectionAccent.ticket)
+        }
+        .appEventEditorCardStyle(accentColor: AppSectionAccent.ticket)
+        .sheet(item: $entryEndpoint) { endpoint in
+            GiriDateTimePickerSheet(title: endpoint == .start ? "募集開始" : "募集締切",
+                                    date: (endpoint == .start ? draft.entryStart : draft.entryEnd) ?? giriFiveMinuteRounded(Date())) { date in
+                if endpoint == .start { draft.entryStart = date } else { draft.entryEnd = date }
+            }
+        }
+    }
+
+    private var entryNotificationCaption: String {
+        let preferences = store.preferences
+        guard preferences.notificationsEnabled else { return "設定で通知をオンにすると、募集開始を知らせます。" }
+        var parts: [String] = []
+        let lead = preferences.entryLeadMinutes ?? preferences.reminderMinutes
+        if preferences.entryNotifyBefore && lead > 0 { parts.append("開始の" + giriLeadText(lead) + "前") }
+        if preferences.entryNotifyAtStart || (preferences.entryNotifyBefore && lead == 0) { parts.append("開始時") }
+        return parts.isEmpty ? "募集期間の通知はオフです（設定の通知で変えられます）。" : "募集の" + parts.joined(separator: "と") + "に通知します（設定の通知で変えられます）。"
     }
 
     /// チーム戦（参加者の欄がない時）のリザーバー。
@@ -1095,7 +1141,8 @@ struct GiriEventEditor: View {
                 candidate.judges = cleanedNames(candidate.judges)
                 candidate.reserves = candidate.hasReserves ? cleanedNames(candidate.reserves) : []
                 // 企画は生大喜利・スプシ系の通常の会だけ。
-                if !candidate.eventFormat.allowsProject || candidate.meetingType != .casual { candidate.isProject = false }
+                if !candidate.eventFormat.allowsProject || candidate.meetingType != .casual { candidate.isProject = false; candidate.isKumite = false }
+                candidate.kumiteMains = candidate.isKumite ? cleanedNames(candidate.kumiteMains) : candidate.kumiteMains
                 candidate.siteUrl = candidate.siteUrl.trimmingCharacters(in: .whitespacesAndNewlines)
                 candidate.judging = candidate.judging.trimmingCharacters(in: .whitespacesAndNewlines)
                 candidate.venueRoom = candidate.venueRoom.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1214,3 +1261,6 @@ func giriEditorValidate(_ event: GiriEvent) throws {
         if let start = round.votingStart, let end = round.votingEnd, end < start { throw GiriEditorValidationError.schedule("\(round.name)の投票締切を投票開始より後にしてください。") }
     }
 }
+
+/// 0.19：募集期間の開始・締切。
+enum GiriEntryEndpoint: String, Identifiable { case start, end; var id: String { rawValue } }

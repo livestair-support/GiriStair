@@ -32,11 +32,17 @@ func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, sites
             }
         }
     }
-    // 応募開始（任意）：参加・興味ありのどちらでも、キャンセルした会以外は応募開始の前に知らせる。
+    // 募集開始（任意）：参加・興味ありのどちらでも、キャンセルした会以外に知らせる。
+    // 0.19：LiveStair のチケット通知と同じく、開始前の通知と開始時の通知を分けて設定する。
     for event in events where event.status != .canceled && event.onlineSiteId == nil {
         guard let start = event.entryStart else { continue }
-        let lead = TimeInterval(preferences.reminderMinutes * 60)
-        append(event, "entry-start", preferences.reminderMinutes == 0 ? "応募開始の時刻です" : "応募開始の\(preferences.reminderMinutes)分前です", start.addingTimeInterval(-lead))
+        let leadMinutes = preferences.entryLeadMinutes ?? preferences.reminderMinutes
+        if preferences.entryNotifyBefore && leadMinutes > 0 {
+            append(event, "entry-start", "募集開始の" + giriLeadText(leadMinutes) + "前です", start.addingTimeInterval(-TimeInterval(leadMinutes * 60)))
+        } else if preferences.entryNotifyBefore && !preferences.entryNotifyAtStart {
+            append(event, "entry-start", "募集開始の時刻です", start)
+        }
+        if preferences.entryNotifyAtStart { append(event, "entry-open", "募集が始まりました", start) }
     }
     for event in events where event.isActualParticipant {
         let lead = TimeInterval(preferences.reminderMinutes * 60)
@@ -121,4 +127,11 @@ func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, sites
         await task.value
         if currentGeneration == generation { pending = nil }
     }
+}
+
+/// 「60分」「2時間」「1日」などの通知の前の時間。
+func giriLeadText(_ minutes: Int) -> String {
+    if minutes >= 1440 && minutes % 1440 == 0 { return "\(minutes / 1440)日" }
+    if minutes >= 60 && minutes % 60 == 0 { return "\(minutes / 60)時間" }
+    return "\(minutes)分"
 }

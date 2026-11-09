@@ -1492,7 +1492,8 @@ struct OptionalDateRow: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(title)
-                .sheet(isPresented: $showingCalendar) {
+                // 0.19：LiveStair のライブ登録と同じく、枠のないカレンダーを画面の下に出す。
+                .fullScreenCover(isPresented: $showingCalendar) {
                     GiriCalendarSheet(selection: calendarSelection) { showingCalendar = false }
                 }
             }
@@ -1526,17 +1527,84 @@ struct GiriCalendarSheet: View {
         GeometryReader { proxy in
             let isSmallWidth = proxy.size.width <= 380
             let width = min(345, proxy.size.width - (isSmallWidth ? 24 : 36))
-            VStack {
-                Spacer(minLength: 0)
+            ZStack(alignment: .bottom) {
+                // カレンダーの外を押すと閉じる（LiveStair eventDateCalendarOverlay と同じ）。
+                Color.black.opacity(0.001)
+                    .ignoresSafeArea()
+                    .onTapGesture(perform: onClose)
                 EventDateCalendarPickerView(selectedDate: $selection, maxWidth: width, onClose: onClose)
                     .frame(width: width, height: isSmallWidth ? 360 : 372)
                     .padding(.bottom, isSmallWidth ? 8 : 10)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .presentationDetents([.height(392)])
-        .presentationDragIndicator(.hidden)
         .presentationBackground(.clear)
+    }
+}
+
+/// 0.19：LiveStair TicketScheduleEndpointButton と同じ形の、開始・締切の日時のボタン。
+struct GiriEndpointButton: View {
+    let title: String
+    let date: Date?
+    var accent: Color = AppSectionAccent.ticket
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Text(title).font(.caption).foregroundStyle(.secondary)
+                if let date {
+                    Text(GiriDateText.day(date, compact: true))
+                        .font(.subheadline.weight(.medium)).lineLimit(1).minimumScaleFactor(0.75)
+                    Text(GiriDateText.time(date)).font(.subheadline.weight(.medium))
+                } else {
+                    Text("未設定").font(.subheadline).foregroundStyle(.secondary)
+                    Text("タップして設定").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .monospacedDigit()
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, minHeight: 68)
+            .padding(.horizontal, 6)
+            .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title)、\(date.map { GiriDateText.dateTime($0) } ?? "未設定")")
+    }
+}
+
+/// 0.19：LiveStair TicketScheduleEndpointPicker と同じく、日付（カレンダー）と時刻（ホイール）を選ぶシート。
+struct GiriDateTimePickerSheet: View {
+    let title: String
+    let onSave: (Date) -> Void
+    @State private var date: Date
+    @Environment(\.dismiss) private var dismiss
+    init(title: String, date: Date, onSave: @escaping (Date) -> Void) {
+        self.title = title
+        self.onSave = onSave
+        _date = State(initialValue: date)
+    }
+    var body: some View {
+        NavigationStack {
+            Form {
+                DatePicker("日付", selection: $date, displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                DatePicker("時刻", selection: $date, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.wheel)
+                    .labelsHidden()
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完了") { onSave(date); dismiss() }.fontWeight(.bold)
+                }
+            }
+        }
+        .tint(accentActionColor)
+        .environment(\.locale, Locale(identifier: "ja_JP"))
+        .presentationDetents([.large])
     }
 }
 

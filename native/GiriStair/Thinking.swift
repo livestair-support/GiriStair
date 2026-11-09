@@ -726,14 +726,17 @@ private struct GiriThoughtNotePage: View {
     @State private var deleting = false
     /// 0.17：回答の欄のタブ（自分の回答・他人の回答）。
     @State private var mode: GiriAnswerMode = .own
+    /// 0.18：お題を上に固定して、見ながら回答を考える。
+    @State private var pinned = false
     private var note: ThoughtNote? { store.notes.first { $0.id == noteID } }
     private var event: GiriEvent? { store.events.first { $0.id == note?.eventId } }
     var body: some View {
         Form {
             if let note {
-                contextSection(note)
+                // 固定している時は、締切などの会の情報は出さない。
+                if !pinned { contextSection(note) }
                 if note.kind == .answers {
-                    GiriNoteSections(note: note, event: event, mode: $mode)
+                    GiriNoteSections(note: note, event: event, mode: $mode, pinned: $pinned)
                 } else {
                     Section { GiriThoughtNoteRows(note: note, event: event, onEdit: { editing = true }) }
                         .appSectionCardStyle(accentColor: AppSectionAccent.memo)
@@ -743,6 +746,9 @@ private struct GiriThoughtNotePage: View {
             }
         }
         .appEditorFormStyle()
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if pinned, let note { GiriPinnedPrompt(note: note) { withAnimation { pinned = false } } }
+        }
         .navigationTitle(note?.kind == .prompts ? "お題" : note?.kind == .free ? "メモ" : "お題/回答")
         .navigationBarTitleDisplayMode(.inline)
         .giriNavigationBarStyle()
@@ -777,6 +783,21 @@ private struct GiriThoughtNotePage: View {
         }
     }
 
+    /// 大会は「この大会の」、ネット大喜利の通常のサイトは「このサイトの」、それ以外は「この会の」お題一覧。
+    @ViewBuilder private func listLink(_ event: GiriEvent) -> some View {
+        if event.meetingType == .tournament {
+            NavigationLink(value: GiriThoughtDestination.event(event.id)) { listLabel("この大会のお題一覧") }
+        } else if let siteID = event.onlineSiteId, event.eventFormat.hasOnlineRounds {
+            NavigationLink(value: GiriThoughtDestination.site(siteID)) { listLabel("このサイトのお題一覧") }
+        } else {
+            NavigationLink(value: GiriThoughtDestination.event(event.id)) { listLabel("この会のお題一覧") }
+        }
+    }
+
+    private func listLabel(_ title: String) -> some View {
+        Label { Text(title).foregroundStyle(.primary) } icon: { Image(systemName: "list.bullet").foregroundStyle(accentActionColor) }
+    }
+
     @ViewBuilder private func contextSection(_ note: ThoughtNote) -> some View {
         if let event {
             Section {
@@ -792,10 +813,7 @@ private struct GiriThoughtNotePage: View {
                 } else if let date = GiriEventPresentation.date(event) {
                     Text(GiriDateText.day(date)).font(.subheadline).foregroundStyle(.secondary)
                 }
-                NavigationLink(value: GiriThoughtDestination.event(event.id)) {
-                    Label("この会のお題一覧", systemImage: "list.bullet")
-                }
-                .tint(accentActionColor)
+                listLink(event)
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
         }
     }
@@ -917,8 +935,8 @@ private struct GiriThoughtNoteRows: View {
             let others = note.otherAnswerRecords
             switch part {
             case .prompt:
-                // 参加はお題の側で決める。
-                participationToggle
+                // 0.18：「このお題に参加」はお題の登録・編集で決める（この画面には出さない）。
+                EmptyView()
             case .answers:
                 Picker("回答", selection: modeBinding) {
                     ForEach(GiriAnswerMode.allCases) { Text($0.title).tag($0) }
@@ -976,11 +994,20 @@ private struct GiriThoughtNoteRows: View {
                 Text(isLong ? "回答案（出す回答に印）" : "自分の回答").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 if own.count > 1 {
-                    Picker("並び", selection: $answerOrder) {
-                        ForEach(GiriAnswerOrder.allCases) { Text($0.title).tag($0.rawValue) }
+                    // 並びはアイコンのプルダウンで選ぶ。
+                    Menu {
+                        Picker("並び", selection: $answerOrder) {
+                            ForEach(GiriAnswerOrder.allCases) { Text($0.title).tag($0.rawValue) }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(accentActionColor)
+                            .frame(width: 32, height: 28)
+                            .contentShape(Rectangle())
                     }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 170)
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("回答の並び（\(order.title)）")
                 }
             }
         }
@@ -1015,6 +1042,8 @@ private struct GiriThoughtNoteRows: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("他人の回答を投稿").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             GiriPlayerSuggestionField(title: "回答者", text: $newOtherAnswerer)
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(.secondarySystemBackground)))
             TextField("回答を入力してください", text: $newOtherAnswer, axis: .vertical)
                 .lineLimit(2...6)
                 .padding(10)
@@ -1205,19 +1234,28 @@ private struct GiriThoughtScheduleDisclosure: View {
     let round: EventRound
     @AppStorage("giriThoughtScheduleExpanded") private var expanded = false
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            GiriThoughtPeriodRow(title: "投稿", start: round.submissionStart, end: round.submissionEnd, enabled: round.submissionEnabled, accent: AppSectionAccent.artist)
-            GiriThoughtPeriodRow(title: "投票", start: round.votingStart, end: round.votingEnd, enabled: round.votingRequired, accent: AppSectionAccent.memo)
-        } label: {
-            VStack(alignment: .leading, spacing: 2) {
+        // 0.18：状態と締切を1行に。開閉の「>」は一覧へのリンクと同じ色にする。
+        Button { withAnimation { expanded.toggle() } } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(thoughtPhase(event: event, round: round))
                     .font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
-                if !expanded, let deadline = giriThoughtCurrentDeadline(round) {
-                    Text("締切 " + thoughtDateTime(deadline)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                if let deadline = giriThoughtCurrentDeadline(round) {
+                    Text("締切 " + thoughtDateTime(deadline)).font(.subheadline).foregroundStyle(.secondary).monospacedDigit()
+                        .lineLimit(1).minimumScaleFactor(0.8)
                 }
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color(.tertiaryLabel))
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
             }
+            .contentShape(Rectangle())
         }
-        .tint(Color.secondary)
+        .buttonStyle(.plain)
+        if expanded {
+            GiriThoughtPeriodRow(title: "投稿", start: round.submissionStart, end: round.submissionEnd, enabled: round.submissionEnabled, accent: AppSectionAccent.artist)
+            GiriThoughtPeriodRow(title: "投票", start: round.votingStart, end: round.votingEnd, enabled: round.votingRequired, accent: AppSectionAccent.memo)
+        }
     }
 }
 
@@ -2315,6 +2353,7 @@ struct GiriAnswerModePage: View {
     @EnvironmentObject private var store: GiriStore
     let noteID: String
     @State private var mode: GiriAnswerMode
+    @State private var pinned = false
     init(noteID: String, initialMode: GiriAnswerMode) {
         self.noteID = noteID
         _mode = State(initialValue: initialMode)
@@ -2324,13 +2363,16 @@ struct GiriAnswerModePage: View {
     var body: some View {
         Form {
             if let note {
-                GiriNoteSections(note: note, event: event, mode: $mode)
+                GiriNoteSections(note: note, event: event, mode: $mode, pinned: $pinned)
             } else {
                 CenteredEmptyMessage(systemImage: "text.bubble", title: "このお題は削除されています")
             }
         }
         .appEditorFormStyle()
         .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if pinned, let note { GiriPinnedPrompt(note: note) { withAnimation { pinned = false } } }
+        }
         .navigationTitle("お題/回答").navigationBarTitleDisplayMode(.inline)
         .giriNavigationBarStyle()
     }
@@ -2416,16 +2458,58 @@ struct GiriNoteSections: View {
     let note: ThoughtNote
     let event: GiriEvent?
     @Binding var mode: GiriAnswerMode
+    /// 0.18：お題を上に固定している時は、お題の欄を出さない（上に出ている）。
+    @Binding var pinned: Bool
     var body: some View {
-        Section {
-            AppCardSectionTitle(title: "お題", systemImage: "lightbulb", accentColor: AppSectionAccent.memo)
+        if !pinned {
+            Section {
+                HStack {
+                    AppCardSectionTitle(title: "お題", systemImage: "lightbulb", accentColor: AppSectionAccent.memo)
+                    Spacer(minLength: 8)
+                    Button { withAnimation { pinned = true } } label: {
+                        Image(systemName: "pin").font(.body.weight(.semibold)).foregroundStyle(accentActionColor)
+                            .frame(width: 36, height: 32).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("お題を上に固定")
+                }
                 .listRowSeparator(.hidden)
-            GiriThoughtNoteRows(note: note, event: event, onEdit: {}, part: .prompt)
-        }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+                GiriThoughtNoteRows(note: note, event: event, onEdit: {}, part: .prompt)
+            }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+        }
         Section {
             AppCardSectionTitle(title: "回答", systemImage: "text.bubble", accentColor: mode == .own ? AppSectionAccent.artist : AppSectionAccent.favorite)
                 .listRowSeparator(.hidden)
             GiriThoughtNoteRows(note: note, event: event, onEdit: {}, part: .answers, mode: $mode)
         }.appSectionCardStyle(accentColor: mode == .own ? AppSectionAccent.artist : AppSectionAccent.favorite)
+    }
+}
+
+/// 0.18：上に固定したお題（ヘッダーのように出す）。ピンを押すと固定を外す。
+struct GiriPinnedPrompt: View {
+    let note: ThoughtNote
+    let onUnpin: () -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(thoughtTitle(note)).font(.headline).lineLimit(3)
+                Spacer(minLength: 8)
+                Button(action: onUnpin) {
+                    Image(systemName: "pin.fill").font(.body.weight(.semibold)).foregroundStyle(accentActionColor)
+                        .frame(width: 36, height: 32).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("お題の固定を外す")
+            }
+            if !note.imageDataBase64.isEmpty {
+                GiriThoughtImage(base64: note.imageDataBase64).frame(maxHeight: 180)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .appTintedCard(accentColor: AppSectionAccent.memo)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 8)
+        .background(appBackgroundColor)
     }
 }

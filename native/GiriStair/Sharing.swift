@@ -87,7 +87,7 @@ struct GiriStatisticsView: View {
             .accessibilityIdentifier("statistics-page-tabs")
             Picker("年", selection: $year) { Text("全期間").tag(0); ForEach(years, id: \.self) { Text("\($0)年").tag($0) } }.pickerStyle(.menu).tint(.primary)
             Picker("月", selection: $month) { Text("すべて").tag(0); ForEach(1...12, id: \.self) { Text("\($0)月").tag($0) } }.pickerStyle(.menu).tint(.primary)
-            Picker("会の種類", selection: $meeting) { Text("すべて").tag("all"); Text("通常").tag("casual"); Text("大会").tag("tournament"); Text("企画").tag("project") }.pickerStyle(.menu).tint(.primary)
+            Picker("会の種類", selection: $meeting) { Text("すべて").tag("all"); Text("通常").tag("casual"); Text("大会").tag("tournament"); Text("企画").tag("project"); Text("組手").tag("kumite") }.pickerStyle(.menu).tint(.primary)
         }.appSectionCardStyle(accentColor: accent)
     }
 
@@ -102,6 +102,9 @@ struct GiriStatisticsView: View {
                 LabeledContent("大会", value: "\(records.filter { $0.meetingFilterKey == "tournament" }.count)回")
                 if selectedFormat.allowsProject || records.contains(where: { $0.meetingFilterKey == "project" }) {
                     LabeledContent("企画", value: "\(records.filter { $0.meetingFilterKey == "project" }.count)回")
+                }
+                if records.contains(where: { $0.meetingFilterKey == "kumite" }) {
+                    LabeledContent("組手", value: "\(records.filter { $0.meetingFilterKey == "kumite" }.count)回")
                 }
             }
             if formats.count > 1 { LabeledContent("全形式の合計", value: "\(allRecords.count)回") }

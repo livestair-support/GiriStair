@@ -854,9 +854,9 @@ extension GiriEvent {
     /// 別名義をまとめて数える時（名前の照合キーのどれか）。
     func isHosted(byKeys keys: Set<String>) -> Bool { keys.contains { isHosted(byKey: $0) } }
     func isMCOrJudge(byKeys keys: Set<String>) -> Bool { keys.contains { isMCOrJudge(byKey: $0) } }
-    /// リザーバーの名前（大会で「リザーバーあり」の時だけ）。
+    /// リザーバーの名前（「リザーバーあり」の時だけ）。0.19：大会以外の会でも入れられる。
     var reserveNames: [String] {
-        guard hasReserves && meetingType == .tournament else { return [] }
+        guard hasReserves else { return [] }
         var seen = Set<String>()
         return reserves.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
@@ -867,8 +867,9 @@ extension GiriEvent {
     func derivedSelfRole(isSelf: (String) -> Bool) -> GiriSelfRole {
         guard eventFormat == .live else { return .player }
         if selfRole == .spectator && isParticipating && !isInterested && status != .canceled { return .spectator }
-        if meetingType == .tournament && reserveNames.contains(where: isSelf) { return .reserve }
+        if reserveNames.contains(where: isSelf) { return .reserve }
         if everyone.contains(where: isSelf) { return .player }
+        if isKumiteEvent && kumiteMains.contains(where: isSelf) { return .player }
         if staffNames.contains(where: isSelf) { return .staff }
         return .player
     }
@@ -1636,9 +1637,11 @@ extension GiriEvent {
     /// 企画として扱う（生大喜利・スプシ系の通常の会で「企画」を選んだ時）。
     var isProjectEvent: Bool { isProject && meetingType == .casual && eventFormat.allowsProject }
     /// 会の種類の表示（通常・大会・企画）。
-    var meetingTitle: String { isProjectEvent ? "企画" : meetingType.title }
+    var meetingTitle: String { isKumiteEvent ? "組手" : isProjectEvent ? "企画" : meetingType.title }
     /// 一覧の絞り込み・共有で使う会の種類の値（"casual"・"tournament"・"project"）。
-    var meetingFilterKey: String { isProjectEvent ? "project" : meetingType.rawValue }
+    var meetingFilterKey: String { isKumiteEvent ? "kumite" : isProjectEvent ? "project" : meetingType.rawValue }
+    /// 0.19：組手（生大喜利・スプシ系の通常の会に印を付ける）。
+    var isKumiteEvent: Bool { isKumite && meetingType == .casual && eventFormat.allowsProject }
 }
 
 
@@ -2180,4 +2183,48 @@ func giriBulkPromptNotes(text: String, eventID: String?, roundID: String? = nil,
 /// 文字のあいだに幅のない空白を入れて、どこでも折り返せるようにする。
 func giriCharacterWrapped(_ text: String) -> String {
     text.components(separatedBy: "\n").map { line in line.map(String.init).joined(separator: "\u{200B}") }.joined(separator: "\n")
+}
+
+// MARK: - 0.19 組手
+
+enum KumiteOutcome: String, CaseIterable, Identifiable {
+    case win, lose, draw
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .win: return "勝ち"
+        case .lose: return "負け"
+        case .draw: return "引き分け"
+        }
+    }
+}
+
+/// 主役から見た通算の成績（〇勝〇敗〇分）。
+struct KumiteRecord: Equatable {
+    var wins = 0
+    var losses = 0
+    var draws = 0
+    var text: String { "\(wins)勝\(losses)敗" + (draws > 0 ? "\(draws)分" : "") }
+}
+
+func giriKumiteRecord(_ bouts: [KumiteBout]) -> KumiteRecord {
+    var record = KumiteRecord()
+    for bout in bouts {
+        switch KumiteOutcome(rawValue: bout.outcome) {
+        case .win?: record.wins += 1
+        case .lose?: record.losses += 1
+        case .draw?: record.draws += 1
+        case nil: break
+        }
+    }
+    return record
+}
+
+extension GiriEvent {
+    /// その対戦の主役側（空なら主役全員）。
+    func kumiteMains(of bout: KumiteBout) -> [String] { bout.mains.isEmpty ? kumiteMains : bout.mains }
+    /// 自分が出た対戦か（主役側・相手側のどちらでも）。
+    func kumiteIncludesSelf(_ bout: KumiteBout, isSelf: (String) -> Bool) -> Bool {
+        kumiteMains(of: bout).contains(where: isSelf) || bout.opponents.contains(where: isSelf)
+    }
 }

@@ -83,6 +83,8 @@ private struct GiriRootView: View {
         .task {
             synchronizeTheme()
             if store.loaded { store.run { try store.ensureCurrentSiteCycles() } }
+            // 0.19：1日1回、最初に開いた時に自動バックアップを作る（LiveStair と同じ）。
+            GiriAutoBackup.runIfNeeded(store: store)
             await NotificationsCoordinator.sync(store: store)
             promptForResult()
         }
@@ -93,6 +95,7 @@ private struct GiriRootView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 if store.loaded { store.run { try store.ensureCurrentSiteCycles() } }
+                GiriAutoBackup.runIfNeeded(store: store)
                 Task { await NotificationsCoordinator.sync(store: store) }
                 promptForResult()
             }

@@ -9,7 +9,7 @@ import plistlib
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.17.0"
+VERSION = "0.19.0"
 MINIMUM_IOS = "18.1"
 
 
@@ -44,6 +44,7 @@ def generate(root: Path = ROOT, build_number: str = "1") -> Path:
         "NSPhotoLibraryUsageDescription": "参加者の文字読み取り、お題・プレイヤーのアイコン・共有画像に写真を使用します。",
         "NSPhotoLibraryAddUsageDescription": "作成した共有画像を写真ライブラリへ保存します。",
         "NSCameraUsageDescription": "参加者一覧や画像お題を読み取るためにカメラを使用します。",
+        "NSCalendarsWriteOnlyAccessUsageDescription": "大喜利会の予定をiPhoneのカレンダーに書き出します。",
         "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
         "UISupportedInterfaceOrientations~ipad": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationPortraitUpsideDown", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
     }
