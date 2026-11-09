@@ -982,7 +982,11 @@ private struct GiriThoughtNoteRows: View {
         Text(thoughtTitle(note)).font(.headline).textSelection(.enabled)
             // 一覧（overview）からの長押しの「編集」もここで開く。
             .sheet(isPresented: editingAnswerShown) { answerEditSheet }
-        if !note.imageDataBase64.isEmpty { GiriThoughtImage(base64: note.imageDataBase64) }
+        if !note.imageDataBase64.isEmpty {
+            // 0.22：お題の画面では、固定してもしなくても同じ大きさで出す（一覧などはこれまでどおり）。
+            if part == .prompt { GiriThoughtImage(base64: note.imageDataBase64).frame(maxHeight: giriPromptImageHeight) }
+            else { GiriThoughtImage(base64: note.imageDataBase64) }
+        }
         if !note.promptAuthor.isEmpty {
             HStack {
                 Text("作題").font(.subheadline).foregroundStyle(.secondary)
@@ -2587,9 +2591,9 @@ struct GiriPinnedPrompt: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("お題の固定を外す")
             }
-            // 0.21：キーボードが出ても「回答案を投稿」と「投稿」が両方見える大きさにする（画像は押すと拡大）。
+            // 0.22：固定しない時と同じ大きさ（画像は押すと拡大）。
             if !note.imageDataBase64.isEmpty {
-                GiriThoughtImage(base64: note.imageDataBase64).frame(maxHeight: 100)
+                GiriThoughtImage(base64: note.imageDataBase64).frame(maxHeight: giriPromptImageHeight)
             }
         }
         .padding(.horizontal, 14)
@@ -2605,6 +2609,9 @@ struct GiriPinnedPrompt: View {
 // MARK: - 0.21 回答案の入力欄をキーボードの上に見せる
 
 let giriPostingFormID = "giri-posting-form"
+
+/// お題の画面の画像の高さ（固定した時も同じ）。
+let giriPromptImageHeight: CGFloat = 125
 
 private struct GiriRevealPostingKey: EnvironmentKey {
     static let defaultValue: (() -> Void)? = nil
