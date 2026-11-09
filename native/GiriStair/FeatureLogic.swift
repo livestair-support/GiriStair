@@ -1955,13 +1955,18 @@ func giriNoteAddingAnswer(_ note: ThoughtNote, text: String, now: Date = Date())
 }
 
 /// 回答案の文・印を変える、または消す。
-func giriNoteEditingAnswer(_ note: ThoughtNote, id: String, text: String? = nil, mark: String? = nil, delete: Bool = false, now: Date = Date()) -> ThoughtNote {
+func giriNoteEditingAnswer(_ note: ThoughtNote, id: String, text: String? = nil, answerer: String? = nil, mark: String? = nil, delete: Bool = false, now: Date = Date()) -> ThoughtNote {
     giriNoteUpdatingAnswers(note, now: now) { answers in
         guard let index = answers.firstIndex(where: { $0.id == id }) else { return }
         if delete { answers.remove(at: index); return }
         if let text {
             let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !value.isEmpty { answers[index].text = value }
+        }
+        // 0.20：他人の回答は、回答者も同じ入力欄で直せる（空にはしない）。
+        if let answerer, !answers[index].isOwn {
+            let value = answerer.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty { answers[index].answerer = value }
         }
         if let mark { answers[index].mark = mark }
     }

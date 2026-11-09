@@ -1040,7 +1040,7 @@ private struct GiriThoughtNoteRows: View {
     /// 他人の回答の投稿：回答者と回答を入れて「投稿」。
     private var othersPostingForm: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("他人の回答を投稿").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text(editingOtherID == nil ? "他人の回答を投稿" : "他人の回答を編集").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             GiriPlayerSuggestionField(title: "回答者", text: $newOtherAnswerer)
                 .padding(.horizontal, 10).padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(.secondarySystemBackground)))
@@ -1048,21 +1048,24 @@ private struct GiriThoughtNoteRows: View {
                 .lineLimit(2...6)
                 .padding(10)
                 .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(.secondarySystemBackground)))
-            HStack {
-                Spacer()
-                Button("投稿", action: postOtherAnswer)
-                    .font(.subheadline.weight(.semibold))
-                    .buttonStyle(.borderedProminent)
-                    .tint(accentActionColor)
-                    .disabled(newOtherAnswerer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                              || newOtherAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
+            postingButtons(editing: editingOtherID != nil, disabled: newOtherAnswerer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                           || newOtherAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                           post: postOtherAnswer)
         }
         .padding(.vertical, 4)
         .sheet(isPresented: editingAnswerShown) { answerEditSheet }
     }
 
     private func postOtherAnswer() {
+        if let id = editingOtherID {
+            let updated = giriNoteEditingAnswer(note, id: id, text: newOtherAnswer, answerer: newOtherAnswerer)
+            store.run {
+                try store.saveNote(updated)
+                playLiveStairSaveFeedback()
+                cancelEditing()
+            }
+            return
+        }
         guard let updated = giriNoteAddingOtherAnswer(note, answerer: newOtherAnswerer, text: newOtherAnswer) else { return }
         store.run {
             try store.saveNote(updated)
@@ -1098,9 +1101,10 @@ private struct GiriThoughtNoteRows: View {
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
-        // 編集・印・削除・共有は長押しのメニューから。
+        // コピー・編集・印・削除・共有は長押しのメニューから。
         .contextMenu {
-            Button("編集", systemImage: "pencil") { editingAnswerText = record.text; editingAnswerID = record.id }
+            copyButton(record)
+            Button("編集", systemImage: "pencil") { beginEditing(record) }
             Menu("印を付ける", systemImage: "circle.circle") {
                 ForEach(["◎", "〇", "△", "×"], id: \.self) { mark in
                     Button(mark) { saveAnswer(id: record.id, mark: mark) }
@@ -1115,8 +1119,69 @@ private struct GiriThoughtNoteRows: View {
         }
     }
 
+    /// 一覧（overview）には入力欄がないので、そこからの編集だけ別の画面で開く。
     private var editingAnswerShown: Binding<Bool> {
-        Binding(get: { editingAnswerID != nil }, set: { if !$0 { editingAnswerID = nil } })
+        Binding(get: { part == .overview && editingAnswerID != nil }, set: { if !$0 { editingAnswerID = nil } })
+    }
+
+    /// 0.20：回答をそのままコピーする（大喜利サイトに貼り付けられる）。
+    private func copyButton(_ record: AnswerRecord) -> some View {
+        Button("コピー", systemImage: "doc.on.doc") {
+            UIPasteboard.general.string = record.text
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
+    }
+
+    /// 0.20：回答の編集は、別の画面ではなく投稿の入力欄に戻して直す。
+    private func beginEditing(_ record: AnswerRecord) {
+        editingAnswerText = record.text
+        editingAnswerID = record.id
+        guard part != .overview else { return }
+        if record.isOwn {
+            if let mode { mode.wrappedValue = .own }
+            newAnswer = record.text
+            addingAnswer = true
+        } else {
+            if let mode { mode.wrappedValue = .others }
+            newOtherAnswerer = record.answerer
+            newOtherAnswer = record.text
+        }
+    }
+
+    private func cancelEditing() {
+        editingAnswerID = nil
+        newAnswer = ""
+        newOtherAnswer = ""
+        newOtherAnswerer = ""
+        addingAnswer = false
+    }
+
+    /// 編集中の回答（自分の回答・他人の回答の入力欄で別々に扱う）。
+    private var editingOwnID: String? {
+        guard part != .overview, let id = editingAnswerID, note.ownAnswerRecords.contains(where: { $0.id == id }) else { return nil }
+        return id
+    }
+    private var editingOtherID: String? {
+        guard part != .overview, let id = editingAnswerID, note.otherAnswerRecords.contains(where: { $0.id == id }) else { return nil }
+        return id
+    }
+
+    /// 入力欄の下のボタン：編集中は「キャンセル」と「更新」、それ以外は「投稿」。
+    private func postingButtons(editing: Bool, disabled: Bool, post: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            Spacer()
+            if editing {
+                Button("キャンセル", action: cancelEditing)
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.borderless)
+                    .tint(accentActionColor)
+            }
+            Button(editing ? "更新" : "投稿", action: post)
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(.borderedProminent)
+                .tint(accentActionColor)
+                .disabled(disabled)
+        }
     }
 
     private var answerEditSheet: some View {
@@ -1131,26 +1196,28 @@ private struct GiriThoughtNoteRows: View {
     /// 長考の投稿フォーム：回答案を1つずつ書いて「投稿」で足す（改行は回答の中の改行）。
     private var postingForm: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("回答案を投稿").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text(editingOwnID == nil ? "回答案を投稿" : "回答案を編集").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             TextField("回答案を入力してください", text: $newAnswer, axis: .vertical)
                 .lineLimit(2...6)
                 .focused($addingAnswer)
                 .padding(10)
                 .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(.secondarySystemBackground)))
-            HStack {
-                Spacer()
-                Button("投稿", action: postAnswer)
-                    .font(.subheadline.weight(.semibold))
-                    .buttonStyle(.borderedProminent)
-                    .tint(accentActionColor)
-                    .disabled(newAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
+            postingButtons(editing: editingOwnID != nil, disabled: newAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, post: postAnswer)
         }
         .padding(.vertical, 4)
         .sheet(isPresented: editingAnswerShown) { answerEditSheet }
     }
 
     private func postAnswer() {
+        if let id = editingOwnID {
+            let updated = giriNoteEditingAnswer(note, id: id, text: newAnswer)
+            store.run {
+                try store.saveNote(updated)
+                playLiveStairSaveFeedback()
+                cancelEditing()
+            }
+            return
+        }
         guard let updated = giriNoteAddingAnswer(note, text: newAnswer) else { return }
         store.run {
             try store.saveNote(updated)
@@ -1176,7 +1243,8 @@ private struct GiriThoughtNoteRows: View {
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .contextMenu {
-            Button("編集", systemImage: "pencil") { editingAnswerText = record.text; editingAnswerID = record.id }
+            copyButton(record)
+            Button("編集", systemImage: "pencil") { beginEditing(record) }
             GiriThoughtShareActions(note: note, event: event, record: record)
             Button("削除", systemImage: "trash", role: .destructive) { saveAnswer(id: record.id, delete: true) }
         }
@@ -2490,7 +2558,7 @@ struct GiriPinnedPrompt: View {
     let note: ThoughtNote
     let onUnpin: () -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(thoughtTitle(note)).font(.headline).lineLimit(3)
                 Spacer(minLength: 8)
@@ -2501,15 +2569,17 @@ struct GiriPinnedPrompt: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("お題の固定を外す")
             }
+            // 0.20：キーボードが出ても回答欄が狭くならないよう少しだけ小さくする（画像を見ながら考えられる大きさは残す）。
             if !note.imageDataBase64.isEmpty {
-                GiriThoughtImage(base64: note.imageDataBase64).frame(maxHeight: 180)
+                GiriThoughtImage(base64: note.imageDataBase64).frame(maxHeight: 150)
             }
         }
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .appTintedCard(accentColor: AppSectionAccent.memo)
         .padding(.horizontal, 18)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(appBackgroundColor)
     }
 }
