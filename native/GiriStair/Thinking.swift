@@ -731,6 +731,13 @@ private struct GiriThoughtNotePage: View {
     private var note: ThoughtNote? { store.notes.first { $0.id == noteID } }
     private var event: GiriEvent? { store.events.first { $0.id == note?.eventId } }
     var body: some View {
+        ScrollViewReader { proxy in
+            pageForm.environment(\.giriRevealPosting, { giriRevealPostingForm(proxy) })
+        }
+        .navigationTitle(note?.kind == .prompts ? "お題" : note?.kind == .free ? "メモ" : "お題/回答")
+    }
+
+    private var pageForm: some View {
         Form {
             if let note {
                 // 固定している時は、締切などの会の情報は出さない。
@@ -749,7 +756,6 @@ private struct GiriThoughtNotePage: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             if pinned, let note { GiriPinnedPrompt(note: note) { withAnimation { pinned = false } } }
         }
-        .navigationTitle(note?.kind == .prompts ? "お題" : note?.kind == .free ? "メモ" : "お題/回答")
         .navigationBarTitleDisplayMode(.inline)
         .giriNavigationBarStyle()
         .toolbar {
@@ -924,6 +930,7 @@ private struct GiriThoughtNoteRows: View {
     @FocusState private var addingAnswer: Bool
     /// 0.15：回答案の並び（追加順・印の順）。端末に残す。
     @AppStorage("giriAnswerOrder") private var answerOrder = GiriAnswerOrder.added.rawValue
+    @Environment(\.giriRevealPosting) private var revealPosting
     @State private var editingAnswerID: String?
     @State private var editingAnswerText = ""
     private var isLong: Bool { note.effectiveFormat(event: event) == .onlineLong }
@@ -1205,6 +1212,11 @@ private struct GiriThoughtNoteRows: View {
             postingButtons(editing: editingOwnID != nil, disabled: newAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, post: postAnswer)
         }
         .padding(.vertical, 4)
+        // 0.21：入力を始めたら、見出し（回答案を投稿）と「投稿」が両方見える位置までずらす。
+        .id(giriPostingFormID)
+        .onChange(of: addingAnswer) { _, focused in
+            if focused { revealPosting?() }
+        }
         .sheet(isPresented: editingAnswerShown) { answerEditSheet }
     }
 
@@ -2429,6 +2441,12 @@ struct GiriAnswerModePage: View {
     private var note: ThoughtNote? { store.notes.first { $0.id == noteID } }
     private var event: GiriEvent? { store.events.first { $0.id == note?.eventId } }
     var body: some View {
+        ScrollViewReader { proxy in
+            pageForm.environment(\.giriRevealPosting, { giriRevealPostingForm(proxy) })
+        }
+    }
+
+    private var pageForm: some View {
         Form {
             if let note {
                 GiriNoteSections(note: note, event: event, mode: $mode, pinned: $pinned)
@@ -2564,22 +2582,47 @@ struct GiriPinnedPrompt: View {
                 Spacer(minLength: 8)
                 Button(action: onUnpin) {
                     Image(systemName: "pin.fill").font(.body.weight(.semibold)).foregroundStyle(accentActionColor)
-                        .frame(width: 36, height: 32).contentShape(Rectangle())
+                        .frame(width: 36, height: 28).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("お題の固定を外す")
             }
-            // 0.20：キーボードが出ても回答欄が狭くならないよう少しだけ小さくする（画像を見ながら考えられる大きさは残す）。
+            // 0.21：キーボードが出ても「回答案を投稿」と「投稿」が両方見える大きさにする（画像は押すと拡大）。
             if !note.imageDataBase64.isEmpty {
-                GiriThoughtImage(base64: note.imageDataBase64).frame(maxHeight: 150)
+                GiriThoughtImage(base64: note.imageDataBase64).frame(maxHeight: 100)
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .appTintedCard(accentColor: AppSectionAccent.memo)
         .padding(.horizontal, 18)
         .padding(.vertical, 6)
         .background(appBackgroundColor)
+    }
+}
+
+// MARK: - 0.21 回答案の入力欄をキーボードの上に見せる
+
+let giriPostingFormID = "giri-posting-form"
+
+private struct GiriRevealPostingKey: EnvironmentKey {
+    static let defaultValue: (() -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    /// お題の画面で、回答案の入力欄（見出しから「投稿」まで）をキーボードの上に見せる。
+    var giriRevealPosting: (() -> Void)? {
+        get { self[GiriRevealPostingKey.self] }
+        set { self[GiriRevealPostingKey.self] = newValue }
+    }
+}
+
+/// キーボードが出てから、入力欄の行の下端（「投稿」）を見える位置へずらす。
+@MainActor
+func giriRevealPostingForm(_ proxy: ScrollViewProxy) {
+    Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(350))
+        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(giriPostingFormID, anchor: .bottom) }
     }
 }
