@@ -44,7 +44,8 @@ struct GiriEventDetail: View {
                     teams(event)
                     if event.isKumiteEvent { kumiteSection(event) }
                     // 0.25：通常会・企画の中のミニトナメ・ミニ組手・総当たりなどの結果（戦績・集計には入れない）。
-                    if event.meetingType != .tournament && event.eventFormat.hasLiveTiming { sideResultsSection(event) }
+                    // 0.27：基本情報で「対戦がある」にした会と、もう結果を入れた会だけに出す。
+                    if event.meetingType != .tournament && event.eventFormat.hasLiveTiming && (event.battleKind != nil || !event.sideResults.isEmpty) { sideResultsSection(event) }
                     if !event.stageBoards.isEmpty {
                         Section {
                             NavigationLink { GiriBoardBracketView(event: event) } label: {
@@ -165,7 +166,7 @@ struct GiriEventDetail: View {
                 }
                 .buttonStyle(.plain)
             }
-            Button { editingSideResult = GiriSideResult() } label: { Label("結果を追加", systemImage: "plus.circle") }
+            Button { editingSideResult = GiriSideResult(kind: event.battleKind ?? "tournament") } label: { Label("結果を追加", systemImage: "plus.circle") }
                 .tint(accentActionColor)
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
     }
@@ -202,7 +203,8 @@ struct GiriEventDetail: View {
         let children = store.events.filter { $0.parentEventId == event.id }
             .sorted { $0.createdAt < $1.createdAt }
         Section {
-            GiriEventCardSectionTitle(title: "この会の中の大会", systemImage: "trophy", accentColor: AppSectionAccent.ticket)
+            // 0.27：大会1・大会2…と分けた同じ会の大会。
+            GiriEventCardSectionTitle(title: "同じ会の大会", systemImage: "trophy", accentColor: AppSectionAccent.ticket)
                 .listRowSeparator(.hidden)
             if let parent {
                 NavigationLink { GiriEventDetail(eventID: parent.id) } label: {
@@ -234,6 +236,9 @@ struct GiriEventDetail: View {
                 detailValue("参加形式", giriTournamentFormatText(event))
                 if event.eventFormat == .live && event.knockout { detailValue("対戦形式", "トーナメント（1対1）") }
                 if !event.judging.isEmpty { detailValue("審査方法", event.judging) }
+            }
+            if let kind = event.battleKind, event.meetingType != .tournament {
+                detailValue("対戦", GiriSideResult.kinds.first { $0.value == kind }?.title ?? "その他")
             }
             if event.eventFormat == .live && event.selfRole != .player {
                 detailValue("自分の立場", event.selfRole.shortTitle(tournament: event.meetingType == .tournament))

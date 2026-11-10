@@ -325,7 +325,15 @@ struct GiriSiteDetail: View {
         if let required {
             seasonTotalRow("規定回答数", totals.rateSampleCount >= required ? "\(required)回答（達成）" : "\(required)回答（あと\(required - totals.rateSampleCount)）")
         }
-        seasonTotalRow(required == nil ? "平均（1人あたり）" : "上位\(required ?? 0)回答の平均（1人あたり）", totals.averagePointsPerVoter.map(giriScoreText) ?? "未記録")
+        // 0.27：リーグの規定数（○回以上・結果お題数の1/2以上など）に届いているか。
+        if let rule, let league = seasonLeague(site: site, seasonID: seasonID),
+           let needed = rule.leagueDetail(league).requiredAnswers(cycleCount: rule.regularCycleCount) {
+            seasonTotalRow("規定数（\(league)）", totals.answeredCycleCount >= needed ? "\(needed)回（達成）" : "\(needed)回（あと\(needed - totals.answeredCycleCount)）")
+        }
+        // 0.27：回ごとに勝ち抜けを決めるルールは、平均を出さない。
+        if rule?.scoring != .perRound {
+            seasonTotalRow(required == nil ? "平均（1人あたり）" : "上位\(required ?? 0)回答の平均（1人あたり）", totals.averagePointsPerVoter.map(giriScoreText) ?? "未記録")
+        }
         if totals.droppedLowerSamples {
             Text("得票率の低い\(totals.rateSampleCount - (required ?? 0))回答は平均に入れていません。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -334,6 +342,14 @@ struct GiriSiteDetail: View {
             Text("平均には回単位で残した点数\(totals.legacyRoundResultCount)件も含みます。")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    /// 0.27：そのシーズンに入っていたリーグ（記録した回の所属。なければ今のリーグ）。
+    private func seasonLeague(site: OnlineSite, seasonID: String?) -> String? {
+        guard site.hasAffiliations else { return nil }
+        let recorded = store.events.first { $0.onlineSiteId == site.id && $0.siteSeasonID == seasonID && !$0.affiliation.isEmpty }?.affiliation
+        let league = recorded ?? siteLeague(site)
+        return league.isEmpty ? nil : league
     }
 
     /// 合計成績の1行（本文より小さく、値は右に寄せる）。

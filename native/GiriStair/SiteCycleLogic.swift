@@ -593,14 +593,119 @@ enum GiriRuleKind: String, Codable, CaseIterable, Identifiable {
     var title: String { self == .online ? "ネット大喜利" : "生大喜利・スプシ系" }
 }
 
-/// シーズンの成績の出し方。
+/// 0.27：通常（サイトのシーズン）と大会でルールを分ける。生大喜利・スプシ系のルールは大会だけ。
+enum GiriRuleScope: String, Codable, CaseIterable, Identifiable {
+    case regular, tournament
+    var id: String { rawValue }
+    var title: String { self == .regular ? "通常" : "大会" }
+}
+
+/// シーズン・大会の成績の出し方。
 enum GiriRuleScoring: String, Codable, CaseIterable, Identifiable {
     /// 提出した全回答の平均。
     case allAnswers
     /// 規定回答数以上の時は、得票率の高い規定回答数分だけの平均。
     case topRequired
+    /// 0.27：合計得点の順。
+    case total
+    /// 0.27：回ごとに勝ち抜けを決める（平均・合計は出さない）。
+    case perRound
     var id: String { rawValue }
-    var title: String { self == .allAnswers ? "全回答の平均" : "規定回答数の上位の平均" }
+    var title: String {
+        switch self {
+        case .allAnswers: return "全回答の平均"
+        case .topRequired: return "規定回答数の上位の平均"
+        case .total: return "合計得点"
+        case .perRound: return "回ごとの勝ち抜け（平均なし）"
+        }
+    }
+}
+
+/// 0.27：勝ち抜けの割合（上位1/2など）。
+let giriAdvanceFractions: [(value: String, title: String)] = [("1/2", "半数"), ("2/3", "3分の2"), ("1/3", "3分の1"), ("1/4", "4分の1"), ("3/4", "4分の3")]
+
+/// 「1/2」などを分数として読む（読めない時は nil）。
+func giriFraction(_ text: String?) -> (numerator: Int, denominator: Int)? {
+    guard let text else { return nil }
+    let parts = text.split(separator: "/").map { Int($0.trimmingCharacters(in: .whitespaces)) }
+    guard parts.count == 2, let numerator = parts[0], let denominator = parts[1], numerator > 0, denominator > 0, numerator <= denominator else { return nil }
+    return (numerator, denominator)
+}
+
+/// 勝ち抜けの条件の短い説明（上位8人・上位半数など）。
+func giriAdvanceText(count: Int?, fraction: String?) -> String? {
+    if let count { return "上位\(count)人" }
+    if let fraction, giriFraction(fraction) != nil {
+        return "上位" + (giriAdvanceFractions.first { $0.value == fraction }?.title ?? fraction)
+    }
+    return nil
+}
+
+/// 割合で決める勝ち抜け・規定数を人数・回数にする（端数は切り上げ）。
+func giriFractionCount(_ fraction: String?, of total: Int) -> Int? {
+    guard let value = giriFraction(fraction), total > 0 else { return nil }
+    return (total * value.numerator + value.denominator - 1) / value.denominator
+}
+
+/// 0.27：リーグごとの決まり（規定数・お題の選び方・昇格／降格の人数）。
+struct GiriRuleLeague: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    var name: String = ""
+    /// 集計に入る規定数（結果が出たお題の数に対する割合。例：1/2）。
+    var requiredFraction: String? = nil
+    /// 集計に入る規定数（回数で決まっている時）。
+    var requiredCount: Int? = nil
+    /// 何題から1題を選んで回答するか。
+    var promptChoices: Int? = nil
+    /// 上位何人が上のリーグへ上がるか。
+    var promotionCount: Int? = nil
+    /// 下位何人が下のリーグへ下がるか。
+    var relegationCount: Int? = nil
+    /// 規定数に届かない人を最下位にするか。
+    var unqualifiedRanksLast: Bool = false
+}
+
+extension GiriRuleLeague {
+    private enum CodingKeys: String, CodingKey { case id, name, requiredFraction, requiredCount, promptChoices, promotionCount, relegationCount, unqualifiedRanksLast }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        requiredFraction = try c.decodeIfPresent(String.self, forKey: .requiredFraction)
+        requiredCount = try c.decodeIfPresent(Int.self, forKey: .requiredCount)
+        promptChoices = try c.decodeIfPresent(Int.self, forKey: .promptChoices)
+        promotionCount = try c.decodeIfPresent(Int.self, forKey: .promotionCount)
+        relegationCount = try c.decodeIfPresent(Int.self, forKey: .relegationCount)
+        unqualifiedRanksLast = try c.decodeIfPresent(Bool.self, forKey: .unqualifiedRanksLast) ?? false
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encodeIfPresent(requiredFraction, forKey: .requiredFraction)
+        try c.encodeIfPresent(requiredCount, forKey: .requiredCount)
+        try c.encodeIfPresent(promptChoices, forKey: .promptChoices)
+        try c.encodeIfPresent(promotionCount, forKey: .promotionCount)
+        try c.encodeIfPresent(relegationCount, forKey: .relegationCount)
+        if unqualifiedRanksLast { try c.encode(true, forKey: .unqualifiedRanksLast) }
+    }
+    /// シーズンの規定数（回数）。割合の時は、1シーズンの回数から数える。
+    func requiredAnswers(cycleCount: Int?) -> Int? {
+        if let requiredCount { return requiredCount }
+        guard let cycleCount else { return nil }
+        return giriFractionCount(requiredFraction, of: cycleCount)
+    }
+    /// 一覧・詳細に出す短い説明。
+    var summary: String {
+        var parts: [String] = []
+        if let requiredCount { parts.append("規定\(requiredCount)回以上") }
+        else if let fraction = requiredFraction, giriFraction(fraction) != nil { parts.append("規定：結果お題数の\(fraction)以上") }
+        if let choices = promptChoices { parts.append("\(choices)題から1題") }
+        if let up = promotionCount { parts.append("上位\(up)人昇格") }
+        if let down = relegationCount { parts.append("下位\(down)人降格") }
+        if unqualifiedRanksLast { parts.append("規定数未満は最下位") }
+        return parts.joined(separator: "・")
+    }
 }
 
 /// プレーオフ・入れ替え戦などの日程の決め方（最後の通常回の投票締切から何日後か）。
@@ -614,10 +719,17 @@ struct GiriRuleSpecialPlan: Codable, Equatable, Identifiable {
     var votingDays: Int = 7
     /// 同じ種類の回を何回行うか。
     var count: Int = 1
+    /// 0.27：出られる人数（上位何人）と、どのリーグから出るか。
+    var entrantCount: Int? = nil
+    var entrantLeague: String = ""
+    /// 0.27：順位の決め方（GiriRuleScoring の値。空はシーズンと同じ）。
+    var ranking: String = ""
+    /// 0.27：シーズンの成績に含めるか（プレーオフ・エキシビションは含めないことが多い）。
+    var countsInSeason: Bool = false
 }
 
 extension GiriRuleSpecialPlan {
-    private enum CodingKeys: String, CodingKey { case id, kind, title, startOffsetDays, submissionDays, votingDays, count }
+    private enum CodingKeys: String, CodingKey { case id, kind, title, startOffsetDays, submissionDays, votingDays, count, entrantCount, entrantLeague, ranking, countsInSeason }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
@@ -627,8 +739,34 @@ extension GiriRuleSpecialPlan {
         submissionDays = max(1, try c.decodeIfPresent(Int.self, forKey: .submissionDays) ?? 7)
         votingDays = max(1, try c.decodeIfPresent(Int.self, forKey: .votingDays) ?? 7)
         count = max(1, try c.decodeIfPresent(Int.self, forKey: .count) ?? 1)
+        entrantCount = try c.decodeIfPresent(Int.self, forKey: .entrantCount)
+        entrantLeague = try c.decodeIfPresent(String.self, forKey: .entrantLeague) ?? ""
+        ranking = try c.decodeIfPresent(String.self, forKey: .ranking) ?? ""
+        countsInSeason = try c.decodeIfPresent(Bool.self, forKey: .countsInSeason) ?? false
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(title, forKey: .title)
+        try c.encode(startOffsetDays, forKey: .startOffsetDays)
+        try c.encode(submissionDays, forKey: .submissionDays)
+        try c.encode(votingDays, forKey: .votingDays)
+        try c.encode(count, forKey: .count)
+        try c.encodeIfPresent(entrantCount, forKey: .entrantCount)
+        if !entrantLeague.isEmpty { try c.encode(entrantLeague, forKey: .entrantLeague) }
+        if !ranking.isEmpty { try c.encode(ranking, forKey: .ranking) }
+        if countsInSeason { try c.encode(true, forKey: .countsInSeason) }
     }
     var displayTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? kind.title : title }
+    /// 0.27：出る人・順位の決め方・シーズンに含めるかの短い説明。
+    var detailText: String {
+        var parts: [String] = []
+        if let entrants = entrantCount { parts.append((entrantLeague.isEmpty ? "" : entrantLeague) + "上位\(entrants)人") }
+        if let scoring = GiriRuleScoring(rawValue: ranking) { parts.append(scoring.title + "の順") }
+        parts.append(countsInSeason ? "シーズン成績に含める" : "シーズン成績に含めない")
+        return parts.joined(separator: "・")
+    }
 }
 
 /// 生大喜利の大会の段階の骨組み（結果・順位・人数は持たない）。
@@ -641,10 +779,17 @@ struct GiriRuleStage: Codable, Equatable, Identifiable {
     var judging: String = ""
     var promptCount: Int? = nil
     var advanceCount: Int? = nil
+    /// 0.27：割合で決める勝ち抜け（上位1/2など）。人数で決める時は advanceCount。
+    var advanceFraction: String? = nil
+    /// 0.27：ほかの勝ち抜けの条件（得点・ボーダーなど）のメモ。
+    var advanceNote: String = ""
 }
 
+/// 0.27：段階ごとの形式（準決勝だけタイマン、など）。
+let giriRuleStageLineups = ["横並び", "タイマン（1対1）", "グループ対戦", "リーグ（総当たり）", "お題ごとに勝ち抜け"]
+
 extension GiriRuleStage {
-    private enum CodingKeys: String, CodingKey { case id, name, kind, lineup, judging, promptCount, advanceCount }
+    private enum CodingKeys: String, CodingKey { case id, name, kind, lineup, judging, promptCount, advanceCount, advanceFraction, advanceNote }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
@@ -654,8 +799,24 @@ extension GiriRuleStage {
         judging = try c.decodeIfPresent(String.self, forKey: .judging) ?? ""
         promptCount = try c.decodeIfPresent(Int.self, forKey: .promptCount)
         advanceCount = try c.decodeIfPresent(Int.self, forKey: .advanceCount)
+        advanceFraction = try c.decodeIfPresent(String.self, forKey: .advanceFraction)
+        advanceNote = try c.decodeIfPresent(String.self, forKey: .advanceNote) ?? ""
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encode(lineup, forKey: .lineup)
+        try c.encode(judging, forKey: .judging)
+        try c.encodeIfPresent(promptCount, forKey: .promptCount)
+        try c.encodeIfPresent(advanceCount, forKey: .advanceCount)
+        try c.encodeIfPresent(advanceFraction, forKey: .advanceFraction)
+        if !advanceNote.isEmpty { try c.encode(advanceNote, forKey: .advanceNote) }
     }
     var stageKind: StageKind? { kind.flatMap(StageKind.init(rawValue:)) }
+    /// 0.27：勝ち抜けの条件（上位8人・上位半数など）。
+    var advanceText: String? { giriAdvanceText(count: advanceCount, fraction: advanceFraction) }
 }
 
 /// 保存して使い回すルール。ネット大喜利はシーズンごとに、生大喜利は大会ごとに選ぶ。
@@ -663,6 +824,8 @@ struct GiriRule: Codable, Equatable, Identifiable {
     var id: String = UUID().uuidString
     var name: String = ""
     var kind: GiriRuleKind = .online
+    /// 0.27：通常（シーズン）か大会か。生大喜利・スプシ系は大会だけ。
+    var scope: GiriRuleScope = .regular
     var memo: String = ""
     // ネット大喜利
     var scoring: GiriRuleScoring = .allAnswers
@@ -676,6 +839,16 @@ struct GiriRule: Codable, Equatable, Identifiable {
     /// 0.24：シーズンの上位○人が勝ち抜け（次の段階・昇格など）。自動では判定しない。
     var advanceCount: Int? = nil
     var leagues: [String] = []
+    /// 0.27：リーグごとの決まり（名前は leagues と同じ順）。
+    var leagueDetails: [GiriRuleLeague] = []
+    /// 0.27：割合で決める勝ち抜け（上位1/2など）。
+    var advanceFraction: String? = nil
+    /// 0.27：同率の時の決め方（例：投稿数が多い方を上位）。
+    var tieBreak: String = ""
+    /// 0.27：投票した時のボーナス点。
+    var voteBonusPoints: Int? = nil
+    /// 0.27：チーム戦の回答の出し方（"each"：各自が回答して合計・"team"：チームで回答を出す）。
+    var teamAnswerStyle: String? = nil
     var specialPlans: [GiriRuleSpecialPlan] = []
     // 生大喜利
     var tournamentFormat: TournamentFormat = .individual
@@ -685,6 +858,20 @@ struct GiriRule: Codable, Equatable, Identifiable {
     var updatedAt: Date = Date()
 
     var timing: SiteNextPromptTiming { SiteNextPromptTiming(rawValue: nextPrompt) ?? .withVoting }
+    /// 0.27：生大喜利・スプシ系は大会だけ。
+    var effectiveScope: GiriRuleScope { kind == .live ? .tournament : scope }
+    /// 0.27：成績の出し方は、大会と、リーグ・シーズンのある通常で使う。
+    var usesScoring: Bool { effectiveScope == .tournament || !leagues.isEmpty || regularCycleCount != nil }
+    /// 0.27：リーグの決まり（名前で引く。なければ名前だけ）。
+    func leagueDetail(_ name: String) -> GiriRuleLeague {
+        leagueDetails.first { $0.name == name } ?? GiriRuleLeague(name: name)
+    }
+    /// 0.27：リーグ名を並べ直す（決まりは同じ名前のものを残す）。
+    mutating func setLeagues(_ names: [String]) {
+        leagues = names
+        leagueDetails = names.map { leagueDetail($0) }
+    }
+    static let teamAnswerStyles: [(value: String, title: String)] = [("each", "各自が回答して合計"), ("team", "チームで回答を出す")]
     var displayName: String { name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "名前のないルール" : name }
 
     /// 0.24：複製（新しいIDで「のコピー」を付ける。プレーオフ・段階も新しいIDにする）。
@@ -693,6 +880,7 @@ struct GiriRule: Codable, Equatable, Identifiable {
         copy.id = UUID().uuidString
         copy.name = displayName + "のコピー"
         copy.specialPlans = specialPlans.map { var plan = $0; plan.id = UUID().uuidString; return plan }
+        copy.leagueDetails = leagueDetails.map { var league = $0; league.id = UUID().uuidString; return league }
         copy.stages = stages.map { var stage = $0; stage.id = UUID().uuidString; return stage }
         copy.updatedAt = now
         return copy
@@ -703,6 +891,7 @@ struct GiriRule: Codable, Equatable, Identifiable {
               (1...365).contains(submissionDays), (1...365).contains(votingDays), (1...730).contains(intervalDays),
               requiredAnswerCount.map({ (1...10000).contains($0) }) ?? true,
               advanceCount.map({ (1...10000).contains($0) }) ?? true,
+              voteBonusPoints.map({ (0...10000).contains($0) }) ?? true,
               regularCycleCount.map({ (1...10000).contains($0) }) ?? true,
               Set(specialPlans.map(\.id)).count == specialPlans.count, Set(stages.map(\.id)).count == stages.count else {
             throw GiriDataError.invalid("ルールの日数・回数を確認してください。")
@@ -712,13 +901,16 @@ struct GiriRule: Codable, Equatable, Identifiable {
 
 extension GiriRule {
     private enum CodingKeys: String, CodingKey {
-        case id, name, kind, memo, scoring, requiredAnswerCount, submissionDays, votingDays, nextPrompt, intervalDays, regularCycleCount, advanceCount, leagues, specialPlans, tournamentFormat, knockout, judging, stages, updatedAt
+        case id, name, kind, scope, memo, scoring, requiredAnswerCount, submissionDays, votingDays, nextPrompt, intervalDays, regularCycleCount, advanceCount, leagues, specialPlans, tournamentFormat, knockout, judging, stages, updatedAt
+        case leagueDetails, advanceFraction, tieBreak, voteBonusPoints, teamAnswerStyle
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         kind = (try? c.decodeIfPresent(GiriRuleKind.self, forKey: .kind)) ?? .online
+        // 0.26以前のルールは、ネットは通常・生は大会として読む。
+        scope = (try? c.decodeIfPresent(GiriRuleScope.self, forKey: .scope)) ?? (kind == .live ? .tournament : .regular)
         memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
         scoring = (try? c.decodeIfPresent(GiriRuleScoring.self, forKey: .scoring)) ?? .allAnswers
         requiredAnswerCount = try c.decodeIfPresent(Int.self, forKey: .requiredAnswerCount)
@@ -728,7 +920,15 @@ extension GiriRule {
         intervalDays = try c.decodeIfPresent(Int.self, forKey: .intervalDays) ?? 7
         regularCycleCount = try c.decodeIfPresent(Int.self, forKey: .regularCycleCount)
         advanceCount = try c.decodeIfPresent(Int.self, forKey: .advanceCount)
-        leagues = try c.decodeIfPresent([String].self, forKey: .leagues) ?? []
+        let leagueNames = try c.decodeIfPresent([String].self, forKey: .leagues) ?? []
+        leagues = leagueNames
+        let details = try c.decodeIfPresent([GiriRuleLeague].self, forKey: .leagueDetails) ?? []
+        // 決まりを書いていない（0.26以前の）ルールは空のまま読む（名前だけのリーグは leagueDetail で引ける）。
+        leagueDetails = details.isEmpty ? [] : leagueNames.map { name in details.first { $0.name == name } ?? GiriRuleLeague(name: name) }
+        advanceFraction = try c.decodeIfPresent(String.self, forKey: .advanceFraction)
+        tieBreak = try c.decodeIfPresent(String.self, forKey: .tieBreak) ?? ""
+        voteBonusPoints = try c.decodeIfPresent(Int.self, forKey: .voteBonusPoints)
+        teamAnswerStyle = try c.decodeIfPresent(String.self, forKey: .teamAnswerStyle)
         specialPlans = try c.decodeIfPresent([GiriRuleSpecialPlan].self, forKey: .specialPlans) ?? []
         tournamentFormat = (try? c.decodeIfPresent(TournamentFormat.self, forKey: .tournamentFormat)) ?? .individual
         knockout = try c.decodeIfPresent(Bool.self, forKey: .knockout) ?? false
@@ -742,6 +942,7 @@ extension GiriRule {
         try c.encode(id, forKey: .id)
         try c.encode(name, forKey: .name)
         try c.encode(kind, forKey: .kind)
+        try c.encode(scope, forKey: .scope)
         try c.encode(memo, forKey: .memo)
         try c.encode(scoring, forKey: .scoring)
         try c.encodeIfPresent(requiredAnswerCount, forKey: .requiredAnswerCount)
@@ -752,6 +953,13 @@ extension GiriRule {
         try c.encodeIfPresent(regularCycleCount, forKey: .regularCycleCount)
         try c.encodeIfPresent(advanceCount, forKey: .advanceCount)
         try c.encode(leagues, forKey: .leagues)
+        // 0.27：決まりを入れたリーグだけ書く。
+        let details = leagueDetails.filter { !$0.summary.isEmpty && leagues.contains($0.name) }
+        if !details.isEmpty { try c.encode(details, forKey: .leagueDetails) }
+        try c.encodeIfPresent(advanceFraction, forKey: .advanceFraction)
+        if !tieBreak.isEmpty { try c.encode(tieBreak, forKey: .tieBreak) }
+        try c.encodeIfPresent(voteBonusPoints, forKey: .voteBonusPoints)
+        try c.encodeIfPresent(teamAnswerStyle, forKey: .teamAnswerStyle)
         try c.encode(specialPlans, forKey: .specialPlans)
         try c.encode(tournamentFormat, forKey: .tournamentFormat)
         try c.encode(knockout, forKey: .knockout)
@@ -762,20 +970,23 @@ extension GiriRule {
 
     /// 一覧に出す短い説明。
     var summary: String {
-        switch kind {
-        case .online:
-            var parts = [timing.title, "投稿\(submissionDays)日・投票\(votingDays)日"]
-            if let count = regularCycleCount { parts.append("1シーズン\(count)回") }
-            if scoring == .topRequired, let required = requiredAnswerCount { parts.append("規定\(required)回答") }
-            if let advance = advanceCount { parts.append("上位\(advance)人勝ち抜け") }
-            if !specialPlans.isEmpty { parts.append(specialPlans.map(\.displayTitle).joined(separator: "・")) }
-            return parts.joined(separator: "・")
-        case .live:
-            var parts = [tournamentFormat.title]
-            if knockout { parts.append("トーナメント") }
+        var parts: [String] = []
+        if effectiveScope == .tournament {
+            parts.append(tournamentFormat.title)
+            if knockout && kind == .live { parts.append("トーナメント") }
+            if kind == .online { parts.append("投稿\(submissionDays)日・投票\(votingDays)日") }
             if !stages.isEmpty { parts.append(stages.map { $0.name.isEmpty ? ($0.stageKind?.title ?? "段階") : $0.name }.joined(separator: "→")) }
-            return parts.joined(separator: "・")
+        } else {
+            parts = [timing.title, "投稿\(submissionDays)日・投票\(votingDays)日"]
+            if let count = regularCycleCount { parts.append("全\(count)回で1シーズン") }
+            if !leagues.isEmpty { parts.append(leagues.joined(separator: "・")) }
         }
+        if usesScoring && scoring != .allAnswers { parts.append(scoring.title) }
+        if scoring == .topRequired, let required = requiredAnswerCount { parts.append("規定\(required)回答") }
+        if let advance = giriAdvanceText(count: advanceCount, fraction: advanceFraction) { parts.append(advance + "勝ち抜け") }
+        if let bonus = voteBonusPoints { parts.append("投票ボーナス\(bonus)点") }
+        if !specialPlans.isEmpty { parts.append(specialPlans.map(\.displayTitle).joined(separator: "・")) }
+        return parts.joined(separator: "・")
     }
 }
 
@@ -810,7 +1021,8 @@ func giriRule(from site: OnlineSite) -> GiriRule {
 
 /// ルールの日程・リーグ・回数をサイトに入れる（今の回の締切・番号は変えない）。
 func giriApplyRule(_ rule: GiriRule, to site: inout OnlineSite) {
-    guard rule.kind == .online else { return }
+    // 0.27：サイトのシーズンには「通常」のルールだけを入れる。
+    guard rule.kind == .online, rule.effectiveScope == .regular else { return }
     site.submissionDays = rule.submissionDays
     site.votingDays = rule.votingDays
     applySiteTiming(rule.timing, to: &site, intervalDays: rule.intervalDays)
@@ -836,7 +1048,7 @@ func giriApplyRule(_ rule: GiriRule, to site: inout OnlineSite) {
 func giriRulePlanPeriods(_ rule: GiriRule, site: OnlineSite, calendar: Calendar = .current) -> [SiteSpecialPeriod] {
     let settings = site.cycleSettings ?? SiteCycleSettings()
     var periods = settings.specialPeriods.filter { !$0.id.hasPrefix("rule-plan:") }
-    guard rule.kind == .online, let lastEnd = siteSeasonLastCycleEnd(site, calendar: calendar) else { return periods }
+    guard rule.kind == .online, rule.effectiveScope == .regular, let lastEnd = siteSeasonLastCycleEnd(site, calendar: calendar) else { return periods }
     let sequentialAfterVoting = rule.timing == .afterVoting
     for plan in rule.specialPlans {
         var start = addCalendarDays(lastEnd, plan.startOffsetDays, calendar: calendar)
@@ -861,7 +1073,13 @@ func giriRulePlanPeriods(_ rule: GiriRule, site: OnlineSite, calendar: Calendar 
 /// 生大喜利の大会の形式から、ルールを作る（段階の名前・種類・形式・審査方法・お題数・通過枠）。
 func giriRule(from event: GiriEvent) -> GiriRule {
     var rule = GiriRule()
-    rule.kind = .live
+    // 0.27：ネットの大会のルールは、ネット大喜利の「大会」として作る。
+    rule.kind = event.eventFormat.isOnline ? .online : .live
+    rule.scope = .tournament
+    rule.submissionDays = event.effectiveRounds.first.flatMap { round in
+        guard let start = round.submissionStart, let end = round.submissionEnd else { return nil }
+        return max(1, Calendar.current.dateComponents([.day], from: start, to: end).day ?? 0)
+    } ?? rule.submissionDays
     rule.name = event.series.isEmpty ? event.title : event.series
     rule.tournamentFormat = event.tournamentFormat
     rule.knockout = event.knockout
@@ -873,14 +1091,21 @@ func giriRule(from event: GiriEvent) -> GiriRule {
     return rule
 }
 
-/// 生大喜利のルールを大会に入れる（参加形式・対戦形式・審査方法）。段階は結果の入力で入れる。
+/// 大会のルールを大会に入れる（参加形式・対戦形式・審査方法）。段階は結果の入力で入れる。
+/// 0.27：ネットの大会には、ネット大喜利の「大会」のルールを入れる。
 func giriApplyRule(_ rule: GiriRule, to event: inout GiriEvent) {
-    guard rule.kind == .live else { return }
+    guard giriRuleFits(rule, event: event) else { return }
     event.ruleID = rule.id
     event.tournamentFormat = rule.tournamentFormat
     // トーナメント（1対1）の対戦形式は生大喜利だけ（スプシ系では使わない）。
     event.knockout = event.eventFormat == .live ? rule.knockout : false
     if !rule.judging.isEmpty { event.judging = rule.judging }
+}
+
+/// 0.27：その大会に選べるルールか（ネットの大会はネットの大会のルール、生・スプシ系は生大喜利・スプシ系のルール）。
+func giriRuleFits(_ rule: GiriRule, event: GiriEvent) -> Bool {
+    if event.eventFormat.isOnline { return rule.kind == .online && rule.effectiveScope == .tournament }
+    return rule.kind == .live
 }
 
 /// ルールの段階を、結果の段階（未入力）にする。
@@ -893,6 +1118,9 @@ func giriRuleStageResults(_ rule: GiriRule) -> [ResultStage] {
         stage.judging = item.judging
         stage.promptCount = item.promptCount
         stage.advanceCount = item.advanceCount
+        // 0.27：割合や得点で決める勝ち抜けは、段階のメモに残す（人数は結果の参加者数で変わるため）。
+        let notes = [item.advanceCount == nil ? item.advanceText.map { $0 + "が勝ち抜け" } : nil, item.advanceNote.isEmpty ? nil : item.advanceNote].compactMap { $0 }
+        if !notes.isEmpty { stage.memo = notes.joined(separator: "。") }
         return stage
     }
 }
@@ -929,6 +1157,7 @@ let giriRuleTemplates: [GiriRule] = {
     var templates: [GiriRule] = []
     func add(_ id: String, _ name: String, _ kind: GiriRuleKind, _ change: (inout GiriRule) -> Void) {
         var rule = GiriRule(id: "template:" + id, name: name, kind: kind)
+        rule.scope = kind == .live ? .tournament : .regular
         rule.updatedAt = Date(timeIntervalSince1970: 0)
         change(&rule)
         templates.append(rule)
@@ -960,6 +1189,55 @@ let giriRuleTemplates: [GiriRule] = {
         rule.nextPrompt = SiteNextPromptTiming.afterVoting.rawValue
         rule.memo = "投稿が終わって投票、投票が終わってから次のお題。"
     }
+    // 0.27：2部制の昇格・降格リーグ（規定数以上の人をシーズン得票率で並べ、入れ替える）。
+    add("two-league-promotion", "1部・2部の昇格降格リーグ（全8回）", .online) { rule in
+        rule.submissionDays = 7
+        rule.votingDays = 4
+        rule.regularCycleCount = 8
+        rule.scoring = .allAnswers
+        rule.leagues = ["1部", "2部"]
+        rule.leagueDetails = [
+            GiriRuleLeague(name: "1部", requiredFraction: "1/2", promptChoices: 2, relegationCount: 15, unqualifiedRanksLast: true),
+            GiriRuleLeague(name: "2部", requiredFraction: "1/8", promptChoices: 4, promotionCount: 15),
+        ]
+        rule.tieBreak = "同率は投稿数が多い方を上位"
+        rule.voteBonusPoints = 3
+        rule.specialPlans = [
+            GiriRuleSpecialPlan(kind: .playoff, title: "プレーオフ", startOffsetDays: 0, submissionDays: 7, votingDays: 4, count: 1,
+                                entrantCount: 7, entrantLeague: "1部", ranking: GiriRuleScoring.total.rawValue, countsInSeason: false),
+            GiriRuleSpecialPlan(kind: .exhibition, title: "エキシビション", startOffsetDays: 0, submissionDays: 7, votingDays: 4, count: 1, countsInSeason: false),
+        ]
+        rule.memo = "規定数（1部は結果が出たお題数の1/2以上、2部は1/8以上）に届いた人を、シーズンの得票率で並べる。1部の下位と2部の上位が入れ替わる。プレーオフ・エキシビションはシーズンの成績に含めない。"
+    }
+    // 0.27：ネット大喜利の大会。
+    add("online-half-knockout", "お題ごとに上位半数が勝ち抜け", .online) { rule in
+        rule.scope = .tournament
+        rule.scoring = .perRound
+        let rounds = (1...4).map { number in
+            GiriRuleStage(name: "\(number)回戦", kind: StageKind.other.rawValue, lineup: "お題ごとに勝ち抜け", promptCount: 1, advanceFraction: "1/2")
+        }
+        rule.stages = rounds + [
+            GiriRuleStage(name: "準決勝", kind: StageKind.semifinal.rawValue, lineup: "お題ごとに勝ち抜け", promptCount: 1, advanceFraction: "1/2"),
+            GiriRuleStage(name: "決勝", kind: StageKind.final.rawValue, promptCount: 1),
+        ]
+    }
+    add("online-league-final", "予選リーグ→敗者復活→決勝リーグ", .online) { rule in
+        rule.scope = .tournament
+        rule.scoring = .total
+        rule.stages = [
+            GiriRuleStage(name: "予選リーグ", kind: StageKind.qualifier.rawValue, lineup: "グループ対戦", promptCount: 3),
+            GiriRuleStage(name: "敗者復活戦", kind: StageKind.repechage.rawValue),
+            GiriRuleStage(name: "決勝リーグ", kind: StageKind.main.rawValue, lineup: "グループ対戦"),
+            GiriRuleStage(name: "決勝戦", kind: StageKind.final.rawValue),
+        ]
+    }
+    add("online-team", "チーム戦（チームで回答）", .online) { rule in
+        rule.scope = .tournament
+        rule.tournamentFormat = .team
+        rule.teamAnswerStyle = "team"
+        rule.scoring = .total
+        rule.stages = [giriRuleStage(.qualifier), giriRuleStage(.final)]
+    }
     add("qualifier-final", "予選→決勝", .live) { rule in
         rule.stages = [giriRuleStage(.qualifier, lineup: "横並び"), giriRuleStage(.final)]
     }
@@ -968,6 +1246,9 @@ let giriRuleTemplates: [GiriRule] = {
     }
     add("qualifier-semifinal", "予選→準決勝→決勝", .live) { rule in
         rule.stages = [giriRuleStage(.qualifier, lineup: "横並び"), giriRuleStage(.semifinal), giriRuleStage(.final)]
+    }
+    add("semifinal-taiman", "予選→準決勝だけタイマン→決勝", .live) { rule in
+        rule.stages = [giriRuleStage(.qualifier, lineup: "横並び", advanceCount: 4), giriRuleStage(.semifinal, lineup: "タイマン（1対1）", advanceCount: 2), giriRuleStage(.final, lineup: "横並び")]
     }
     add("knockout", "トーナメント（準々決勝から）", .live) { rule in
         rule.knockout = true

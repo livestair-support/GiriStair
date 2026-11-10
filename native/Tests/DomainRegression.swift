@@ -521,6 +521,7 @@ struct DomainRegression {
             try check(totals.averageVoteRate == 50, "each answer rate has equal weight regardless of its voter count and unknown scores are excluded")
             let legacyTotals = giriSeasonTotals(siteID: site.id, seasonID: "stats-season", seasonName: "秋の陣", events: [event], notes: [])
             try check(legacyTotals.submittedAnswerCount == 0 && legacyTotals.scoredAnswerCount == 0 && legacyTotals.legacyRoundResultCount == 1 && legacyTotals.averageVoteRate == 90, "legacy round rates are labelled separately without inventing an answer count")
+            try check(totals.answeredCycleCount == 1 && legacyTotals.answeredCycleCount == 1, "a cycle with answers or an old round score counts once toward a league's required count")
             let emptyTotals = giriSeasonTotals(siteID: site.id, seasonID: "absent", seasonName: "別シーズン", events: [event], notes: [own])
             try check(emptyTotals.rateSampleCount == 0 && emptyTotals.averageVoteRate == nil, "unknown season rates remain unavailable rather than becoming zero")
 
@@ -1838,6 +1839,134 @@ struct DomainRegression {
             try check(read.filter { $0.section == .interested }.map(\.name) == ["ジャストワン", "良さげ"] && Set(read.map(\.id)).count == read.count,
                       "they are not listed again as interested and IDs stay unique")
             try check(giriListedParticipantCount(page.map(\.text)) == 10 && read.filter(\.included).count == 6, "the page count can be compared with the selected people")
+        }
+
+        // 0.26 OCR names with @/bracket notes and 一/ー, merging two records of the same player.
+        do {
+            try check(giriCleanParticipantText("しゅにく@大喜利垢").name == "しゅにく" && giriCleanParticipantText("しゅにく ＠告知").name == "しゅにく"
+                      && giriCleanParticipantText("@handle").name == "@handle", "an @ note after an X name is removed")
+            try check(giriMatchRegisteredName("しゅにく(大喜利)", known: ["しゅにく"]) == "しゅにく" && giriMatchRegisteredName("しゅにく【告知】", known: ["しゅにく"]) == "しゅにく",
+                      "a bracket note after a name still matches the registered name")
+            try check(giriMatchRegisteredName("新しい(仮)", known: ["しゅにく"]) == nil && giriNameWithoutTrailingNote("(仮)") == "(仮)", "unknown names keep their brackets")
+            try check(giriMatchRegisteredName("金田ー", known: ["金田一"]) == "金田一" && giriMatchRegisteredName("一ノ瀬", known: ["ー之瀬", "一ノ瀬"]) == "一ノ瀬",
+                      "the kanji one and the long mark are read as the same letter")
+            let read = giriParticipantCandidates(text: "参加者（2人）\n金田ー\nたろう@大喜利", known: ["金田一", "たろう"])
+            try check(read.map(\.name) == ["金田一", "たろう"] && read.allSatisfy { $0.registered != nil }, "pasted lists link misread and annotated names to registered players")
+
+            let mergeDirectory = temp.appendingPathComponent("merge", isDirectory: true)
+            let mergeStore = GiriStore(directory: mergeDirectory)
+            var kana = GiriPlayer(name: "たろう"); kana.furigana = "たろう"; kana.memo = "ひらがなの記録"; kana.aliases = ["タロ"]
+            var kanji = GiriPlayer(name: "太郎"); kanji.memo = "漢字の記録"; kanji.region = "関西"
+            try mergeStore.savePlayer(kana)
+            try mergeStore.savePlayer(kanji)
+            var meeting = GiriEvent(title: "統合の会"); meeting.eventFormat = .live; meeting.participants = ["たろう", "はなこ"]
+            meeting.stageBoards = [GiriStageBoard(id: "s", blocks: [GiriBoardBlock(name: "A", members: ["たろう"], winners: ["たろう"])])]
+            try mergeStore.saveEvent(meeting)
+            var note = ThoughtNote(title: "お題", kind: .answers); note.answerRecords = [AnswerRecord(text: "ツボ", answerer: "たろう")]
+            try mergeStore.saveNote(note)
+            var renamed = kana; renamed.name = "太郎"
+            try mergeStore.mergePlayer(renamed, into: "太郎")
+            let merged = mergeStore.players.filter { playerSearchKey($0.name) == playerSearchKey("太郎") || playerSearchKey($0.name) == playerSearchKey("たろう") }
+            try check(merged.count == 1 && merged[0].name == "太郎" && merged[0].furigana == "たろう" && merged[0].region == "関西"
+                      && merged[0].memo.contains("漢字の記録") && merged[0].memo.contains("ひらがなの記録") && merged[0].aliases == ["タロ"],
+                      "merging keeps one player with the target's fields and fills the empty ones")
+            let event = mergeStore.events.first { $0.title == "統合の会" }
+            try check(event?.participants == ["太郎", "はなこ"] && event?.stageBoards.first?.blocks.first?.winners == ["太郎"]
+                      && mergeStore.notes.first?.answerRecords.first?.answerer == "太郎", "records under the old name move to the merged player")
+        }
+
+        // 0.27 multiple tournaments in one meeting, battles in casual meetings, separate regular/tournament rules and rule reading.
+        do {
+            try check(giriNumberedTournamentTitle(rootTitle: "架空杯1", rootIsTournament: true, groupCount: 2, number: 3) == "架空杯3"
+                      && giriNumberedTournamentTitle(rootTitle: "架空の会", rootIsTournament: false, groupCount: 1, number: 1) == "架空の会 大会1",
+                      "tournaments in the same meeting are numbered after the original name")
+            try check(giriTournamentGroupBase(["架空杯1", "架空杯2", "架空杯3"]) == "架空杯" && giriTournamentGroupBase(["架空杯1", "別の大会"]) == nil
+                      && giriTournamentGroupBase(["M-11", "M-12"]) == "M-1", "only names that differ by their number go back to the original name")
+
+            let splitDirectory = temp.appendingPathComponent("split", isDirectory: true)
+            let splitStore = GiriStore(directory: splitDirectory)
+            var cup = GiriEvent(title: "架空杯"); cup.eventFormat = .live; cup.meetingType = .tournament; cup.participants = ["はるか"]
+            try splitStore.saveEvent(cup)
+            let renamedTitle = try splitStore.splitTournament(cup.id)
+            let group = splitStore.tournamentGroup(of: cup.id)
+            try check(renamedTitle == "架空杯1" && group.map(\.title) == ["架空杯1", "架空杯2"] && group[1].parentEventId == cup.id && group[1].participants == ["はるか"],
+                      "turning on multiple tournaments renames the original to 1 and adds 2")
+            try splitStore.addTournament(inside: cup.id)
+            try check(splitStore.tournamentGroup(of: cup.id).map(\.title) == ["架空杯1", "架空杯2", "架空杯3"], "more tournaments continue the numbering")
+            let restored = try splitStore.mergeTournamentGroup(keeping: cup.id)
+            try check(restored == "架空杯" && splitStore.events.count == 1 && splitStore.events[0].title == "架空杯" && splitStore.deletedEvents.count == 2,
+                      "turning it off keeps this tournament with its original name and moves the others to recently deleted")
+
+            var casual = GiriEvent(title: "対戦のある会"); casual.eventFormat = .live; casual.meetingType = .casual
+            let plainCasual = try JSONSerialization.jsonObject(with: JSONEncoder().encode(casual)) as? [String: Any]
+            try check(plainCasual?["battleKind"] == nil, "meetings without battles keep the older JSON shape")
+            casual.battleKind = "roundRobin"
+            let battle = try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(casual))
+            try check(battle.battleKind == "roundRobin", "the battle format in basic info roundtrips")
+
+            let oldRule = try JSONDecoder().decode(GiriRule.self, from: Data(#"{"id":"old","name":"昔のルール","kind":"live","leagues":[],"specialPlans":[],"stages":[{"id":"s","name":"予選"}]}"#.utf8))
+            let oldOnline = try JSONDecoder().decode(GiriRule.self, from: Data(#"{"id":"old2","kind":"online","leagues":["1部","2部"]}"#.utf8))
+            try check(oldRule.effectiveScope == .tournament && oldOnline.scope == .regular && oldOnline.leagueDetails.isEmpty && oldOnline.leagueDetail("2部").name == "2部",
+                      "rules saved before 0.27 read as live tournaments and online regular seasons")
+            let plainRuleJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(oldOnline)) as? [String: Any]
+            try check(plainRuleJSON?["leagueDetails"] == nil && plainRuleJSON?["voteBonusPoints"] == nil && plainRuleJSON?["tieBreak"] == nil, "empty new rule fields are not written")
+
+            guard let league = giriRuleTemplates.first(where: { $0.id == "template:two-league-promotion" }) else { throw GiriDataError.invalid("Missing league template") }
+            let upper = league.leagueDetail("1部"), lower = league.leagueDetail("2部")
+            try check(league.effectiveScope == .regular && league.regularCycleCount == 8 && league.submissionDays == 7 && league.votingDays == 4 && league.voteBonusPoints == 3,
+                      "the two-league template has eight cycles, 7/4 day periods and a voting bonus")
+            try check(upper.requiredAnswers(cycleCount: 8) == 4 && lower.requiredAnswers(cycleCount: 8) == 1 && upper.relegationCount == 15 && lower.promotionCount == 15
+                      && upper.unqualifiedRanksLast && upper.promptChoices == 2 && lower.promptChoices == 4, "league requirements, choices and the 15-person exchange are kept per league")
+            try check(league.specialPlans.allSatisfy { !$0.countsInSeason } && league.specialPlans.first?.entrantCount == 7 && league.specialPlans.first?.ranking == GiriRuleScoring.total.rawValue,
+                      "playoffs and exhibitions do not count toward the season")
+            let roundtripLeague = try JSONDecoder().decode(GiriRule.self, from: JSONEncoder().encode(league))
+            try check(roundtripLeague == league, "rules with league details roundtrip")
+            try check(giriRuleTemplates.allSatisfy { !$0.name.isEmpty } && giriRuleTemplates.contains { $0.kind == .online && $0.effectiveScope == .tournament }
+                      && league.usesScoring, "online tournament templates exist and seasons with leagues use scoring")
+            var noSeason = GiriRule(kind: .online)
+            try check(!noSeason.usesScoring, "regular rules without leagues or seasons do not ask for scoring")
+            noSeason.scope = .tournament
+            try check(noSeason.usesScoring, "tournament rules always use scoring")
+            try check(giriAdvanceText(count: 8, fraction: nil) == "上位8人" && giriAdvanceText(count: nil, fraction: "1/2") == "上位半数" && giriFractionCount("2/3", of: 10) == 7,
+                      "advancement can be a number or a fraction of the field")
+            var halfStage = GiriRuleStage(name: "1回戦", advanceFraction: "1/2")
+            halfStage.advanceNote = "同点は再投票"
+            try check(giriRuleStageResults(GiriRule(kind: .online, scope: .tournament, stages: [halfStage])).first?.memo == "上位半数が勝ち抜け。同点は再投票",
+                      "fractional advancement is kept in the stage memo when stages are created from a rule")
+
+            let regularText = """
+            架空リーグ ルール
+            1部・2部の昇格制です。全8回で1シーズンです。
+            規定数以上（1部：結果お題数の1/2以上、2部：8分の1以上）回答した人の得票率で集計します。
+            シーズン終了後、1部下位15名と2部上位15名が入れ替えです。
+            同率の場合は投稿数が多い方が上位です。1部の集計対象外の人は最下位です。
+            プレーオフ：1部上位7名、合計得点順、シーズン成績に含まない
+            エキシビションはシーズン成績に含みません。
+            投稿期間7日、投票期間4日。1部は2題から1題、2部は4題から1題を選んで回答。
+            投票ボーナス3点
+            """
+            let read = giriRuleReadingText(regularText, into: GiriRule(kind: .online))
+            let readUpper = read.rule.leagueDetail("1部"), readLower = read.rule.leagueDetail("2部")
+            try check(read.rule.submissionDays == 7 && read.rule.votingDays == 4 && read.rule.regularCycleCount == 8 && read.rule.leagues == ["1部", "2部"] && read.rule.voteBonusPoints == 3,
+                      "reading a rule page fills periods, cycles, leagues and the voting bonus")
+            try check(readUpper.requiredFraction == "1/2" && readLower.requiredFraction == "1/8" && readUpper.relegationCount == 15 && readLower.promotionCount == 15
+                      && readUpper.promptChoices == 2 && readLower.promptChoices == 4 && readUpper.unqualifiedRanksLast && !readLower.unqualifiedRanksLast,
+                      "per-league requirements, exchanges and prompt choices are read separately")
+            let playoff = read.rule.specialPlans.first { $0.kind == .playoff }
+            try check(playoff?.entrantCount == 7 && playoff?.entrantLeague == "1部" && playoff?.ranking == GiriRuleScoring.total.rawValue && playoff?.countsInSeason == false
+                      && read.rule.specialPlans.contains { $0.kind == .exhibition } && read.rule.tieBreak.contains("投稿数"), "playoffs, exhibitions and tie breaks are read")
+
+            let tournamentText = """
+            架空グランプリ
+            お題毎に上位半数が勝ち抜けです。
+            1〜4回戦、準決勝、決勝の順に進みます。準決勝だけタイマン。
+            """
+            let cupRead = giriRuleReadingText(tournamentText, into: GiriRule(kind: .online, scope: .tournament))
+            try check(cupRead.rule.stages.map(\.name) == ["1回戦", "2回戦", "3回戦", "4回戦", "準決勝", "決勝"], "reading a tournament page expands the round range in order")
+            try check(cupRead.rule.stages.dropLast().allSatisfy { $0.advanceFraction == "1/2" } && cupRead.rule.stages.last?.advanceFraction == nil
+                      && cupRead.rule.stages.first { $0.name == "準決勝" }?.lineup == "タイマン（1対1）", "half advancement applies before the final and the semifinal format is read")
+            let unreadable = giriRuleReadingText("こんにちは", into: GiriRule(kind: .online))
+            try check(unreadable.found.isEmpty && unreadable.rule == GiriRule(id: unreadable.rule.id, kind: .online, updatedAt: unreadable.rule.updatedAt), "text without rules changes nothing")
         }
 
         print("Native domain regressions passed: \(passed)")

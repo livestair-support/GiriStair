@@ -49,7 +49,9 @@ private struct GiriRootView: View {
     var body: some View {
         Group {
             if store.loaded {
-                tabs
+                // 0.27：GiriStair テーマとほかのテーマを切り替えた時は、色を読み直すため全体を描き直す
+                // （ライト／ダーク／端末に合わせるは外観で色が決まるので、描き直さなくても変わる）。
+                tabs.id(store.preferences.theme == "stair")
             } else {
                 NavigationStack {
                     Form {
@@ -124,10 +126,7 @@ private struct GiriRootView: View {
     }
 
     private func synchronizeTheme() {
-        let mode = store.preferences.theme == "stair" ? "livestair" : store.preferences.theme
-        if UserDefaults.standard.string(forKey: "appearanceMode") != mode {
-            UserDefaults.standard.set(mode, forKey: "appearanceMode")
-        }
+        giriSynchronizeAppearanceMode(store.preferences.theme)
     }
 
     private func promptForResult() {
