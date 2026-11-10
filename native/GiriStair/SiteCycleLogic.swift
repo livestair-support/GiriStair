@@ -808,7 +808,8 @@ func giriApplyRule(_ rule: GiriRule, to site: inout OnlineSite) {
     site.cycleSettings = settings
     site.seasonRuleIDs[giriSeasonRuleKey(settings.seasonID)] = rule.id
     // プレーオフなどは、最後の通常回が分かる時だけ日程を作る。
-    site.cycleSettings?.specialPeriods = giriRulePlanPeriods(rule, site: site)
+    let planned = giriRulePlanPeriods(rule, site: site)
+    site.cycleSettings?.specialPeriods = planned
 }
 
 /// ルールの「プレーオフ・入れ替え戦」から、シーズンの特別な日程を作る。

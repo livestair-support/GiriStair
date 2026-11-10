@@ -757,7 +757,8 @@ struct GiriSiteCycleSettingsForm: View {
             if rule.timing == .interval { intervalDays = rule.intervalDays }
             updateSchedule()
             // 締切から数え直した最後の回に合わせて、プレーオフなどの日程を作り直す。
-            site.cycleSettings?.specialPeriods = giriRulePlanPeriods(rule, site: site)
+            let planned = giriRulePlanPeriods(rule, site: site)
+            site.cycleSettings?.specialPeriods = planned
         } else {
             site.seasonRuleIDs.removeValue(forKey: giriSeasonRuleKey(site.cycleSettings?.seasonID))
         }
