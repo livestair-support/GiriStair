@@ -360,6 +360,16 @@ struct GiriResultEntry: View {
         })
     }
 
+    /// 0.23：ルールの段階（名前・種類・形式・審査方法・お題数・通過枠）を入れる。
+    private func applyRuleStages(_ rule: GiriRule) {
+        let live = event.map { !$0.eventFormat.hasOnlineRounds } ?? true
+        for var stage in giriRuleStageResults(rule) {
+            if live { stage.laps = giriNormalizedLaps(stage, lapCount: 1) }
+            result.stages.append(stage)
+            existing.insert(stage.id)
+        }
+    }
+
     /// 前回の同じ大会（同じ主催・同じ名前）の段階構成を使う。
     private func applyTemplate(from source: GiriEvent) {
         for stage in giriStageTemplate(from: source) {
@@ -475,6 +485,17 @@ struct GiriResultEntry: View {
                     .buttonStyle(.plain)
             }
             if wide.isEmpty && rounds.isEmpty { skeletonReadRow(event) }
+            // 0.23：大会に選んだルールの段階を入れる。
+            if wide.isEmpty && rounds.isEmpty, let rule = event.ruleID.flatMap({ store.rule($0) }), !rule.stages.isEmpty {
+                Button { applyRuleStages(rule) } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label("ルールの段階を入れる", systemImage: "list.bullet.rectangle")
+                        Text(rule.displayName + "：" + rule.stages.map { $0.name.isEmpty ? ($0.stageKind?.title ?? "段階") : $0.name }.joined(separator: "→"))
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+                .tint(accentActionColor)
+            }
             if wide.isEmpty && rounds.isEmpty, let source = giriStageTemplateSource(for: event, in: store.events) {
                 Button { applyTemplate(from: source) } label: {
                     VStack(alignment: .leading, spacing: 3) {

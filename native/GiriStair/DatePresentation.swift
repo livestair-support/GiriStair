@@ -51,6 +51,12 @@ enum GiriDateText {
         return render(date, format: includesYear ? "yyyy年M月d日(E) H:mm" : "M/d(E) H:mm")
     }
 
+    /// 0.23：年を入れた短い日時（例：2026/11/2(月) 22:00）。お題/回答の履歴の締切に使う。
+    static func compactDateTime(_ date: Date?) -> String {
+        guard let date else { return "未定" }
+        return render(date, format: "yyyy/M/d") + weekdayBadge(date) + " " + time(date)
+    }
+
     /// SettingsView.swift uses Japanese medium date + short time for backups.
     static func backupDateTime(_ date: Date?) -> String {
         guard let date else { return "未定" }

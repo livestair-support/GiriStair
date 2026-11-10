@@ -40,6 +40,8 @@ struct GiriEventEditor: View {
     @State private var removingParticipant: Int?
     /// 0.19：募集期間の開始・締切を選ぶシート。
     @State private var entryEndpoint: GiriEntryEndpoint?
+    /// 0.23：今の大会の形式から作るルール（シートで開く）。
+    @State private var creatingRule: GiriRule?
 
     init(event: GiriEvent? = nil, onSaved: (() -> Void)? = nil) {
         self.event = event
@@ -362,6 +364,25 @@ struct GiriEventEditor: View {
             if let event { navigation.markEditor(event.id, unsaved: false) }
             dismiss()
         }
+        .sheet(item: $creatingRule) { rule in
+            NavigationStack { GiriRuleEditor(rule: rule, isNew: true) { saved in applyLiveRule(saved.id, saved: saved) } }
+        }
+    }
+
+    /// 0.23：生大喜利の大会のルール。選ぶと参加形式・対戦形式・審査方法を入れ、段階は結果の入力で入れられる。
+    private var liveRuleRow: some View {
+        HStack(spacing: 8) {
+            GiriEditorLabel("ルール")
+            Spacer(minLength: 8)
+            GiriRuleMenuPicker(kind: .live, selectedID: draft.ruleID,
+                               onSelect: { applyLiveRule($0) },
+                               onCreate: { creatingRule = giriRule(from: draft) })
+        }
+    }
+
+    private func applyLiveRule(_ id: String?, saved: GiriRule? = nil) {
+        guard let id, let rule = saved ?? store.rule(id) else { draft.ruleID = nil; return }
+        giriApplyRule(rule, to: &draft)
     }
 
     /// 参加者を外す時に、リザーバー1を繰り上げるかを聞く。
@@ -547,6 +568,7 @@ struct GiriEventEditor: View {
                         Text("横並び・その他").tag(false)
                         Text("トーナメント（1対1）").tag(true)
                     } label: { GiriEditorLabel("対戦形式") }.pickerStyle(.menu).tint(.primary)
+                    liveRuleRow
                 }
             }
             if !isSite {

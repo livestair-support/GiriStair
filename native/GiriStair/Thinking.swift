@@ -30,6 +30,8 @@ struct GiriThinkingView: View {
     @State private var editing: ThoughtNote?
     @State private var creating: GiriThoughtCreation?
     @State private var deleteCandidate: ThoughtNote?
+    /// 0.23：履歴の並び（端末に残す）。
+    @AppStorage("giriThoughtHistoryOrder") private var historyOrder = GiriThoughtHistoryOrder.newest.rawValue
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -204,7 +206,9 @@ struct GiriThinkingView: View {
     @ViewBuilder private func longContent(now: Date) -> some View {
         let postings = activePostingGroups(now: now)
         let activeIDs = Set(postings.flatMap { $0.notes.map(\.id) })
-        let history = formatNotes(.onlineLong).filter { !activeIDs.contains($0.id) && thoughtSearchMatches($0, event: eventFor($0), query: search) }
+        let matched = formatNotes(.onlineLong).filter { !activeIDs.contains($0.id) && thoughtSearchMatches($0, event: eventFor($0), query: search) }
+        // 0.23：履歴は並びを選べる（参加していないお題は下に分けたまま）。
+        let history = giriParticipationOrdered(giriSortedThoughtHistory(matched, order: GiriThoughtHistoryOrder(rawValue: historyOrder) ?? .newest) { thoughtNoteDate($0, event: eventFor($0)) })
         thoughtSectionHeading("投稿中のお題", symbol: "clock", count: postings.reduce(0) { $0 + max(1, $1.notes.count) })
         if postings.isEmpty {
             emptyCard("現在投稿中のお題はありません", symbol: "text.bubble")
@@ -212,7 +216,7 @@ struct GiriThinkingView: View {
         ForEach(postings) { posting in
             postingGroup(posting, now: now)
         }
-        thoughtSectionHeading("履歴", symbol: "text.bubble", count: history.count)
+        historyHeading(count: history.count)
         if history.isEmpty {
             emptyCard(search.isEmpty ? "回答の記録がありません" : "該当する記録がありません", symbol: "text.bubble")
         }
@@ -244,6 +248,27 @@ struct GiriThinkingView: View {
             }
             ForEach(matches) { note in noteRow(note) }
         }
+    }
+
+    /// 履歴の見出し：件数の左に、並びを選ぶアイコンのプルダウン。
+    private func historyHeading(count: Int) -> some View {
+        HStack(spacing: 10) {
+            AppCardSectionTitle(title: "履歴", systemImage: "text.bubble", accentColor: AppSectionAccent.memo)
+            Spacer(minLength: 8)
+            Menu {
+                Picker("並び", selection: $historyOrder) {
+                    ForEach(GiriThoughtHistoryOrder.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(accentActionColor)
+                    .frame(width: 32, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("履歴の並び（\((GiriThoughtHistoryOrder(rawValue: historyOrder) ?? .newest).title)）")
+            Text("\(count)件").font(.caption).foregroundStyle(.secondary)
+        }.padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 8)
     }
 
     private func eventsWithNotes(_ format: EventFormat) -> [GiriEvent] {
@@ -281,7 +306,7 @@ struct GiriThinkingView: View {
                         HStack {
                             Text("投稿中").font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
                             if let end = posting.round.submissionEnd {
-                                Text("締切 \(GiriDateText.dateTime(end))").font(.caption).foregroundStyle(.secondary)
+                                Text("投稿締切 " + GiriDateText.compactDateTime(end)).font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         Label("お題・回答案を追加", systemImage: "plus.circle").font(.subheadline).foregroundStyle(accentActionColor)
@@ -601,7 +626,7 @@ private struct GiriThoughtEventCard: View {
                 if !event.cycleResult.isEmpty { Text(event.cycleResult).font(.subheadline).foregroundStyle(.secondary) }
                 if let rank = event.cyclePlacement { Text("\(rank)位").font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.ticket) }
                 if !event.hashtag.isEmpty { Text("#" + event.hashtag).font(.caption).foregroundStyle(.secondary) }
-                Text("お題\(notes.count)題・自分の回答\(own)件・ツボ\(tsubo)件").font(.caption).foregroundStyle(.secondary)
+                Text("お題\(notes.count)題・自分の回答\(own)件・他人の回答\(tsubo)件").font(.caption).foregroundStyle(.secondary)
             }.padding(.trailing, 18)
         }
     }
@@ -831,18 +856,23 @@ private struct GiriThoughtCard: View {
     var number: Int? = nil
     var body: some View {
         GiriListCard(accentColor: AppSectionAccent.memo) {
-            HStack(alignment: .top, spacing: 12) {
-                if let image = thoughtUIImage(note) {
-                    Image(uiImage: image).resizable().scaledToFill().frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 8))
+            // 0.23：画像のお題は、画像の横にお題だけを置き、会・状況・回答は画像の下から左詰めで出す。
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top, spacing: 12) {
+                    if let image = thoughtUIImage(note) {
+                        Image(uiImage: image).resizable().scaledToFill().frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let number { Text("お題\(number)").font(.caption.weight(.semibold)).foregroundStyle(AppSectionAccent.memo) }
+                        if note.kind == .answers && !note.isParticipatingPrompt {
+                            Text("参加していないお題").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                        }
+                        Text(thoughtTitle(note)).font(.headline).foregroundStyle(.primary).lineLimit(3)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                 }
                 VStack(alignment: .leading, spacing: 6) {
-                    if let number { Text("お題\(number)").font(.caption.weight(.semibold)).foregroundStyle(AppSectionAccent.memo) }
-                    if note.kind == .answers && !note.isParticipatingPrompt {
-                        Text("参加していないお題").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Capsule().fill(Color.secondary.opacity(0.12)))
-                    }
-                    Text(thoughtTitle(note)).font(.headline).foregroundStyle(.primary).lineLimit(3)
                     if note.kind == .prompts {
                         Text(note.used ? "使用済み" : "未使用").font(.subheadline).foregroundStyle(.secondary)
                         if let event { Text(event.title).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
@@ -860,11 +890,13 @@ private struct GiriThoughtCard: View {
         if let event, number == nil {
             Text(event.title + thoughtPlaceLabel(note, event: event)).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
             if event.eventFormat == .onlineLong, let round = thoughtRound(note, event: event) {
-                Text(thoughtPhase(event: event, round: round))
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
-                let deadline = round.isSubmissionOpen(Date()) ? round.submissionEnd : round.votingEnd
-                if let deadline {
-                    Text("締切 " + GiriDateText.dateTime(deadline)).font(.caption).foregroundStyle(.secondary)
+                // 0.23：状況の横に、その状況の締切（年と、投稿・投票のどちらの締切か）を1行で出す。
+                let phase = thoughtPhase(event: event, round: round)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(phase).font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
+                    if let deadline = thoughtPhaseDeadline(phase: phase, round: round) {
+                        Text(deadline).font(.caption).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
+                    }
                 }
             }
         }
@@ -883,7 +915,7 @@ private struct GiriThoughtCard: View {
         if let first = others.first {
             Text("\(first.answerer)「\(first.text)」").font(.subheadline).foregroundStyle(.primary).lineLimit(2)
         }
-        Text("自分の回答\(own.count)件・ツボ\(others.count)件").font(.caption).foregroundStyle(.secondary)
+        Text("自分の回答\(own.count)件・他人の回答\(others.count)件").font(.caption).foregroundStyle(.secondary)
         let summary = thoughtResultSummary(note, event: event)
         if !summary.isEmpty { Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
     }
@@ -979,7 +1011,7 @@ private struct GiriThoughtNoteRows: View {
     }
 
     @ViewBuilder private var promptRows: some View {
-        Text(thoughtTitle(note)).font(.headline).textSelection(.enabled)
+        Text(part == .prompt ? giriCharacterWrapped(thoughtTitle(note)) : thoughtTitle(note)).font(.headline).textSelection(.enabled)
             // 一覧（overview）からの長押しの「編集」もここで開く。
             .sheet(isPresented: editingAnswerShown) { answerEditSheet }
         if !note.imageDataBase64.isEmpty {
@@ -2228,6 +2260,22 @@ private func thoughtNewestRound(_ event: GiriEvent, now: Date = Date()) -> Event
     return active.first ?? rounds.max { ($0.submissionStart ?? $0.votingEnd ?? .distantPast) < ($1.submissionStart ?? $1.votingEnd ?? .distantPast) }
 }
 
+/// 0.23：状況に合わせた締切（投稿中・終了・開始前は投稿締切、投票中は投票締切）。
+private func thoughtPhaseDeadline(phase: String, round: EventRound) -> String? {
+    if phase == "投票中", let end = round.votingEnd { return "投票締切 " + GiriDateText.compactDateTime(end) }
+    if let end = round.submissionEnd { return "投稿締切 " + GiriDateText.compactDateTime(end) }
+    if let end = round.votingEnd { return "投票締切 " + GiriDateText.compactDateTime(end) }
+    return nil
+}
+
+/// 0.23：履歴の並びの日付（回の投稿締切。なければ作った日）。
+private func thoughtNoteDate(_ note: ThoughtNote, event: GiriEvent?) -> Date {
+    if let event, let round = thoughtRound(note, event: event) {
+        return round.submissionEnd ?? round.votingEnd ?? round.submissionStart ?? note.createdAt
+    }
+    return note.createdAt
+}
+
 private func thoughtEventDate(_ event: GiriEvent) -> Date {
     event.effectiveRounds.compactMap { $0.submissionStart ?? $0.votingStart ?? $0.votingEnd }.max() ??
     event.eventDate ?? event.startsAt ?? event.createdAt
@@ -2581,8 +2629,9 @@ struct GiriPinnedPrompt: View {
     let onUnpin: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(thoughtTitle(note)).font(.headline).lineLimit(3)
+            // 0.23：固定しても「お題」の見出しは残す。
+            HStack(spacing: 8) {
+                AppCardSectionTitle(title: "お題", systemImage: "lightbulb", accentColor: AppSectionAccent.memo)
                 Spacer(minLength: 8)
                 Button(action: onUnpin) {
                     Image(systemName: "pin.fill").font(.body.weight(.semibold)).foregroundStyle(accentActionColor)
@@ -2591,6 +2640,9 @@ struct GiriPinnedPrompt: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("お題の固定を外す")
             }
+            // 回答と同じく、単語で切らずに文字数で折り返す。
+            Text(giriCharacterWrapped(thoughtTitle(note))).font(.headline).lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
             // 0.22：固定しない時と同じ大きさ（画像は押すと拡大）。
             if !note.imageDataBase64.isEmpty {
                 GiriThoughtImage(base64: note.imageDataBase64).frame(maxHeight: giriPromptImageHeight)

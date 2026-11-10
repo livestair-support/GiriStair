@@ -192,7 +192,12 @@ struct GiriSiteDetail: View {
                         }
                     }
                 }
-                GiriDetailCard(title: "現在の状況", systemImage: "clock", accentColor: AppSectionAccent.artist, kind: .venue) {
+                // 0.23：お題の出る週がずれた時などは「編集」から今の状態と締切を直す。
+                GiriDetailCard(title: "現在の状況", systemImage: "clock", accentColor: AppSectionAccent.artist, kind: .venue, trailing: {
+                    Button("編集") { route = .status(site.id) }
+                        .font(.subheadline)
+                        .foregroundStyle(accentActionColor)
+                }) {
                     TimelineView(.periodic(from: timelineStart, by: 60)) { context in
                         GiriSitePeriodActions(site: site, now: context.date, onRoute: { route = $0 })
                     }
@@ -309,10 +314,22 @@ struct GiriSiteDetail: View {
     }
 
     @ViewBuilder private func seasonTotalsRows(site: OnlineSite, seasonID: String?, seasonName: String) -> some View {
-        let totals = giriSeasonTotals(siteID: site.id, seasonID: seasonID, seasonName: seasonName, events: store.events, notes: store.notes)
+        // 0.23：シーズンのルールが「規定回答数の上位の平均」なら、上位の規定回答数分だけで平均する。
+        let rule = site.ruleID(forSeason: seasonID).flatMap { store.rule($0) }
+        let required = rule?.scoring == .topRequired ? rule?.requiredAnswerCount : nil
+        let totals = giriSeasonTotals(siteID: site.id, seasonID: seasonID, seasonName: seasonName, events: store.events, notes: store.notes,
+                                      requiredAnswerCount: required)
+        if let rule { seasonTotalRow("ルール", rule.displayName) }
         seasonTotalRow("提出した回答", "\(totals.submittedAnswerCount)回答")
         seasonTotalRow("点数の記録済み", "\(totals.scoredAnswerCount)回答")
-        seasonTotalRow("平均（1人あたり）", totals.averagePointsPerVoter.map(giriScoreText) ?? "未記録")
+        if let required {
+            seasonTotalRow("規定回答数", totals.rateSampleCount >= required ? "\(required)回答（達成）" : "\(required)回答（あと\(required - totals.rateSampleCount)）")
+        }
+        seasonTotalRow(required == nil ? "平均（1人あたり）" : "上位\(required ?? 0)回答の平均（1人あたり）", totals.averagePointsPerVoter.map(giriScoreText) ?? "未記録")
+        if totals.droppedLowerSamples {
+            Text("得票率の低い\(totals.rateSampleCount - (required ?? 0))回答は平均に入れていません。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
         if totals.legacyRoundResultCount > 0 {
             Text("平均には回単位で残した点数\(totals.legacyRoundResultCount)件も含みます。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -337,6 +354,10 @@ struct GiriSiteDetail: View {
         }) {
             VStack(spacing: 0) {
                 GiriProfileInfoRow(title: "形式", value: site.format.title, labelWidth: 80, verticalPadding: 8)
+                if let rule = site.currentRuleID.flatMap({ store.rule($0) }) {
+                    Divider().overlay(appSeparatorColor)
+                    GiriProfileInfoRow(title: "ルール", value: rule.displayName, labelWidth: 80, verticalPadding: 8)
+                }
                 if site.hasAffiliations {
                     Divider().overlay(appSeparatorColor)
                     GiriProfileInfoRow(title: "現在のリーグ", value: siteLeague(site), labelWidth: 80, verticalPadding: 8)
@@ -461,15 +482,36 @@ struct GiriSiteEditor: View {
     @State private var initialized = false
     @State private var discard = false
     private var isNew: Bool
+    /// 0.23：現在の状況（今の状態・締切・次のお題）だけを直す。
+    private var statusOnly: Bool
     private var onSaved: ((OnlineSite) -> Void)?
-    init(site: OnlineSite? = nil, onSaved: ((OnlineSite) -> Void)? = nil) {
+    init(site: OnlineSite? = nil, statusOnly: Bool = false, onSaved: ((OnlineSite) -> Void)? = nil) {
         let value = site ?? OnlineSite()
         _draft = State(initialValue: value); _original = State(initialValue: value)
-        isNew = site == nil; self.onSaved = onSaved
+        isNew = site == nil; self.statusOnly = statusOnly && site != nil; self.onSaved = onSaved
     }
     private var changed: Bool { draft != original }
     var body: some View {
         Form {
+            if !statusOnly { siteSection }
+            if initialized { GiriSiteCycleSettingsForm(site: $draft, isNew: isNew, statusOnly: statusOnly) }
+            if !statusOnly {
+                Section { TextField("メモ", text: $draft.memo, axis: .vertical).lineLimit(3...8) }
+                    .appSectionCardStyle(accentColor: AppSectionAccent.memo)
+            }
+        }
+        .appEditorFormStyle().giriNavigationBarStyle()
+        .navigationTitle(statusOnly ? "現在の状況を編集" : isNew ? "サイトを登録" : "サイトを編集").navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(changed)
+        .interactiveDismissDisabled(changed)
+        .onAppear(perform: initialize)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) { if changed { Button { discard = true } label: { Image(systemName: "chevron.left") }.accessibilityLabel("戻る") } }
+            ToolbarItem(placement: .confirmationAction) { Button("保存", action: save).disabled(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+        }
+        .giriDiscardChangesAlert(isPresented: $discard) { dismiss() }
+    }
+    private var siteSection: some View {
             Section {
                 AppCardSectionTitle(title: "サイト", systemImage: "globe", accentColor: AppSectionAccent.artist).listRowSeparator(.hidden)
                 TextField("サイト名", text: $draft.name)
@@ -478,15 +520,8 @@ struct GiriSiteEditor: View {
                     ForEach(store.preferences.formatChoices(including: draft.format).filter { $0.hasOnlineRounds }) { format in Text(format.title).tag(format) }
                 }.pickerStyle(.menu).tint(.primary)
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
-            if initialized { GiriSiteCycleSettingsForm(site: $draft, isNew: isNew) }
-            Section { TextField("メモ", text: $draft.memo, axis: .vertical).lineLimit(3...8) }
-                .appSectionCardStyle(accentColor: AppSectionAccent.memo)
-        }
-        .appEditorFormStyle().giriNavigationBarStyle()
-        .navigationTitle(isNew ? "サイトを登録" : "サイトを編集").navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(changed)
-        .interactiveDismissDisabled(changed)
-        .onAppear {
+    }
+    private func initialize() {
             guard !initialized else { return }
             if isNew {
                 draft.startHour = store.preferences.submissionStartHour
@@ -497,12 +532,6 @@ struct GiriSiteEditor: View {
             if draft.hasAffiliations { draft.affiliation = siteLeague(draft) }
             original = draft
             initialized = true
-        }
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) { if changed { Button { discard = true } label: { Image(systemName: "chevron.left") }.accessibilityLabel("戻る") } }
-            ToolbarItem(placement: .confirmationAction) { Button("保存", action: save).disabled(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
-        }
-        .giriDiscardChangesAlert(isPresented: $discard) { dismiss() }
     }
     private func save() {
         var value = draft
