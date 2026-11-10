@@ -19,6 +19,8 @@ struct GiriEventDetail: View {
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
     @State private var addingToCalendar = false
+    /// 0.25：会の中の結果（ミニトナメなど）を直す・足す。
+    @State private var editingSideResult: GiriSideResult?
 
     var body: some View {
         Group {
@@ -28,7 +30,11 @@ struct GiriEventDetail: View {
                     if event.eventFormat == .live && (event.parentEventId != nil || store.events.contains { $0.parentEventId == event.id }) {
                         innerTournaments(event)
                     }
-                    if event.meetingType == .tournament && event.tournamentFormat != .individual {
+                    if event.isKumiteEvent {
+                        // 0.24：組手は主役を先に、対戦相手（出順）をその後に出す。
+                        if !event.kumiteMains.isEmpty { participants(event.kumiteMains, title: "主役", numbered: false) }
+                        if !event.kumiteOpponents.isEmpty { participants(event.kumiteOpponentOrder, title: "対戦相手", numbered: true) }
+                    } else if event.meetingType == .tournament && event.tournamentFormat != .individual {
                         // チーム戦はチームとして表示し、チームに分けていない参加者（即席チーム）だけを出す。
                         if !event.unassignedParticipants.isEmpty { participants(event.unassignedParticipants, title: "チーム未定の参加者", numbered: false) }
                     } else if !event.participants.isEmpty && !(event.eventFormat.isOnline && event.meetingType == .tournament) {
@@ -37,6 +43,16 @@ struct GiriEventDetail: View {
                     }
                     teams(event)
                     if event.isKumiteEvent { kumiteSection(event) }
+                    // 0.25：通常会・企画の中のミニトナメ・ミニ組手・総当たりなどの結果（戦績・集計には入れない）。
+                    if event.meetingType != .tournament && event.eventFormat.hasLiveTiming { sideResultsSection(event) }
+                    if !event.stageBoards.isEmpty {
+                        Section {
+                            NavigationLink { GiriBoardBracketView(event: event) } label: {
+                                Label("トーナメント表・組み合わせ", systemImage: "rectangle.split.3x1")
+                            }
+                            .tint(accentActionColor)
+                        }.appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
+                    }
                     thoughtsLink(event)
                     if event.eventFormat.hasOnlineRounds {
                         // 0.17：新しい段階を上に。各段階は畳める（いちばん新しい段階だけ開いておく）。
@@ -110,6 +126,9 @@ struct GiriEventDetail: View {
             }
         } message: { Text(resultPromptMessage) }
         .navigationDestination(isPresented: $showCycleEditor) { GiriCycleResultEditor(eventID: eventID) }
+        .sheet(item: $editingSideResult) { item in
+            if let event { NavigationStack { GiriSideResultEditor(eventID: event.id, item: item, candidates: event.participants) } }
+        }
         .sheet(isPresented: $addingToCalendar) {
             if let event { GiriCalendarEventEditor(event: event) { addingToCalendar = false }.ignoresSafeArea() }
         }
@@ -121,14 +140,57 @@ struct GiriEventDetail: View {
         }
     }
 
-    /// 0.19：組手の主役と通算の成績。対戦ごとの記録は「組手の結果」で入れる。
-    private func kumiteSection(_ event: GiriEvent) -> some View {
+    /// 0.25：会の中の小さな企画の結果。押すと直せる。戦績・集計には入れない。
+    private func sideResultsSection(_ event: GiriEvent) -> some View {
         Section {
-            GiriEventCardSectionTitle(title: "組手", systemImage: "star", accentColor: AppSectionAccent.favorite).listRowSeparator(.hidden)
-            detailValue("主役", event.kumiteMains.isEmpty ? "未設定" : event.kumiteMains.joined(separator: "・"))
-            if !event.kumiteBouts.isEmpty { detailValue("通算", giriKumiteRecord(event.kumiteBouts).text + "（\(event.kumiteBouts.count)戦）") }
+            GiriEventCardSectionTitle(title: "会の中の結果", systemImage: "flag.checkered", accentColor: AppSectionAccent.ticket)
+                .overlay(alignment: .trailing) {
+                    AppInfoButton(title: "会の中の結果", message: "ミニトナメ・ミニ組手・総当たりなどの結果を残します。戦績・集計には入れません。", tintColor: AppSectionAccent.ticket)
+                }
+                .listRowSeparator(.hidden)
+            ForEach(event.sideResults) { item in
+                Button { editingSideResult = item } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(item.displayTitle).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                            Spacer(minLength: 8)
+                            Text(item.result).font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.ticket)
+                        }
+                        if !item.members.isEmpty {
+                            Text(item.members.joined(separator: "・")).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                        if !item.memo.isEmpty { Text(item.memo).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Button { editingSideResult = GiriSideResult() } label: { Label("結果を追加", systemImage: "plus.circle") }
+                .tint(accentActionColor)
+        }.appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
+    /// 0.24：組手の結果だけ（主役・対戦相手は上の欄）。対戦ごとの記録は「組手の結果」で入れる。
+    private func kumiteSection(_ event: GiriEvent) -> some View {
+        let decided = event.kumiteBouts.filter { KumiteOutcome(rawValue: $0.outcome) != nil }
+        return Section {
+            GiriEventCardSectionTitle(title: "組手の結果", systemImage: "star", accentColor: AppSectionAccent.favorite).listRowSeparator(.hidden)
+            if !decided.isEmpty {
+                detailValue("通算", giriKumiteRecord(decided).text + "（\(decided.count)戦）")
+                ForEach(Array(event.kumiteBouts.enumerated()), id: \.element.id) { index, bout in
+                    if let outcome = KumiteOutcome(rawValue: bout.outcome) {
+                        HStack(spacing: 10) {
+                            Text("第\(index + 1)戦").font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 48, alignment: .leading)
+                            Text(bout.opponents.joined(separator: "・")).font(.subheadline).lineLimit(2)
+                            Spacer(minLength: 8)
+                            Text(outcome.title).font(.subheadline.weight(.semibold))
+                                .foregroundStyle(outcome == .win ? AppSectionAccent.ticket : Color.secondary)
+                        }
+                    }
+                }
+            }
             NavigationLink { GiriKumiteResultEditor(eventID: event.id) } label: {
-                Label(event.kumiteBouts.isEmpty ? "組手の結果を記録" : "組手の結果を見る・直す", systemImage: "square.and.pencil")
+                Label(decided.isEmpty ? "組手の結果を記録" : "組手の結果を見る・直す", systemImage: "square.and.pencil")
             }
             .tint(accentActionColor)
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.favorite)

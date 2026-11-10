@@ -27,7 +27,7 @@ struct GiriSettingsView: View {
                 NavigationLink("会場一覧") { GiriVenuesView() }
                 NavigationLink("ネット大喜利サイト一覧") { GiriSitesView() }
                 // 0.23：保存して使い回すルール（ネットはシーズンごと、生は大会ごとに選ぶ）。
-                NavigationLink("大喜利のルール") { GiriRulesView() }
+                NavigationLink("ルール一覧") { GiriRulesView() }
             }
             settingSection("defaults", "デフォルト設定", "slider.horizontal.3", AppSectionAccent.live) {
                 defaultSettingsGroupTitle("表示", systemImage: "eye")

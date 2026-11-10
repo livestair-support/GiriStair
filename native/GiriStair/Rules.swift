@@ -2,12 +2,13 @@ import SwiftUI
 
 // MARK: - 0.23 ルール（保存して使い回す。ネット大喜利はシーズンごと、生大喜利は大会ごとに選ぶ）
 
-/// 設定 → 一覧 →「大喜利のルール」。
+/// 設定 → 一覧 →「ルール一覧」。
 @MainActor
 struct GiriRulesView: View {
     @EnvironmentObject private var store: GiriStore
     @State private var kind: GiriRuleKind = .online
     @State private var creating: GiriRule?
+    @State private var deleting: GiriRule?
 
     private var rules: [GiriRule] {
         store.rules.filter { $0.kind == kind }.sorted { $0.updatedAt > $1.updatedAt }
@@ -24,26 +25,52 @@ struct GiriRulesView: View {
                 .listRowSeparator(.hidden)
             }
             Section {
-                AppCardSectionTitle(title: kind == .online ? "ネット大喜利のルール" : "生大喜利のルール",
+                AppCardSectionTitle(title: "自分のルール",
                                     systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.memo,
                                     infoTitle: "ルールについて",
                                     infoMessage: kind == .online
                                         ? "日程・成績の出し方・リーグ・プレーオフなどをまとめて保存し、サイトのシーズンごとに選びます。"
-                                        : "大会の参加形式・審査方法・段階をまとめて保存し、大会の登録で選びます。")
+                                        : "大会の参加形式・審査方法・流れ（段階）をまとめて保存し、大会の登録で選びます。生大喜利とスプシ系で同じルールを使えます。長押しで複製できます。")
                     .listRowSeparator(.hidden)
                 if rules.isEmpty {
                     Text("ルールがありません").font(.subheadline).foregroundStyle(.secondary)
                 }
                 ForEach(rules) { rule in
                     NavigationLink { GiriRuleEditor(rule: rule) } label: { ruleRow(rule) }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) { deleting = rule } label: { Label("削除", systemImage: "trash") }
+                            Button { duplicate(rule) } label: { Label("複製", systemImage: "plus.square.on.square") }.tint(AppSectionAccent.artist)
+                        }
+                        .contextMenu {
+                            Button("複製", systemImage: "plus.square.on.square") { duplicate(rule) }
+                            Button("削除", systemImage: "trash", role: .destructive) { deleting = rule }
+                        }
                 }
             }
             .appSectionCardStyle(accentColor: AppSectionAccent.memo)
+            // 0.24：よくあるルール。選ぶとコピーを自分のルールとして作る。
+            Section {
+                AppCardSectionTitle(title: "テンプレート", systemImage: "square.on.square", accentColor: AppSectionAccent.artist,
+                                    infoTitle: "テンプレートについて", infoMessage: "よくあるルールです。選ぶと、そのコピーを自分のルールとして直して保存できます。")
+                    .listRowSeparator(.hidden)
+                ForEach(giriRuleTemplates.filter { $0.kind == kind }) { template in
+                    Button { creating = giriRuleFromTemplate(template) } label: {
+                        HStack(spacing: 8) {
+                            ruleRow(template)
+                            Spacer(minLength: 8)
+                            Image(systemName: "plus.circle").foregroundStyle(accentActionColor)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .appSectionCardStyle(accentColor: AppSectionAccent.artist)
         }
         .environment(\.defaultMinListRowHeight, settingsMinimumListRowHeight)
         .appIndexListStyle()
         .giriNavigationBarStyle()
-        .navigationTitle("大喜利のルール")
+        .navigationTitle("ルール一覧")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -52,6 +79,16 @@ struct GiriRulesView: View {
             }
         }
         .sheet(item: $creating) { rule in NavigationStack { GiriRuleEditor(rule: rule, isNew: true) } }
+        .giriDeleteAlert("ルールを削除しますか？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                         message: "「\(deleting?.displayName ?? "")」を削除します。このルールを選んでいたシーズン・大会の日程や結果はそのまま残ります。") {
+            if let rule = deleting { store.run { try store.deleteRule(rule.id); playLiveStairDeleteFeedback() } }
+            deleting = nil
+        }
+    }
+
+    /// 0.24：ルールを複製する（生大喜利とスプシ系で少し違うルールを作る時など）。
+    private func duplicate(_ rule: GiriRule) {
+        store.run { try store.saveRule(rule.duplicated()); playLiveStairSaveFeedback() }
     }
 
     private func ruleRow(_ rule: GiriRule) -> some View {
@@ -85,6 +122,8 @@ struct GiriRuleEditor: View {
     @State private var original: GiriRule
     @State private var discard = false
     @State private var deleting = false
+    /// 0.24：大会の流れで選んでいる段階。
+    @State private var selectedStageID: String?
     private let isNew: Bool
     private let onSaved: ((GiriRule) -> Void)?
 
@@ -111,6 +150,10 @@ struct GiriRuleEditor: View {
             }
             if !isNew {
                 Section {
+                    Button("このルールを複製", systemImage: "plus.square.on.square") {
+                        store.run { try store.saveRule(draft.duplicated()); playLiveStairSaveFeedback() }
+                    }
+                    .tint(accentActionColor)
                     Button("このルールを削除", role: .destructive) { deleting = true }
                 }
                 .appSectionCardStyle(accentColor: AppSectionAccent.memo)
@@ -170,6 +213,12 @@ struct GiriRuleEditor: View {
             if draft.scoring == .topRequired {
                 Stepper("規定回答数　\(draft.requiredAnswerCount ?? 8)回答",
                         value: Binding(get: { draft.requiredAnswerCount ?? 8 }, set: { draft.requiredAnswerCount = $0 }), in: 1...200)
+            }
+            // 0.24：シーズンの上位○人が勝ち抜け（記録用。自動では判定しない）。
+            Toggle("上位の人が勝ち抜け", isOn: Binding(get: { draft.advanceCount != nil }, set: { draft.advanceCount = $0 ? (draft.advanceCount ?? 10) : nil }))
+                .tint(AppSectionAccent.ticket)
+            if let advance = draft.advanceCount {
+                Stepper("上位　\(advance)人", value: Binding(get: { advance }, set: { draft.advanceCount = $0 }), in: 1...500)
             }
         }
         .appSectionCardStyle(accentColor: AppSectionAccent.ticket)
@@ -264,37 +313,128 @@ struct GiriRuleEditor: View {
         .appSectionCardStyle(accentColor: AppSectionAccent.live)
     }
 
+    /// 0.24：大会の流れ（予選→本戦→決勝など）を見ながら組み立てる。段階を押すと下で詳しく直せる。
     private var stageSection: some View {
         Section {
-            AppCardSectionTitle(title: "段階", systemImage: "list.number", accentColor: AppSectionAccent.ticket,
-                                infoTitle: "段階について", infoMessage: "大会の結果を入れる時に、この段階を入れられます。")
+            AppCardSectionTitle(title: "大会の流れ", systemImage: "arrow.triangle.branch", accentColor: AppSectionAccent.ticket,
+                                infoTitle: "大会の流れ", infoMessage: "下のボタンで段階を足すと、決勝の前など流れに合う場所に入ります。段階を押すと、名前・形式・通過人数を直したり、前後に動かしたりできます。")
                 .listRowSeparator(.hidden)
-            ForEach($draft.stages) { $stage in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Picker("種類", selection: Binding(get: { stage.kind ?? "" }, set: { stage.kind = $0.isEmpty ? nil : $0 })) {
-                            Text("種類").tag("")
-                            ForEach(StageKind.allCases) { Text($0.title).tag($0.rawValue) }
-                        }
-                        .labelsHidden().pickerStyle(.menu).tint(Color.primary)
-                        TextField("段階の名前（例：予選1回戦）", text: $stage.name)
-                        Button(role: .destructive) { draft.stages.removeAll { $0.id == stage.id } } label: { Image(systemName: "minus.circle") }
-                            .buttonStyle(.borderless)
+            flowRow
+            addStageRow
+            Menu {
+                ForEach(giriRuleTemplates.filter { $0.kind == .live && !$0.stages.isEmpty }) { template in
+                    Button(template.name) {
+                        draft.stages = template.stages.map { var stage = $0; stage.id = UUID().uuidString; return stage }
+                        selectedStageID = draft.stages.first?.id
                     }
-                    TextField("形式（例：横並び5人・タイマン）", text: $stage.lineup)
-                    TextField("審査方法（空なら大会の審査方法）", text: $stage.judging)
-                    Stepper("お題　\(stage.promptCount.map { "\($0)問" } ?? "未定")",
-                            value: Binding(get: { stage.promptCount ?? 0 }, set: { stage.promptCount = $0 == 0 ? nil : $0 }), in: 0...30)
-                    Stepper("通過　\(stage.advanceCount.map { "\($0)人" } ?? "未定")",
-                            value: Binding(get: { stage.advanceCount ?? 0 }, set: { stage.advanceCount = $0 == 0 ? nil : $0 }), in: 0...200)
                 }
-                .font(.subheadline)
-                .padding(.vertical, 4)
+            } label: {
+                Label("よくある流れから選ぶ", systemImage: "square.on.square").font(.subheadline)
             }
-            Button("段階を追加", systemImage: "plus.circle") { draft.stages.append(GiriRuleStage()) }
-                .buttonStyle(.borderless).tint(accentActionColor)
+            .tint(accentActionColor)
+            if let index = draft.stages.firstIndex(where: { $0.id == selectedStageID }) {
+                stageDetail(index)
+            }
         }
         .appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
+    private var flowRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                if draft.stages.isEmpty {
+                    Text("段階がありません").font(.subheadline).foregroundStyle(.secondary)
+                }
+                ForEach(Array(draft.stages.enumerated()), id: \.element.id) { index, stage in
+                    if index > 0 {
+                        Image(systemName: "arrow.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                    Button { selectedStageID = selectedStageID == stage.id ? nil : stage.id } label: { stageChip(stage) }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(index + 1)番目の段階：" + stageTitle(stage))
+                }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    private func stageChip(_ stage: GiriRuleStage) -> some View {
+        let selected = stage.id == selectedStageID
+        let accent = stage.stageKind == .repechage ? AppSectionAccent.favorite : stage.stageKind == .final ? AppSectionAccent.live : AppSectionAccent.ticket
+        return VStack(spacing: 1) {
+            Text(stageTitle(stage)).font(.subheadline.weight(.semibold)).lineLimit(1)
+            if let advance = stage.advanceCount { Text("\(advance)人通過").font(.caption2) }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .foregroundStyle(selected ? Color.white : Color.primary)
+        .background(Capsule().fill(selected ? accent : accent.opacity(0.14)))
+        .overlay(Capsule().stroke(accent.opacity(selected ? 0 : 0.5), lineWidth: 1))
+    }
+
+    private var addStageRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(StageKind.allCases) { kind in
+                    Button {
+                        let stage = giriRuleStage(kind, name: kind == .repechage ? "敗者復活戦" : nil)
+                        draft.stages = giriRuleInsertingStage(stage, into: draft.stages)
+                        selectedStageID = stage.id
+                    } label: {
+                        Label(kind.title, systemImage: "plus").font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Capsule().fill(accentActionColor.opacity(0.1)))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(accentActionColor)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func stageDetail(_ index: Int) -> some View {
+        let stage = Binding(get: { draft.stages.indices.contains(index) ? draft.stages[index] : GiriRuleStage() },
+                            set: { if draft.stages.indices.contains(index) { draft.stages[index] = $0 } })
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Picker("種類", selection: Binding(get: { stage.wrappedValue.kind ?? "" }, set: { stage.wrappedValue.kind = $0.isEmpty ? nil : $0 })) {
+                    Text("種類").tag("")
+                    ForEach(StageKind.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                .labelsHidden().pickerStyle(.menu).tint(Color.primary)
+                Spacer(minLength: 8)
+                Button { moveStage(index, by: -1) } label: { Image(systemName: "chevron.left") }
+                    .buttonStyle(.borderless).disabled(index == 0).accessibilityLabel("前へ")
+                Button { moveStage(index, by: 1) } label: { Image(systemName: "chevron.right") }
+                    .buttonStyle(.borderless).disabled(index + 1 >= draft.stages.count).accessibilityLabel("後ろへ")
+                Button(role: .destructive) {
+                    draft.stages.remove(at: index)
+                    selectedStageID = nil
+                } label: { Image(systemName: "trash") }
+                .buttonStyle(.borderless).accessibilityLabel("この段階を削除")
+            }
+            TextField("段階の名前（例：予選1回戦）", text: stage.name)
+            TextField("形式（例：横並び5人・タイマン）", text: stage.lineup)
+            TextField("審査方法（空なら大会の審査方法）", text: stage.judging)
+            Stepper("お題　\(stage.wrappedValue.promptCount.map { "\($0)問" } ?? "未定")",
+                    value: Binding(get: { stage.wrappedValue.promptCount ?? 0 }, set: { stage.wrappedValue.promptCount = $0 == 0 ? nil : $0 }), in: 0...30)
+            Stepper("通過　\(stage.wrappedValue.advanceCount.map { "\($0)人" } ?? "未定")",
+                    value: Binding(get: { stage.wrappedValue.advanceCount ?? 0 }, set: { stage.wrappedValue.advanceCount = $0 == 0 ? nil : $0 }), in: 0...200)
+        }
+        .font(.subheadline)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(AppSectionAccent.ticket.opacity(0.08)))
+    }
+
+    private func stageTitle(_ stage: GiriRuleStage) -> String {
+        let name = stage.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? (stage.stageKind?.title ?? "段階") : name
+    }
+
+    private func moveStage(_ index: Int, by offset: Int) {
+        let target = index + offset
+        guard draft.stages.indices.contains(index), draft.stages.indices.contains(target) else { return }
+        draft.stages.swapAt(index, target)
     }
 
     private func save() {

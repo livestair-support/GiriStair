@@ -91,7 +91,8 @@ enum TournamentOutcome: String, Codable, CaseIterable, Identifiable {
 /// 段階の種類。大会ごとに段階の数が違っても「どこまで進んだか」を比べられるよう、
 /// 予選 → 本戦 → 準々決勝 → 準決勝 → 決勝 の順に並べる（その他は順番に数えない）。
 enum StageKind: String, CaseIterable, Identifiable {
-    case qualifier, main, quarterfinal, semifinal, final, other
+    /// 0.24：敗者復活（repechage）。以前の版では知らない値として名前から読む。
+    case qualifier, main, quarterfinal, semifinal, final, repechage, other
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -100,10 +101,11 @@ enum StageKind: String, CaseIterable, Identifiable {
         case .quarterfinal: return "準々決勝"
         case .semifinal: return "準決勝"
         case .final: return "決勝"
+        case .repechage: return "敗者復活"
         case .other: return "その他"
         }
     }
-    /// 進んだ深さ（その他は nil）。
+    /// 進んだ深さ（敗者復活・その他は nil）。
     var depth: Int? {
         switch self {
         case .qualifier: return 0
@@ -111,7 +113,7 @@ enum StageKind: String, CaseIterable, Identifiable {
         case .quarterfinal: return 2
         case .semifinal: return 3
         case .final: return 4
-        case .other: return nil
+        case .repechage, .other: return nil
         }
     }
 }
@@ -545,6 +547,10 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var kumiteBouts: [KumiteBout] = []
     /// 0.23：生大喜利の大会で使ったルール（保存したルールのID）。ない時はキーを書かない。
     var ruleID: String? = nil
+    /// 0.25：段階ごとの組み合わせ（ブロック・対戦と勝ち上がり）。大会全体の表で、自分の記録とは別に持つ。
+    var stageBoards: [GiriStageBoard] = []
+    /// 0.25：通常会・企画の中で行ったミニトナメ・ミニ組手・総当たりなどの結果（戦績・集計には入れない）。
+    var sideResults: [GiriSideResult] = []
     /// 0.10（生大喜利）：シリーズ名（「#5」などの回数を除いた名前）。空なら会の名前から判断する。
     var series: String = ""
 }
@@ -576,7 +582,7 @@ enum GiriSelfRole: String, CaseIterable, Identifiable {
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts, ruleID
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts, ruleID, stageBoards, sideResults
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -695,6 +701,8 @@ extension GiriEvent {
         kumiteMains = try c.decodeIfPresent([String].self, forKey: .kumiteMains) ?? []
         kumiteBouts = try c.decodeIfPresent([KumiteBout].self, forKey: .kumiteBouts) ?? []
         ruleID = try c.decodeIfPresent(String.self, forKey: .ruleID)
+        stageBoards = try c.decodeIfPresent([GiriStageBoard].self, forKey: .stageBoards) ?? []
+        sideResults = try c.decodeIfPresent([GiriSideResult].self, forKey: .sideResults) ?? []
 
         try validate()
     }
@@ -810,6 +818,8 @@ extension GiriEvent {
         if !kumiteMains.isEmpty { try c.encode(kumiteMains, forKey: .kumiteMains) }
         if !kumiteBouts.isEmpty { try c.encode(kumiteBouts, forKey: .kumiteBouts) }
         try c.encodeIfPresent(ruleID, forKey: .ruleID)
+        if !stageBoards.isEmpty { try c.encode(stageBoards, forKey: .stageBoards) }
+        if !sideResults.isEmpty { try c.encode(sideResults, forKey: .sideResults) }
 
     }
 }
@@ -1419,6 +1429,69 @@ struct GiriDocument: Codable, Equatable {
     var deletedEvents: [GiriDeletedEvent] = []
     /// 0.23：保存したルール（ネット大喜利のシーズン・生大喜利の大会で使い回す）。ない時はキーを書かない。
     var rules: [GiriRule] = []
+}
+
+/// 0.25：段階の組み合わせ（id は段階の記録 ResultStage の id）。
+struct GiriStageBoard: Codable, Equatable, Identifiable {
+    var id: String
+    var blocks: [GiriBoardBlock] = []
+}
+
+/// 0.25：1つのブロック（トーナメントは1試合）。勝ち上がった人を持つ。
+struct GiriBoardBlock: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    var name: String = ""
+    var members: [String] = []
+    var winners: [String] = []
+}
+
+extension GiriStageBoard {
+    private enum CodingKeys: String, CodingKey { case id, blocks }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        blocks = try c.decodeIfPresent([GiriBoardBlock].self, forKey: .blocks) ?? []
+    }
+}
+
+extension GiriBoardBlock {
+    private enum CodingKeys: String, CodingKey { case id, name, members, winners }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        members = try c.decodeIfPresent([String].self, forKey: .members) ?? []
+        winners = try c.decodeIfPresent([String].self, forKey: .winners) ?? []
+    }
+}
+
+/// 0.25：通常会・企画の中の小さな企画（ミニトナメ・ミニ組手・総当たりなど）の結果。
+struct GiriSideResult: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    /// "tournament"（ミニトナメ）・"kumite"（ミニ組手）・"roundRobin"（総当たり）・"other"
+    var kind: String = "tournament"
+    var title: String = ""
+    /// 結果（優勝・2勝1敗など）。
+    var result: String = ""
+    /// 一緒に出た人。
+    var members: [String] = []
+    var memo: String = ""
+}
+
+extension GiriSideResult {
+    private enum CodingKeys: String, CodingKey { case id, kind, title, result, members, memo }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "other"
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        result = try c.decodeIfPresent(String.self, forKey: .result) ?? ""
+        members = try c.decodeIfPresent([String].self, forKey: .members) ?? []
+        memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
+    }
+    static let kinds: [(value: String, title: String)] = [("tournament", "ミニトナメ"), ("kumite", "ミニ組手"), ("roundRobin", "総当たり"), ("other", "その他")]
+    var kindTitle: String { Self.kinds.first { $0.value == kind }?.title ?? "その他" }
+    var displayTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? kindTitle : title }
 }
 
 /// 0.19：削除した会と、その会に付いていたお題・回答（戻す時に付け直す）。

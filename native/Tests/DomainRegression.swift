@@ -745,7 +745,7 @@ struct DomainRegression {
         do {
             let kinds: [(String, StageKind)] = [("予選", .qualifier), ("予選決勝", .qualifier), ("本戦1回戦", .main), ("2回戦", .main),
                 ("決勝トーナメント1回戦", .main), ("準々決勝", .quarterfinal), ("準決勝", .semifinal), ("決勝", .final),
-                ("グランドファイナル", .final), ("敗者復活戦", .other), ("3位決定戦", .other), ("", .other)]
+                ("グランドファイナル", .final), ("敗者復活戦", .repechage), ("3位決定戦", .other), ("", .other)]
             for (name, kind) in kinds { try check(giriInferredStageKind(name) == kind, "stage name \(name) infers \(kind.title)") }
             var chosen = ResultStage(); chosen.name = "ラストステージ"; chosen.kind = .final
             try check(chosen.effectiveKind == .final, "an explicitly chosen kind wins over the name")
@@ -1705,6 +1705,118 @@ struct DomainRegression {
             try check(nextTournament.ruleID == liveRule.id && nextTournament.judging == "拍手" && stages.count == 1 && stages[0].name == "予選" && stages[0].advanceCount == 2 && stages[0].placement == nil,
                       "a live rule fills the tournament and its stages without results")
             try check(giriSeasonRuleKey(nil) == "site" && giriSeasonRuleKey(" ") == "site", "sites without seasons keep one rule")
+        }
+
+        // 0.24 kumite order, rule templates, duplication and the tournament flow.
+        do {
+            var kumite = GiriEvent(title: "組手の出順"); kumite.eventFormat = .live; kumite.isKumite = true; kumite.isProject = true
+            kumite.kumiteMains = ["主役"]
+            kumite.participants = ["相手A", "主役", "相手B", "相手C", "相手A"]
+            try check(kumite.kumiteBoutSize == 1 && kumite.kumiteOpponents == ["相手A", "相手B", "相手C"], "opponents exclude the main and duplicates")
+            kumite.kumiteBouts = [KumiteBout(id: "bout-c", opponents: ["相手C"], outcome: "win", memo: "メモ")]
+            try check(kumite.kumiteOpponentOrder == ["相手C", "相手A", "相手B"], "recorded bouts come first in the running order")
+            let single = giriKumiteBouts(order: ["相手C", "相手A", "相手B"], size: 1, outcomes: [playerSearchKey("相手C"): "win", playerSearchKey("相手B"): "lose"], previous: kumite.kumiteBouts)
+            try check(single.map(\.opponents) == [["相手C"], ["相手A"], ["相手B"]] && single[0].id == "bout-c" && single[0].memo == "メモ" && single.map(\.outcome) == ["win", "", "lose"],
+                      "one opponent per bout keeps each result with its opponent")
+            let tag = giriKumiteBouts(order: ["a", "b", "c", "d", "e"], size: 2, outcomes: [playerSearchKey("c"): "draw"], previous: [])
+            try check(tag.map(\.opponents) == [["a", "b"], ["c", "d"], ["e"]] && tag[1].outcome == "draw" && giriKumiteRecord(tag).text == "0勝0敗1分", "tag kumite pairs opponents by the number of mains")
+            var tagEvent = kumite; tagEvent.kumiteMains = ["主役", "相棒", " "]
+            try check(tagEvent.kumiteBoutSize == 2, "the bout size follows the number of mains")
+
+            try check(giriInferredStageKind("敗者復活戦") == .repechage && StageKind.repechage.depth == nil, "repechage is its own stage kind without a depth")
+            try check(Set(giriRuleTemplates.map(\.id)).count == giriRuleTemplates.count && giriRuleTemplates.allSatisfy { (try? $0.validate()) != nil }
+                      && giriRuleTemplates.contains { $0.kind == .online } && giriRuleTemplates.contains { $0.kind == .live }, "rule templates are valid for both kinds")
+            let template = giriRuleTemplates.first { $0.stages.count >= 2 } ?? GiriRule()
+            let fromTemplate = giriRuleFromTemplate(template)
+            try check(fromTemplate.id != template.id && fromTemplate.name == template.name && fromTemplate.stages.map(\.name) == template.stages.map(\.name)
+                      && Set(fromTemplate.stages.map(\.id)).isDisjoint(with: template.stages.map(\.id)), "a template becomes a new rule with new IDs")
+            let copy = fromTemplate.duplicated()
+            try check(copy.id != fromTemplate.id && copy.name.hasSuffix("のコピー") && copy.kind == fromTemplate.kind, "rules can be duplicated")
+            var withAdvance = GiriRule(name: "勝ち抜け"); withAdvance.advanceCount = 12
+            try check(try JSONDecoder().decode(GiriRule.self, from: JSONEncoder().encode(withAdvance)).advanceCount == 12, "the advancing count roundtrips")
+            var olderRuleJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(withAdvance)) as? [String: Any] ?? [:]
+            olderRuleJSON.removeValue(forKey: "advanceCount")
+            try check(try JSONDecoder().decode(GiriRule.self, from: JSONSerialization.data(withJSONObject: olderRuleJSON)).advanceCount == nil, "older rules decode without an advancing count")
+
+            func names(_ stages: [GiriRuleStage]) -> [String] { stages.map(\.name) }
+            var flow = [giriRuleStage(.qualifier), giriRuleStage(.final)]
+            flow = giriRuleInsertingStage(giriRuleStage(.main), into: flow)
+            try check(names(flow) == ["予選", "本戦", "決勝"], "a main stage goes before the final")
+            flow = giriRuleInsertingStage(giriRuleStage(.semifinal), into: flow)
+            try check(names(flow) == ["予選", "本戦", "準決勝", "決勝"], "a semifinal goes after the main stage and before the final")
+            flow = giriRuleInsertingStage(giriRuleStage(.repechage, name: "敗者復活戦"), into: flow)
+            try check(names(flow) == ["予選", "本戦", "準決勝", "敗者復活戦", "決勝"], "repechage goes just before the final")
+            flow = giriRuleInsertingStage(giriRuleStage(.qualifier, name: "予選2"), into: flow)
+            try check(names(flow).firstIndex(of: "予選2") == 1, "another qualifier goes after the first qualifier")
+            var hybrid = GiriEvent(title: "スプシの大会"); hybrid.eventFormat = .hybrid; hybrid.meetingType = .tournament
+            var knockoutRule = GiriRule(name: "トーナメント", kind: .live); knockoutRule.knockout = true
+            giriApplyRule(knockoutRule, to: &hybrid)
+            try check(hybrid.ruleID == knockoutRule.id && !hybrid.knockout, "spreadsheet tournaments share live rules without the one-on-one format")
+        }
+
+        // 0.25 OCR columns by left edge and listed counts, tournament boards, side results.
+        do {
+            func line(_ text: String, x: Double, y: Double, left: Double) -> GiriOCRLine { GiriOCRLine(text: text, midX: x, midY: y, height: 0.01, minX: left) }
+            // 参加者の列（左端0.05）に、長い名前と「？」のアイコンの人。中央は興味ありの見出しに近いが、左端は参加者の列。
+            let columns = [line("参加者（3人）", x: 0.18, y: 0.10, left: 0.05), line("興味あり（1人）", x: 0.47, y: 0.10, left: 0.36),
+                           line("はるか", x: 0.12, y: 0.15, left: 0.06), line("?とても長い名前の参加者さん", x: 0.36, y: 0.20, left: 0.05),
+                           line("みどり", x: 0.12, y: 0.25, left: 0.06), line("見学さん", x: 0.45, y: 0.15, left: 0.37)]
+            let read = giriParticipantCandidates(lines: columns, known: [])
+            try check(read.first { $0.name == "とても長い名前の参加者さん" }?.section == .participants && read.first { $0.name == "見学さん" }?.section == .interested,
+                      "a long name with a question-mark icon stays in the participants column")
+            try check(giriListedParticipantCount(["イベント", "参加者（30人／定員30人）"]) == 30 && giriListedParticipantCount(["参加者", "12人)"]) == 12
+                      && giriListedParticipantCount(["興味あり（3人）"]) == nil, "the participant count written on the page is read")
+
+            let members = ["a", "b", "c", "d", "e", "f", "g"]
+            let blocks = giriBoardBlocks(members: members, size: 3)
+            try check(blocks.map(\.members) == [["a", "b", "c"], ["d", "e", "f"], ["g"]] && blocks.map(\.name) == ["Aブロック", "Bブロック", "Cブロック"], "members are split into blocks in order")
+            try check(giriBoardBlocks(members: ["a", "b", "c", "d"], size: 2).map(\.name) == ["第1試合", "第2試合"], "two-person blocks are named as matches")
+            var first = blocks[0]; first.winners = ["b"]
+            var board = GiriStageBoard(id: "stage-1", blocks: [first, blocks[1], blocks[2]])
+            var rows = giriBoardRows(board.blocks)
+            // b を Bブロックの先頭へ、d を Aブロックへ入れ替える。
+            rows.removeAll { $0 == .member("b") }
+            if let header = rows.firstIndex(of: .header(blocks[1].id)) { rows.insert(.member("b"), at: header + 1) }
+            rows.removeAll { $0 == .member("d") }
+            if let header = rows.firstIndex(of: .header(blocks[0].id)) { rows.insert(.member("d"), at: header + 1) }
+            board.blocks = giriBoardBlocks(rows: rows, previous: board.blocks)
+            try check(board.blocks[0].members == ["d", "a", "c"] && board.blocks[1].members == ["b", "e", "f"] && board.blocks[0].winners.isEmpty && board.blocks[1].winners.isEmpty,
+                      "moving people between blocks keeps the order and drops winners who left the block")
+            board.blocks[0] = giriBoardTogglingWinner(board.blocks[0], name: "a")
+            board.blocks[1] = giriBoardTogglingWinner(board.blocks[1], name: "f")
+            board.blocks[1] = giriBoardTogglingWinner(board.blocks[1], name: "b")
+            try check(giriBoardWinners(board) == ["a", "b", "f"], "winners follow the block order")
+            var match = GiriBoardBlock(name: "第1試合", members: ["x", "y"])
+            match = giriBoardTogglingWinner(match, name: "x")
+            match = giriBoardTogglingWinner(match, name: "y")
+            try check(match.winners == ["y"], "a match keeps only one winner")
+            try check(giriBoardHeader("Aブロック") == "Aブロック" && giriBoardHeader("Ｂ ブロック：") == "Bブロック" && giriBoardHeader("第2試合") == "第2試合"
+                      && giriBoardHeader("グループC") == "グループC" && giriBoardHeader("ブロック") == nil && giriBoardHeader("参加者") == nil, "block headers are recognized")
+            let image = [line("Aブロック", x: 0.2, y: 0.1, left: 0.1), line("Bブロック", x: 0.7, y: 0.1, left: 0.6),
+                         line("はるか", x: 0.2, y: 0.15, left: 0.1), line("みどり", x: 0.7, y: 0.15, left: 0.6),
+                         line("あおい", x: 0.2, y: 0.2, left: 0.1), line("そら", x: 0.7, y: 0.2, left: 0.6)]
+            let fromImage = giriBoardBlocks(lines: image, known: [], size: 4)
+            try check(fromImage.map(\.name) == ["Aブロック", "Bブロック"] && fromImage.map(\.members) == [["はるか", "あおい"], ["みどり", "そら"]], "a block sheet image is read into blocks by column")
+            let noHeaders = giriBoardBlocks(lines: [line("いち", x: 0.2, y: 0.1, left: 0.1), line("に", x: 0.2, y: 0.2, left: 0.1), line("さん", x: 0.2, y: 0.3, left: 0.1), line("よん", x: 0.2, y: 0.4, left: 0.1)], known: [], size: 2)
+            try check(noHeaders.map(\.members) == [["いち", "に"], ["さん", "よん"]], "a bracket without headers is split into matches in order")
+
+            var stage = ResultStage(); stage.name = "予選"; stage.laps = [StageLap()]
+            let selfBoard = GiriStageBoard(id: stage.id, blocks: [GiriBoardBlock(name: "Aブロック", members: ["わたし", "はるか", "みどり"], winners: ["わたし"])])
+            let applied = giriApplyingBoard(selfBoard, to: stage) { $0 == "わたし" }
+            try check(applied.laps[0].group == "Aブロック" && applied.laps[0].opponents == ["はるか", "みどり"] && applied.outcome == .advanced, "the board fills one's block, opponents and advancement")
+            var finalStage = ResultStage(); finalStage.name = "決勝"
+            let finalBoard = GiriStageBoard(id: finalStage.id, blocks: [GiriBoardBlock(name: "決勝", members: ["わたし", "はるか"], winners: ["はるか"])])
+            try check(giriApplyingBoard(finalBoard, to: finalStage) { $0 == "わたし" }.outcome == .runnerUp, "losing a final match is runner-up")
+            var manual = stage; manual.outcome = .other
+            try check(giriApplyingBoard(selfBoard, to: manual) { $0 == "わたし" }.outcome == .other, "a manual result is kept")
+
+            var plain = GiriEvent(title: "組み合わせのない会")
+            let plainJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any] ?? [:]
+            try check(plainJSON["stageBoards"] == nil && plainJSON["sideResults"] == nil, "events without boards or side results keep the older JSON shape")
+            plain.stageBoards = [board]
+            plain.sideResults = [GiriSideResult(kind: "tournament", title: "ミニトナメ", result: "優勝", members: ["はるか"])]
+            let roundtrip = try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(plain))
+            try check(roundtrip.stageBoards == plain.stageBoards && roundtrip.sideResults == plain.sideResults && roundtrip.sideResults[0].kindTitle == "ミニトナメ", "boards and side results roundtrip")
         }
 
         print("Native domain regressions passed: \(passed)")

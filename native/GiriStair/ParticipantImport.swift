@@ -61,7 +61,7 @@ enum GiriParticipantOCR {
                         if !isLast && fromBottom < 0.02 { continue }
                         let tileH = Double(tileRect.height)
                         let midY = (Double(tileTop) + (1 - Double(box.midY)) * tileH) / Double(height)
-                        lines.append(GiriOCRLine(text: text, midX: Double(box.midX), midY: midY, height: Double(box.height) * tileH / Double(height)))
+                        lines.append(GiriOCRLine(text: text, midX: Double(box.midX), midY: midY, height: Double(box.height) * tileH / Double(height), minX: Double(box.minX)))
                     }
                 }
                 if tileTop + tileHeight >= height { break }
@@ -96,7 +96,7 @@ enum GiriParticipantOCR {
         let lines = (request.results ?? []).compactMap { observation -> GiriOCRLine? in
             guard let text = observation.topCandidates(1).first?.string else { return nil }
             let box = observation.boundingBox
-            return GiriOCRLine(text: text, midX: Double(box.midX), midY: Double(1 - box.midY), height: Double(box.height))
+            return GiriOCRLine(text: text, midX: Double(box.midX), midY: Double(1 - box.midY), height: Double(box.height), minX: Double(box.minX))
         }
         guard !lines.isEmpty else { throw GiriParticipantReadError.noText }
         return lines
@@ -112,6 +112,8 @@ struct GiriParticipantImport: View {
     @State private var candidates: [GiriParticipantCandidate] = []
     @State private var previewing = false
     @State private var loaded = false
+    /// 0.25：ページに書いてある参加者の人数。
+    @State private var listedCount: Int?
     private let lines: [GiriOCRLine]?
     /// 今の参加者。同じ人は「追加済み」にして、重ならないようにする。
     private let existing: [String]
@@ -129,14 +131,15 @@ struct GiriParticipantImport: View {
     private var selectedNames: [String] { giriSelectedParticipantNames(candidates) }
 
     private func read(_ text: String) -> [GiriParticipantCandidate] {
-        giriMarkingAlreadyAdded(giriResolvingAliases(giriParticipantCandidates(text: text, known: knownNames), store: store),
+        listedCount = giriListedParticipantCount(text.components(separatedBy: .newlines))
+        return giriMarkingAlreadyAdded(giriResolvingAliases(giriParticipantCandidates(text: text, known: knownNames), store: store),
                                 existing: giriResolvedNames(existing, store: store))
     }
 
     var body: some View {
         Form {
             if previewing {
-                GiriParticipantCandidateSections(candidates: $candidates, knownNames: knownNames)
+                GiriParticipantCandidateSections(candidates: $candidates, knownNames: knownNames, listedCount: listedCount)
                 Section {
                     DisclosureGroup("読み取った原文") {
                         Text(source).font(.footnote.monospaced()).textSelection(.enabled).padding(.vertical, 6)
@@ -180,6 +183,7 @@ struct GiriParticipantImport: View {
             if let lines {
                 // 画面の読み取りは、文字の位置から欄を分けてから確認に進む。
                 source = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }.map(\.text).joined(separator: "\n")
+                listedCount = giriListedParticipantCount(source.components(separatedBy: .newlines))
                 candidates = giriMarkingAlreadyAdded(giriResolvingAliases(giriParticipantCandidates(lines: lines, known: knownNames), store: store),
                                                      existing: giriResolvedNames(existing, store: store))
                 previewing = true
@@ -235,6 +239,8 @@ func giriResolvedNames(_ names: [String], store: GiriStore) -> [String] {
 struct GiriParticipantCandidateSections: View {
     @Binding var candidates: [GiriParticipantCandidate]
     let knownNames: [String]
+    /// 0.25：ページに書いてある参加者の人数（分かる時だけ。読み取った人数と比べて出す）。
+    var listedCount: Int? = nil
 
     var body: some View {
         ForEach([GiriParticipantSection.participants, .interested, .other], id: \.self) { section in
@@ -255,6 +261,13 @@ struct GiriParticipantCandidateSections: View {
             }.listRowSeparator(.hidden)
             if indices.isEmpty {
                 Text("参加者を読み取れませんでした").font(.subheadline).foregroundStyle(.secondary)
+            }
+            if section == .participants, let listedCount {
+                let read = indices.filter { candidates[$0].included }.count
+                Label(read == listedCount ? "ページの参加者\(listedCount)人と同じ人数です" : "ページには参加者\(listedCount)人と書いてあります（選んでいるのは\(read)人）",
+                      systemImage: read == listedCount ? "checkmark.circle" : "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(read == listedCount ? Color.secondary : AppSectionAccent.ticket)
             }
             ForEach(indices, id: \.self) { index in candidateRow(index) }
             if section == .participants {
@@ -353,7 +366,7 @@ struct GiriEventPageReview: View {
                 valueRow("主催", draft.organizer)
                 valueRow("参加費", draft.fee.map { "\($0)円" } ?? "")
             }.appSectionCardStyle(accentColor: AppSectionAccent.live)
-            GiriParticipantCandidateSections(candidates: $draft.participants, knownNames: giriParticipantKnownNames(store))
+            GiriParticipantCandidateSections(candidates: $draft.participants, knownNames: giriParticipantKnownNames(store), listedCount: draft.listedParticipantCount)
             Section {
                 Toggle("入力済みの内容も置き換える", isOn: $replaceExisting).tint(AppSectionAccent.scan)
                 Text(replaceExisting ? "読み取った内容を優先して反映します。読み取れなかった項目は、今の入力が残ります。"
