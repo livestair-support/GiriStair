@@ -91,7 +91,8 @@ enum TournamentOutcome: String, Codable, CaseIterable, Identifiable {
 /// 段階の種類。大会ごとに段階の数が違っても「どこまで進んだか」を比べられるよう、
 /// 予選 → 本戦 → 準々決勝 → 準決勝 → 決勝 の順に並べる（その他は順番に数えない）。
 enum StageKind: String, CaseIterable, Identifiable {
-    case qualifier, main, quarterfinal, semifinal, final, other
+    /// 0.24：敗者復活（repechage）。以前の版では知らない値として名前から読む。
+    case qualifier, main, quarterfinal, semifinal, final, repechage, other
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -100,10 +101,11 @@ enum StageKind: String, CaseIterable, Identifiable {
         case .quarterfinal: return "準々決勝"
         case .semifinal: return "準決勝"
         case .final: return "決勝"
+        case .repechage: return "敗者復活"
         case .other: return "その他"
         }
     }
-    /// 進んだ深さ（その他は nil）。
+    /// 進んだ深さ（敗者復活・その他は nil）。
     var depth: Int? {
         switch self {
         case .qualifier: return 0
@@ -111,7 +113,7 @@ enum StageKind: String, CaseIterable, Identifiable {
         case .quarterfinal: return 2
         case .semifinal: return 3
         case .final: return 4
-        case .other: return nil
+        case .repechage, .other: return nil
         }
     }
 }

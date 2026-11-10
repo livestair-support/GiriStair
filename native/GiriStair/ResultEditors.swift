@@ -2041,29 +2041,31 @@ struct GiriKumiteResultEditor: View {
     @EnvironmentObject private var store: GiriStore
     @Environment(\.dismiss) private var dismiss
     let eventID: String
-    @State private var bouts: [KumiteBout] = []
-    @State private var original: [KumiteBout] = []
+    /// 0.24：対戦相手の出順（参加者の中から並べ替える）。
+    @State private var order: [String] = []
+    /// 各戦の勝敗（その戦の最初の相手の名前の照合キー → win・lose・draw）。
+    @State private var outcomes: [String: String] = [:]
+    @State private var originalOrder: [String] = []
+    @State private var originalOutcomes: [String: String] = [:]
     @State private var loaded = false
     @State private var discard = false
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
-    private var changed: Bool { bouts != original }
+    private var changed: Bool { order != originalOrder || outcomes != originalOutcomes }
+    private var size: Int { event?.kumiteBoutSize ?? 1 }
+    private var bouts: [KumiteBout] { giriKumiteBouts(order: order, size: size, outcomes: outcomes, previous: event?.kumiteBouts ?? []) }
 
     var body: some View {
-        Form {
+        List {
             if let event {
                 summarySection(event)
-                ForEach(bouts.indices, id: \.self) { index in boutSection(event, index: index) }
-                Section {
-                    Button {
-                        bouts.append(KumiteBout())
-                    } label: { Label("対戦を追加", systemImage: "plus.circle") }
-                    .tint(accentActionColor)
-                }.appSectionCardStyle(accentColor: AppSectionAccent.favorite)
+                orderSection(event)
             } else {
                 CenteredEmptyMessage(systemImage: "person.2", title: "この会は削除されています")
             }
         }
-        .appEditorFormStyle()
+        .environment(\.editMode, .constant(.active))
+        .environment(\.defaultMinListRowHeight, settingsMinimumListRowHeight)
+        .appIndexListStyle()
         .navigationTitle("組手の結果").navigationBarTitleDisplayMode(.inline)
         .giriNavigationBarStyle()
         .navigationBarBackButtonHidden(changed)
@@ -2075,106 +2077,106 @@ struct GiriKumiteResultEditor: View {
             ToolbarItem(placement: .confirmationAction) { Button("保存", action: save).fontWeight(.bold).disabled(!changed) }
         }
         .giriDiscardChangesAlert(isPresented: $discard) { dismiss() }
-        .onAppear {
-            guard !loaded, let event else { return }
-            loaded = true
-            bouts = event.kumiteBouts
-            original = bouts
-        }
+        .onAppear(perform: load)
     }
 
     private func summarySection(_ event: GiriEvent) -> some View {
         let record = giriKumiteRecord(bouts)
         let selfBouts = bouts.filter { event.kumiteIncludesSelf($0, isSelf: store.preferences.isSelf) }.count
         return Section {
-            AppCardSectionTitle(title: "組手", systemImage: "star", accentColor: AppSectionAccent.favorite,
-                                infoTitle: "組手の結果", infoMessage: "対戦ごとに、主役から見た勝ち・負け・引き分けを入れます。人数は対戦ごとに自由です（タッグは2人ずつ）。")
+            AppCardSectionTitle(title: "通算", systemImage: "star", accentColor: AppSectionAccent.favorite,
+                                infoTitle: "組手の結果",
+                                infoMessage: "対戦相手を≡で出順に並べ、主役から見た勝ち・負け・引き分けを選びます。主役の人数ずつで1戦です。")
                 .listRowSeparator(.hidden)
-            HStack { GiriEditorLabel("主役"); Spacer(); Text(event.kumiteMains.isEmpty ? "未設定" : event.kumiteMains.joined(separator: "・")).font(.subheadline.weight(.semibold)) }
             HStack {
-                GiriEditorLabel("通算")
+                Text(event.kumiteMains.isEmpty ? "主役未設定" : event.kumiteMains.joined(separator: "・"))
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
                 Text(record.text).font(.title3.weight(.bold)).foregroundStyle(AppSectionAccent.ticket).monospacedDigit()
             }
             if selfBouts > 0 {
                 HStack { GiriEditorLabel("自分が出た対戦"); Spacer(); Text("\(selfBouts)戦").font(.subheadline) }
             }
-        }.appSectionCardStyle(accentColor: AppSectionAccent.favorite)
+        }
+        .appSectionCardStyle(accentColor: AppSectionAccent.favorite)
     }
 
-    private func boutBinding(_ index: Int) -> Binding<KumiteBout> {
-        Binding(get: { bouts.indices.contains(index) ? bouts[index] : KumiteBout() }, set: { value in
-            if bouts.indices.contains(index) { bouts[index] = value }
-        })
+    private func orderSection(_ event: GiriEvent) -> some View {
+        Section {
+            AppCardSectionTitle(title: size > 1 ? "出順（\(size)人ずつ）" : "出順", systemImage: "list.number", accentColor: AppSectionAccent.artist)
+                .listRowSeparator(.hidden)
+                .moveDisabled(true)
+            if order.isEmpty {
+                Text("会の登録の「対戦相手」に名前を入れると、ここに並びます。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                    .moveDisabled(true)
+            }
+            ForEach(Array(order.enumerated()), id: \.element) { index, name in
+                opponentRow(event, index: index, name: name)
+            }
+            .onMove { from, to in order.move(fromOffsets: from, toOffset: to) }
+        }
+        .appSectionCardStyle(accentColor: AppSectionAccent.artist)
     }
 
-    private func boutSection(_ event: GiriEvent, index: Int) -> some View {
-        let bout = boutBinding(index)
-        let includesSelf = event.kumiteIncludesSelf(bout.wrappedValue, isSelf: store.preferences.isSelf)
-        return Section {
-            HStack(spacing: 8) {
-                Text("第\(index + 1)戦").font(.headline)
-                if includesSelf {
+    /// 1人分の行。主役の人数ずつで1戦にし、その戦の最後の人の行で勝敗を選ぶ。
+    private func opponentRow(_ event: GiriEvent, index: Int, name: String) -> some View {
+        let boutIndex = index / size
+        let start = boutIndex * size
+        let isLastOfBout = index % size == size - 1 || index == order.count - 1
+        let key = playerSearchKey(order[start])
+        let isSelf = store.preferences.isSelf(name)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Text(index % size == 0 ? "第\(boutIndex + 1)戦" : "")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .frame(width: 48, alignment: .leading)
+                Text(name).font(.body)
+                if isSelf {
                     Text("自分").font(.caption2.weight(.bold)).foregroundStyle(.white)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(AppSectionAccent.favorite))
                 }
-                Spacer(minLength: 8)
-                Button(role: .destructive) {
-                    if bouts.indices.contains(index) { bouts.remove(at: index) }
-                } label: { Image(systemName: "minus.circle") }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("この対戦を削除")
+                Spacer(minLength: 0)
             }
-            .listRowSeparator(.hidden)
-            if event.kumiteMains.count > 1 { mainsRow(event, bout: bout) }
-            GiriNamesField(title: "相手", names: bout.opponents,
-                           priorityNames: event.participants.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
-            Picker("勝敗", selection: bout.outcome) {
-                Text("未").tag("")
-                ForEach(KumiteOutcome.allCases) { Text($0.title).tag($0.rawValue) }
-            }
-            .pickerStyle(.segmented)
-            TextField("メモ（お題・手応えなど）", text: bout.memo, axis: .vertical).lineLimit(1...4)
-        }.appSectionCardStyle(accentColor: includesSelf ? AppSectionAccent.favorite : AppSectionAccent.memo)
-    }
-
-    /// 主役が複数（タッグなど）の時、その対戦に出た主役側を選ぶ（空は主役全員）。
-    private func mainsRow(_ event: GiriEvent, bout: Binding<KumiteBout>) -> some View {
-        let chosen = event.kumiteMains(of: bout.wrappedValue)
-        return Menu {
-            ForEach(event.kumiteMains, id: \.self) { name in
-                Button {
-                    var names = chosen
-                    if let position = names.firstIndex(of: name) { names.remove(at: position) } else { names.append(name) }
-                    bout.wrappedValue.mains = names.count == event.kumiteMains.count ? [] : names
-                } label: {
-                    if chosen.contains(name) { Label(name, systemImage: "checkmark") } else { Text(name) }
+            if isLastOfBout {
+                Picker("第\(boutIndex + 1)戦の勝敗", selection: Binding(get: { outcomes[key] ?? "" }, set: { outcomes[key] = $0.isEmpty ? nil : $0 })) {
+                    Text("未").tag("")
+                    ForEach(KumiteOutcome.allCases) { Text($0.title).tag($0.rawValue) }
                 }
-            }
-        } label: {
-            HStack {
-                GiriEditorLabel("主役側")
-                Spacer(minLength: 8)
-                Text(chosen.joined(separator: "・")).font(.subheadline).foregroundStyle(.primary)
-                Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(.secondary)
+                .pickerStyle(.segmented)
             }
         }
-        .tint(.primary)
+        .padding(.vertical, 2)
+    }
+
+    private func load() {
+        guard !loaded, let event else { return }
+        loaded = true
+        order = event.kumiteOpponentOrder
+        var values: [String: String] = [:]
+        for bout in event.kumiteBouts {
+            guard let first = bout.opponents.first, KumiteOutcome(rawValue: bout.outcome) != nil else { continue }
+            values[playerSearchKey(first)] = bout.outcome
+        }
+        // 以前の版で、主役の人数と違う人数で記録した対戦は、出順の区切りに合わせて読み直す。
+        outcomes = values
+        originalOrder = order
+        originalOutcomes = outcomes
     }
 
     private func save() {
         guard var event else { return }
-        event.kumiteBouts = bouts.map { bout in
-            var copy = bout
-            copy.opponents = bout.opponents.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-            copy.memo = bout.memo.trimmingCharacters(in: .whitespacesAndNewlines)
-            return copy
-        }
+        let saved = bouts
+        event.kumiteBouts = saved
+        // 対戦相手（参加者）も出順に並べる。主役など出順にない名前は後ろに残す。
+        let ordered = Set(order.map(playerSearchKey))
+        event.participants = order + event.participants.filter { !ordered.contains(playerSearchKey($0)) }
         store.run {
             try store.saveEvent(event)
             playLiveStairSaveFeedback()
-            original = bouts
+            originalOrder = order
+            originalOutcomes = outcomes
             dismiss()
         }
     }

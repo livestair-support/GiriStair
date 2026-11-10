@@ -568,8 +568,9 @@ struct GiriEventEditor: View {
                         Text("横並び・その他").tag(false)
                         Text("トーナメント（1対1）").tag(true)
                     } label: { GiriEditorLabel("対戦形式") }.pickerStyle(.menu).tint(.primary)
-                    liveRuleRow
                 }
+                // 0.24：生大喜利とスプシ系は大会のルールを共用する。
+                if draft.eventFormat == .live || draft.eventFormat == .hybrid { liveRuleRow }
             }
             if !isSite {
                 Picker(selection: participationChoice) {

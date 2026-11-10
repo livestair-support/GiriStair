@@ -745,7 +745,7 @@ struct DomainRegression {
         do {
             let kinds: [(String, StageKind)] = [("予選", .qualifier), ("予選決勝", .qualifier), ("本戦1回戦", .main), ("2回戦", .main),
                 ("決勝トーナメント1回戦", .main), ("準々決勝", .quarterfinal), ("準決勝", .semifinal), ("決勝", .final),
-                ("グランドファイナル", .final), ("敗者復活戦", .other), ("3位決定戦", .other), ("", .other)]
+                ("グランドファイナル", .final), ("敗者復活戦", .repechage), ("3位決定戦", .other), ("", .other)]
             for (name, kind) in kinds { try check(giriInferredStageKind(name) == kind, "stage name \(name) infers \(kind.title)") }
             var chosen = ResultStage(); chosen.name = "ラストステージ"; chosen.kind = .final
             try check(chosen.effectiveKind == .final, "an explicitly chosen kind wins over the name")
@@ -1705,6 +1705,53 @@ struct DomainRegression {
             try check(nextTournament.ruleID == liveRule.id && nextTournament.judging == "拍手" && stages.count == 1 && stages[0].name == "予選" && stages[0].advanceCount == 2 && stages[0].placement == nil,
                       "a live rule fills the tournament and its stages without results")
             try check(giriSeasonRuleKey(nil) == "site" && giriSeasonRuleKey(" ") == "site", "sites without seasons keep one rule")
+        }
+
+        // 0.24 kumite order, rule templates, duplication and the tournament flow.
+        do {
+            var kumite = GiriEvent(title: "組手の出順"); kumite.eventFormat = .live; kumite.isKumite = true; kumite.isProject = true
+            kumite.kumiteMains = ["主役"]
+            kumite.participants = ["相手A", "主役", "相手B", "相手C", "相手A"]
+            try check(kumite.kumiteBoutSize == 1 && kumite.kumiteOpponents == ["相手A", "相手B", "相手C"], "opponents exclude the main and duplicates")
+            kumite.kumiteBouts = [KumiteBout(id: "bout-c", opponents: ["相手C"], outcome: "win", memo: "メモ")]
+            try check(kumite.kumiteOpponentOrder == ["相手C", "相手A", "相手B"], "recorded bouts come first in the running order")
+            let single = giriKumiteBouts(order: ["相手C", "相手A", "相手B"], size: 1, outcomes: [playerSearchKey("相手C"): "win", playerSearchKey("相手B"): "lose"], previous: kumite.kumiteBouts)
+            try check(single.map(\.opponents) == [["相手C"], ["相手A"], ["相手B"]] && single[0].id == "bout-c" && single[0].memo == "メモ" && single.map(\.outcome) == ["win", "", "lose"],
+                      "one opponent per bout keeps each result with its opponent")
+            let tag = giriKumiteBouts(order: ["a", "b", "c", "d", "e"], size: 2, outcomes: [playerSearchKey("c"): "draw"], previous: [])
+            try check(tag.map(\.opponents) == [["a", "b"], ["c", "d"], ["e"]] && tag[1].outcome == "draw" && giriKumiteRecord(tag).text == "0勝0敗1分", "tag kumite pairs opponents by the number of mains")
+            var tagEvent = kumite; tagEvent.kumiteMains = ["主役", "相棒", " "]
+            try check(tagEvent.kumiteBoutSize == 2, "the bout size follows the number of mains")
+
+            try check(giriInferredStageKind("敗者復活戦") == .repechage && StageKind.repechage.depth == nil, "repechage is its own stage kind without a depth")
+            try check(Set(giriRuleTemplates.map(\.id)).count == giriRuleTemplates.count && giriRuleTemplates.allSatisfy { (try? $0.validate()) != nil }
+                      && giriRuleTemplates.contains { $0.kind == .online } && giriRuleTemplates.contains { $0.kind == .live }, "rule templates are valid for both kinds")
+            let template = giriRuleTemplates.first { $0.stages.count >= 2 } ?? GiriRule()
+            let fromTemplate = giriRuleFromTemplate(template)
+            try check(fromTemplate.id != template.id && fromTemplate.name == template.name && fromTemplate.stages.map(\.name) == template.stages.map(\.name)
+                      && Set(fromTemplate.stages.map(\.id)).isDisjoint(with: template.stages.map(\.id)), "a template becomes a new rule with new IDs")
+            let copy = fromTemplate.duplicated()
+            try check(copy.id != fromTemplate.id && copy.name.hasSuffix("のコピー") && copy.kind == fromTemplate.kind, "rules can be duplicated")
+            var withAdvance = GiriRule(name: "勝ち抜け"); withAdvance.advanceCount = 12
+            try check(try JSONDecoder().decode(GiriRule.self, from: JSONEncoder().encode(withAdvance)).advanceCount == 12, "the advancing count roundtrips")
+            var olderRuleJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(withAdvance)) as? [String: Any] ?? [:]
+            olderRuleJSON.removeValue(forKey: "advanceCount")
+            try check(try JSONDecoder().decode(GiriRule.self, from: JSONSerialization.data(withJSONObject: olderRuleJSON)).advanceCount == nil, "older rules decode without an advancing count")
+
+            func names(_ stages: [GiriRuleStage]) -> [String] { stages.map(\.name) }
+            var flow = [giriRuleStage(.qualifier), giriRuleStage(.final)]
+            flow = giriRuleInsertingStage(giriRuleStage(.main), into: flow)
+            try check(names(flow) == ["予選", "本戦", "決勝"], "a main stage goes before the final")
+            flow = giriRuleInsertingStage(giriRuleStage(.semifinal), into: flow)
+            try check(names(flow) == ["予選", "本戦", "準決勝", "決勝"], "a semifinal goes after the main stage and before the final")
+            flow = giriRuleInsertingStage(giriRuleStage(.repechage, name: "敗者復活戦"), into: flow)
+            try check(names(flow) == ["予選", "本戦", "準決勝", "敗者復活戦", "決勝"], "repechage goes just before the final")
+            flow = giriRuleInsertingStage(giriRuleStage(.qualifier, name: "予選2"), into: flow)
+            try check(names(flow).firstIndex(of: "予選2") == 1, "another qualifier goes after the first qualifier")
+            var hybrid = GiriEvent(title: "スプシの大会"); hybrid.eventFormat = .hybrid; hybrid.meetingType = .tournament
+            var knockoutRule = GiriRule(name: "トーナメント", kind: .live); knockoutRule.knockout = true
+            giriApplyRule(knockoutRule, to: &hybrid)
+            try check(hybrid.ruleID == knockoutRule.id && !hybrid.knockout, "spreadsheet tournaments share live rules without the one-on-one format")
         }
 
         print("Native domain regressions passed: \(passed)")

@@ -473,7 +473,8 @@ func giriInferredStageKind(_ name: String) -> StageKind {
     let value = name.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
     guard !value.isEmpty else { return .other }
     func has(_ words: [String]) -> Bool { words.contains { value.contains($0) } }
-    if has(["敗者復活", "3位決定", "３位決定", "三位決定", "エキシビション"]) { return .other }
+    if has(["敗者復活"]) { return .repechage }
+    if has(["3位決定", "３位決定", "三位決定", "エキシビション"]) { return .other }
     if has(["予選"]) { return .qualifier }
     if has(["準々決勝", "クォーターファイナル"]) { return .quarterfinal }
     if has(["準決勝", "セミファイナル"]) { return .semifinal }
@@ -2232,6 +2233,55 @@ extension GiriEvent {
     func kumiteIncludesSelf(_ bout: KumiteBout, isSelf: (String) -> Bool) -> Bool {
         kumiteMains(of: bout).contains(where: isSelf) || bout.opponents.contains(where: isSelf)
     }
+}
+
+// MARK: - 0.24 組手の出順
+
+extension GiriEvent {
+    /// 0.24：組手の1戦に出る相手の人数（主役の人数に合わせる。主役が未設定なら1人）。
+    var kumiteBoutSize: Int { max(1, kumiteMains.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count) }
+
+    /// 0.24：組手の対戦相手（参加者から主役を除いた人）。
+    var kumiteOpponents: [String] {
+        let mains = Set(kumiteMains.map(playerSearchKey))
+        var seen = Set<String>()
+        return participants.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !mains.contains(playerSearchKey($0)) && seen.insert(playerSearchKey($0)).inserted }
+    }
+
+    /// 0.24：組手の出順。記録した対戦の順を先に、まだ対戦にいない参加者を後ろに並べる。
+    var kumiteOpponentOrder: [String] {
+        let opponents = kumiteOpponents
+        let known = Set(opponents.map(playerSearchKey))
+        var seen = Set<String>()
+        var order: [String] = []
+        for name in kumiteBouts.flatMap(\.opponents) {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = playerSearchKey(trimmed)
+            guard !trimmed.isEmpty, known.contains(key), seen.insert(key).inserted else { continue }
+            order.append(trimmed)
+        }
+        for name in opponents where seen.insert(playerSearchKey(name)).inserted { order.append(name) }
+        return order
+    }
+}
+
+/// 0.24：出順から、主役の人数ずつで1戦にした対戦を作る。勝敗は各戦の最初の相手の名前で持つ。
+/// 以前の対戦のID・メモ・主役側は、最初の相手が同じ対戦から引き継ぐ。
+func giriKumiteBouts(order: [String], size: Int, outcomes: [String: String], previous: [KumiteBout]) -> [KumiteBout] {
+    let step = max(1, size)
+    var bouts: [KumiteBout] = []
+    var index = 0
+    while index < order.count {
+        let chunk = Array(order[index..<min(order.count, index + step)])
+        let key = playerSearchKey(chunk[0])
+        var bout = previous.first { $0.opponents.first.map(playerSearchKey) == key } ?? KumiteBout()
+        bout.opponents = chunk
+        bout.outcome = outcomes[key] ?? ""
+        bouts.append(bout)
+        index += step
+    }
+    return bouts
 }
 
 // MARK: - 0.23 お題/回答の履歴の並び
