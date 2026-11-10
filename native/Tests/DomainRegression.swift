@@ -1819,6 +1819,27 @@ struct DomainRegression {
             try check(roundtrip.stageBoards == plain.stageBoards && roundtrip.sideResults == plain.sideResults && roundtrip.sideResults[0].kindTitle == "ミニトナメ", "boards and side results roundtrip")
         }
 
+        // 0.25.1 the same person in both the participants and interested columns stays a participant.
+        do {
+            func cell(_ text: String, column: Int, row: Int) -> GiriOCRLine {
+                let left = [0.03, 0.36, 0.66][column]
+                return GiriOCRLine(text: text, midX: left + 0.1, midY: 0.30 + Double(row) * 0.03, height: 0.01, minX: left)
+            }
+            let page = [cell("参加者 (10人／定員10人)", column: 0, row: 0), cell("興味あり (7人)", column: 1, row: 0), cell("不参加 (1人)", column: 2, row: 0),
+                        cell("五能ファイア", column: 0, row: 1), cell("ジャストワン", column: 1, row: 1), cell("貯蓄", column: 2, row: 1),
+                        cell("しゅにく", column: 0, row: 2), cell("捕鯨船", column: 1, row: 2),
+                        cell("カタン", column: 0, row: 3), cell("櫻宮D", column: 1, row: 3),
+                        cell("?捕鯨船", column: 0, row: 4), cell("かくれどり", column: 1, row: 4),
+                        cell("?櫻宮D", column: 0, row: 5), cell("良さげ", column: 1, row: 5),
+                        cell("?かくれどり", column: 0, row: 6)]
+            let read = giriParticipantCandidates(lines: page, known: [])
+            let participants = read.filter { $0.section == .participants }.map(\.name)
+            try check(participants == ["五能ファイア", "しゅにく", "カタン", "捕鯨船", "櫻宮D", "かくれどり"], "people in both columns are read as participants in the participants order")
+            try check(read.filter { $0.section == .interested }.map(\.name) == ["ジャストワン", "良さげ"] && Set(read.map(\.id)).count == read.count,
+                      "they are not listed again as interested and IDs stay unique")
+            try check(giriListedParticipantCount(page.map(\.text)) == 10 && read.filter(\.included).count == 6, "the page count can be compared with the selected people")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

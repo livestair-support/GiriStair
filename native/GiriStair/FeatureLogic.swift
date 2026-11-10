@@ -1176,12 +1176,27 @@ func giriParticipantCandidates(entries: [(text: String, section: GiriParticipant
             registered = giriMatchRegisteredName(text, truncated: cleaned.truncated, known: known)
         }
         let name = registered ?? text
-        guard seen.insert(giriOCRNameKey(name)).inserted else { continue }
-        output.append(GiriParticipantCandidate(id: output.count, source: source, name: name, registered: registered,
-                                               truncated: cleaned.truncated && registered == nil, suspiciousPrefix: nil,
-                                               section: entry.section, included: entry.section == .participants))
+        let candidate = GiriParticipantCandidate(id: output.count, source: source, name: name, registered: registered,
+                                                 truncated: cleaned.truncated && registered == nil, suspiciousPrefix: nil,
+                                                 section: entry.section, included: entry.section == .participants)
+        guard seen.insert(giriOCRNameKey(name)).inserted else {
+            // 0.25.1：同じ人が「参加者」と「興味あり」などの両方にいる時（運営が参加者に入れた人が
+            // 興味ありも押している時など）は、参加者として残す（画面の上にある欄を優先しない）。
+            if entry.section == .participants,
+               let index = output.firstIndex(where: { giriOCRNameKey($0.name) == giriOCRNameKey(name) && $0.section != .participants }) {
+                output.remove(at: index)
+                output.append(candidate)
+            }
+            continue
+        }
+        output.append(candidate)
     }
-    return output
+    // 入れ替えた後も、ID は並び順の番号にする。
+    return output.enumerated().map { index, candidate in
+        var value = candidate
+        value.id = index
+        return value
+    }
 }
 
 /// 貼り付けた文章：見出しがあれば欄ごとに分け、なければ全部を参加者として読む。
