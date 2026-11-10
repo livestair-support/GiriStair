@@ -1024,9 +1024,18 @@ private var currentAppThemeMode: AppThemeMode {
         forKey: "appearanceMode"
     ) ?? AppThemeMode.system.rawValue
     
-    return AppThemeMode(
+    let mode = AppThemeMode(
         rawValue: rawValue
     ) ?? .system
+    // 0.27：ライト／ダークは preferredColorScheme で端末の外観ごと切り替えるので、
+    // 色は「端末に合わせる」と同じ外観で決まる色にする。アプリ内でテーマを変えた時に、
+    // 描き直されなかった検索欄・カードが前のテーマの色のまま残らないようにする。
+    switch mode {
+    case .light, .dark:
+        return .system
+    default:
+        return mode
+    }
 }
 
 private let standardLightPageUIColor =

@@ -370,11 +370,28 @@ struct GiriEventEditor: View {
     }
 
     /// 0.23：生大喜利の大会のルール。選ぶと参加形式・対戦形式・審査方法を入れ、段階は結果の入力で入れられる。
+    /// 0.27：通常会・企画で対戦がある時。形式は詳細の「会の中の結果」を足す時の最初の形式になる。
+    @ViewBuilder private var battleRows: some View {
+        Toggle(isOn: Binding(get: { draft.battleKind != nil }, set: { draft.battleKind = $0 ? (draft.battleKind ?? "tournament") : nil })) {
+            HStack(spacing: 4) {
+                GiriEditorLabel("対戦がある")
+                AppInfoButton(title: "対戦がある会", message: "会の中でミニトナメ・ミニ組手・総当たりなどをやる時にオンにします。結果は詳細の「会の中の結果」に残します（戦績・集計には入れません）。",
+                              tintColor: AppSectionAccent.live)
+            }
+        }.tint(AppSectionAccent.live)
+        if draft.battleKind != nil {
+            Picker(selection: Binding(get: { draft.battleKind ?? "tournament" }, set: { draft.battleKind = $0 })) {
+                ForEach(GiriSideResult.kinds, id: \.value) { Text($0.title).tag($0.value) }
+            } label: { GiriEditorLabel("対戦の形式") }.pickerStyle(.menu).tint(.primary)
+        }
+    }
+
     private var liveRuleRow: some View {
         HStack(spacing: 8) {
             GiriEditorLabel("ルール")
             Spacer(minLength: 8)
-            GiriRuleMenuPicker(kind: .live, selectedID: draft.ruleID,
+            // 0.27：ネットの大会はネット大喜利の「大会」のルール、生・スプシ系は生大喜利・スプシ系のルール。
+            GiriRuleMenuPicker(kind: draft.eventFormat.isOnline ? .online : .live, scope: .tournament, selectedID: draft.ruleID,
                                onSelect: { applyLiveRule($0) },
                                onCreate: { creatingRule = giriRule(from: draft) })
         }
@@ -541,6 +558,8 @@ struct GiriEventEditor: View {
                 // 0.19：組手（主役に対してたくさんのメンバーが対戦する企画）。
                 if draft.eventFormat.allowsProject { Text("組手").tag("kumite") }
             } label: { GiriEditorLabel("会の種類") }.pickerStyle(.menu).tint(.primary)
+            // 0.27：通常会・企画の中のミニトナメなどは、基本情報で「対戦がある」にして形式を選ぶ。
+            if draft.meetingType == .casual && !draft.isKumiteEvent && draft.eventFormat.hasLiveTiming { battleRows }
             // 大会は生・ネットを問わず、ここで個人戦／チーム戦と人数を選ぶ（結果入力もこれに合わせる）。
             if draft.meetingType == .tournament {
                 Picker(selection: $draft.tournamentFormat) {
@@ -569,8 +588,8 @@ struct GiriEventEditor: View {
                         Text("トーナメント（1対1）").tag(true)
                     } label: { GiriEditorLabel("対戦形式") }.pickerStyle(.menu).tint(.primary)
                 }
-                // 0.24：生大喜利とスプシ系は大会のルールを共用する。
-                if draft.eventFormat == .live || draft.eventFormat == .hybrid { liveRuleRow }
+                // 0.24：生大喜利とスプシ系は大会のルールを共用する。0.27：ネットの大会も大会のルールを選べる。
+                liveRuleRow
             }
             if !isSite {
                 Picker(selection: participationChoice) {
@@ -1166,6 +1185,8 @@ struct GiriEventEditor: View {
                 // 企画は生大喜利・スプシ系の通常の会だけ。
                 if !candidate.eventFormat.allowsProject || candidate.meetingType != .casual { candidate.isProject = false; candidate.isKumite = false }
                 candidate.kumiteMains = candidate.isKumite ? cleanedNames(candidate.kumiteMains) : candidate.kumiteMains
+                // 0.27：対戦の形式は、通常会・企画（組手を除く）の時だけ残す。
+                if candidate.meetingType != .casual || candidate.isKumiteEvent || !candidate.eventFormat.hasLiveTiming { candidate.battleKind = nil }
                 candidate.siteUrl = candidate.siteUrl.trimmingCharacters(in: .whitespacesAndNewlines)
                 candidate.judging = candidate.judging.trimmingCharacters(in: .whitespacesAndNewlines)
                 candidate.venueRoom = candidate.venueRoom.trimmingCharacters(in: .whitespacesAndNewlines)

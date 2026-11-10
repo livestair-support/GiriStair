@@ -15,6 +15,8 @@ struct GiriSeasonTotals: Equatable {
     var requiredAnswerCount: Int? = nil
     /// 平均に使った数（規定回答数で上位だけにした時は、その数）。
     var countedSampleCount: Int = 0
+    /// 0.27：回答（または回の点数）を残した回の数。リーグの規定数（○回以上）と比べる。
+    var answeredCycleCount: Int = 0
 
     var rateSampleCount: Int { scoredAnswerCount + legacyRoundResultCount }
     /// 規定回答数より多く記録があり、低い方を平均から外したか。
@@ -58,6 +60,7 @@ func giriSeasonTotals(
         var seenNotes = Set<String>()
         var roundsWithAnswerRates = Set<String>()
         var hasUnlinkedAnswerRate = false
+        var eventSubmitted = 0
         for note in eventNotes where seenNotes.insert(note.id).inserted {
             var seenAnswers = Set<String>()
             let submitted = note.effectiveAnswerRecords.filter {
@@ -65,6 +68,7 @@ func giriSeasonTotals(
                 seenAnswers.insert($0.id).inserted
             }
             totals.submittedAnswerCount += submitted.count
+            eventSubmitted += submitted.count
             for answer in submitted {
                 guard let rate = seasonAnalyticsRate(answer.voteRate) else { continue }
                 samples.append((rate, seasonAnalyticsRate(answer.pointsPerVoter)))
@@ -80,6 +84,7 @@ func giriSeasonTotals(
             }
         }
 
+        if eventSubmitted > 0 { totals.answeredCycleCount += 1 }
         guard !hasUnlinkedAnswerRate else { continue }
         let stages = event.tournamentResult?.stages ?? []
         var fallbackRates: [String: Double] = [:]
@@ -104,6 +109,7 @@ func giriSeasonTotals(
             if let rate = fallbackRates[key] { samples.append((rate, fallbackPerVoter[key])) }
         }
         totals.legacyRoundResultCount += fallbackRates.count
+        if eventSubmitted == 0 && !fallbackRates.isEmpty { totals.answeredCycleCount += 1 }
     }
 
     // 規定回答数より多い時は、得票率の高い規定回答数分だけを平均する（低い回答は考えない）。

@@ -18,9 +18,7 @@ struct GiriListView: View {
     @State private var playerSearch = ""
     @State private var site = "all"
     @State private var stage = "all"
-    /// 生大喜利のシリーズ（同じ名前・回数違いの会）で絞り込む。
-    @State private var seriesFilter = "all"
-    /// 生大喜利の主催（共催を含む）で絞り込む。プレイヤー・団体詳細の「主催した会」から開く。
+    /// 主催者（共催を含む）で絞り込む。0.27：シリーズの代わりに常に出す。プレイヤー・団体詳細の「主催した会」からも開く。
     @State private var hostFilter = "all"
     /// 通常サイトの詳細・編集・結果入力（このタブの中で遷移する）。
     @State private var siteRoute: GiriSiteRoute?
@@ -71,8 +69,7 @@ struct GiriListView: View {
         if venue != "all" { values.append(venue) }
         if !selectedPlayers.isEmpty { values.append(selectedPlayers.sorted().joined(separator: " / ")) }
         if stage != "all" { values.append(stage) }
-        if seriesFilter != "all", let title = seriesOptions.first(where: { $0.0 == seriesFilter })?.1 { values.append(title) }
-        if hostFilter != "all" { values.append("主催：" + hostFilter) }
+        if hostFilter != "all" { values.append("主催者：" + hostFilter) }
         if !search.isEmpty { values.append("検索「\(search)」") }
         return values
     }
@@ -82,14 +79,6 @@ struct GiriListView: View {
         if selectedFormat.allowsProject || meeting == "project" { options.append(("project", "企画")) }
         if selectedFormat.allowsProject || meeting == "kumite" { options.append(("kumite", "組手")) }
         return options
-    }
-    /// 2回以上ある生大喜利のシリーズ（照合キー, 表示名）。
-    private var seriesOptions: [(String, String)] {
-        guard selectedFormat == .live else { return [] }
-        let groups = Dictionary(grouping: searchableEvents.filter { !$0.seriesKey.isEmpty }, by: \.seriesKey)
-        return groups.filter { $0.value.count >= 2 }
-            .map { key, events in (key, events.max { $0.createdAt < $1.createdAt }?.seriesTitle ?? key) }
-            .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
     }
     /// 主催者・共催（団体を含む）の名前。
     private var hostNames: [String] {
@@ -137,7 +126,6 @@ struct GiriListView: View {
             if hasParticipantFilter && !hostKeys.isEmpty && !isHosted(event, keys: hostKeys) { return false }
             if site != "all" && event.onlineSiteId != site { return false }
             if stage != "all" && !event.effectiveRounds.contains(where: { $0.name == stage }) { return false }
-            if seriesFilter != "all" && event.seriesKey != seriesFilter { return false }
             let venueRecord = store.venues.first { $0.id == event.venueId || $0.name == event.venue }
             let siteRecord = store.onlineSites.first { $0.id == event.onlineSiteId }
             guard !query.isEmpty else { return true }
@@ -225,8 +213,8 @@ struct GiriListView: View {
             }
         }
         .onChange(of: selectedFormat) { _, _ in
-            // 会場・参加者は詳細のショートカットから開いた条件を形式の切替後も残す。
-            year = "all"; meeting = "all"; status = "all"; site = "all"; stage = "all"; seriesFilter = "all"
+            // 会場・参加者・主催者は詳細のショートカットから開いた条件を形式の切替後も残す。
+            year = "all"; meeting = "all"; status = "all"; site = "all"; stage = "all"
             closePlayerDropdown()
         }
         .onChange(of: isCalendar) { _, _ in closePlayerDropdown() }
@@ -347,13 +335,9 @@ struct GiriListView: View {
                     separator
                     GiriListFilterMenu(title: "会場", selection: $venue, options: [("all", "全会場")] + (venueNames + (venue != "all" && !venueNames.contains(venue) ? [venue] : [])).map { ($0, $0) })
                 }
-                if hasParticipantFilter && hostFilter != "all" {
+                if hasParticipantFilter && (!hostNames.isEmpty || hostFilter != "all") {
                     separator
-                    GiriListFilterMenu(title: "主催", selection: $hostFilter, options: [("all", "すべて")] + hostNames.map { ($0, $0) })
-                }
-                if !seriesOptions.isEmpty || seriesFilter != "all" {
-                    separator
-                    GiriListFilterMenu(title: "シリーズ", selection: $seriesFilter, options: [("all", "すべて")] + seriesOptions)
+                    GiriListFilterMenu(title: "主催者", selection: $hostFilter, options: [("all", "全主催者")] + hostNames.map { ($0, $0) })
                 }
                 if selectedFormat == .onlineLong {
                     separator

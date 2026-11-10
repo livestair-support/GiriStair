@@ -5,7 +5,11 @@ import Combine
 /// writes. A malformed document leaves saving disabled instead of becoming empty.
 @MainActor
 final class GiriStore: ObservableObject {
-    @Published private(set) var document = GiriDocument()
+    @Published private(set) var document = GiriDocument() {
+        // 0.27：テーマの色は UserDefaults の appearanceMode から読むので、画面が描き直される前に書いておく
+        // （設定の変更・読み込み・復元のどれでも）。
+        willSet { giriSynchronizeAppearanceMode(newValue.preferences.theme) }
+    }
     @Published var errorMessage: String?
     @Published private(set) var loaded = false
     let directory: URL
@@ -879,14 +883,17 @@ final class GiriStore: ObservableObject {
     /// 0.14：同じ日の生大喜利の会の中で行う大会を追加する。日付・時刻・会場・主催・参加者を引き継ぎ、
     /// 元の会の中の大会にする（戦績ではそれぞれの大会、集計の参加回数は会として1回）。
     @discardableResult
-    func addTournament(inside parentID: String) throws -> GiriEvent {
+    func addTournament(inside parentID: String, title: String? = nil) throws -> GiriEvent {
         guard loaded else { throw GiriDataError.notLoaded }
         guard let found = events.first(where: { $0.id == parentID }) else { throw GiriDataError.invalid("元の会が見つかりません。") }
         // 会の中の大会からさらに足した時も、同じ元の会の中に並べる。
         let parent = found.parentEventId.flatMap { id in events.first { $0.id == id } } ?? found
         let siblings = events.filter { $0.parentEventId == parent.id }.count
         var child = GiriEvent()
-        child.title = parent.title + " 大会\(siblings + (parent.meetingType == .tournament ? 2 : 1))"
+        // 0.27：元の大会名に番号を付ける（「大会名1」「大会名2」…）。通常会の中の大会は「会名 大会1」から。
+        let group = tournamentGroup(of: parent.id)
+        child.title = title ?? giriNumberedTournamentTitle(rootTitle: parent.title, rootIsTournament: parent.meetingType == .tournament,
+                                                           groupCount: group.count, number: siblings + (parent.meetingType == .tournament ? 2 : 1))
         child.eventFormat = parent.eventFormat
         child.meetingType = .tournament
         child.parentEventId = parent.id
@@ -909,6 +916,54 @@ final class GiriStore: ObservableObject {
         child.selfRole = parent.selfRole
         try saveEvent(child)
         return events.first { $0.id == child.id } ?? child
+    }
+    /// 0.27：同じ会の大会（元の大会と、その中に足した大会）。作った順。
+    func tournamentGroup(of eventID: String) -> [GiriEvent] {
+        guard let found = events.first(where: { $0.id == eventID }) else { return [] }
+        let rootID = found.parentEventId ?? found.id
+        return events.filter { ($0.id == rootID || $0.parentEventId == rootID) && $0.meetingType == .tournament }
+            .sorted { a, b in
+                if a.id == rootID { return b.id != rootID }
+                if b.id == rootID { return false }
+                if a.createdAt != b.createdAt { return a.createdAt < b.createdAt }
+                return a.title.localizedStandardCompare(b.title) == .orderedAscending
+            }
+    }
+    /// 0.27：結果入力の「大会が複数ある」をオンにした時。元の大会を「大会名1」にして「大会名2」を足す。
+    /// 返り値は元の大会の新しい名前（変えなかった時は nil）。
+    @discardableResult
+    func splitTournament(_ eventID: String) throws -> String? {
+        guard loaded else { throw GiriDataError.notLoaded }
+        guard let found = events.first(where: { $0.id == eventID }) else { throw GiriDataError.invalid("大会が見つかりません。") }
+        let rootID = found.parentEventId ?? found.id
+        var renamed: String?
+        var childTitle: String?
+        if tournamentGroup(of: eventID).count == 1, var root = events.first(where: { $0.id == rootID }), root.meetingType == .tournament {
+            let base = root.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            root.title = base + "1"
+            renamed = root.title
+            childTitle = base + "2"
+            try saveEvent(root)
+        }
+        try addTournament(inside: rootID, title: childTitle)
+        return renamed
+    }
+    /// 0.27：「大会が複数ある」をオフにした時。この大会だけ残し、同じ会のほかの大会は最近削除した会へ移す。
+    /// 番号だけ付けた名前（「大会名1」）は元の大会名へ戻す。返り値は残した大会の新しい名前（変えなかった時は nil）。
+    @discardableResult
+    func mergeTournamentGroup(keeping eventID: String) throws -> String? {
+        guard loaded else { throw GiriDataError.notLoaded }
+        let group = tournamentGroup(of: eventID)
+        guard group.count > 1, let kept = group.first(where: { $0.id == eventID }) else { return nil }
+        let base = giriTournamentGroupBase(group.map(\.title))
+        for other in group where other.id != eventID { try deleteEvent(other.id, keepsInTrash: true) }
+        guard var value = events.first(where: { $0.id == kept.id }) else { return nil }
+        if let base, value.title != base, value.meetingType == .tournament, value.parentEventId == nil {
+            value.title = base
+            try saveEvent(value)
+            return base
+        }
+        return nil
     }
     /// 0.14：過去に参加した回（一覧に出ていない回）を、投稿の締切から追加する。
     /// 日程はその回の記録として残し、サイトの日程の設定は変えない。
@@ -995,7 +1050,7 @@ final class GiriStore: ObservableObject {
         guard var site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
         let chosen = (ruleID ?? site.currentRuleID).flatMap { rule($0) }
         // ルールの日数で最初の回の投稿開始を数えてから、日程・リーグ・プレーオフを入れる。
-        if let chosen, chosen.kind == .online {
+        if let chosen, chosen.kind == .online, chosen.effectiveScope == .regular {
             site.submissionDays = chosen.submissionDays
             site.votingDays = chosen.votingDays
         }
@@ -1066,4 +1121,13 @@ let giriDeletedEventRetention: TimeInterval = 30 * 86400
 func giriDeletedEventRemainingDays(_ entry: GiriDeletedEvent, now: Date = Date()) -> Int {
     let remaining = giriDeletedEventRetention - now.timeIntervalSince(entry.deletedAt)
     return remaining <= 0 ? 0 : Int((remaining / 86400).rounded(.up))
+}
+
+
+/// 0.27：アプリのテーマ（GiriDocument の preferences.theme）を、共通部品が色を決める appearanceMode へ写す。
+func giriSynchronizeAppearanceMode(_ theme: String) {
+    let mode = theme == "stair" ? "livestair" : theme
+    if UserDefaults.standard.string(forKey: "appearanceMode") != mode {
+        UserDefaults.standard.set(mode, forKey: "appearanceMode")
+    }
 }

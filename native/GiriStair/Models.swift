@@ -551,6 +551,8 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var stageBoards: [GiriStageBoard] = []
     /// 0.25：通常会・企画の中で行ったミニトナメ・ミニ組手・総当たりなどの結果（戦績・集計には入れない）。
     var sideResults: [GiriSideResult] = []
+    /// 0.27：通常会・企画で対戦がある時の形式（GiriSideResult.kinds の値）。nil は対戦なし。
+    var battleKind: String?
     /// 0.10（生大喜利）：シリーズ名（「#5」などの回数を除いた名前）。空なら会の名前から判断する。
     var series: String = ""
 }
@@ -582,7 +584,7 @@ enum GiriSelfRole: String, CaseIterable, Identifiable {
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts, ruleID, stageBoards, sideResults
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts, ruleID, stageBoards, sideResults, battleKind
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -703,6 +705,7 @@ extension GiriEvent {
         ruleID = try c.decodeIfPresent(String.self, forKey: .ruleID)
         stageBoards = try c.decodeIfPresent([GiriStageBoard].self, forKey: .stageBoards) ?? []
         sideResults = try c.decodeIfPresent([GiriSideResult].self, forKey: .sideResults) ?? []
+        battleKind = try c.decodeIfPresent(String.self, forKey: .battleKind)
 
         try validate()
     }
@@ -820,6 +823,7 @@ extension GiriEvent {
         try c.encodeIfPresent(ruleID, forKey: .ruleID)
         if !stageBoards.isEmpty { try c.encode(stageBoards, forKey: .stageBoards) }
         if !sideResults.isEmpty { try c.encode(sideResults, forKey: .sideResults) }
+        if let battleKind { try c.encode(battleKind, forKey: .battleKind) }
 
     }
 }

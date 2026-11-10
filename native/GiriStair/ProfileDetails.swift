@@ -1411,9 +1411,7 @@ struct GiriVenueDetail: View {
                     NavigationStack { GiriVenueEditor(venue: venue, section: section, onSaved: { resolvedID = $0.id }) }
                 }
                 .sheet(isPresented: $searchingMap) {
-                    NavigationStack {
-                        GiriMapSearchView(query: venue.name, showsClose: true) { item in applyMap(item, to: venue) }
-                    }
+                    GiriMapSearchView(venueName: venue.name) { item in applyMap(item, to: venue) }
                 }
                 .alert("地図アプリを選択", isPresented: $choosingMapApp) {
                     if let latitude = venue.latitude, let longitude = venue.longitude {
@@ -1538,10 +1536,7 @@ struct GiriVenueDetail: View {
 
     private func applyMap(_ item: MKMapItem, to venue: GiriVenue) {
         var value = venue
-        value.latitude = item.placemark.coordinate.latitude
-        value.longitude = item.placemark.coordinate.longitude
-        value.mapAddress = [item.placemark.administrativeArea, item.placemark.locality, item.placemark.thoroughfare, item.placemark.subThoroughfare].compactMap { $0 }.joined()
-        if value.prefecture.isEmpty, let prefecture = item.placemark.administrativeArea { value.prefecture = prefecture }
+        giriApplyMapItem(item, to: &value)
         save(value)
     }
 
@@ -1625,6 +1620,7 @@ struct GiriVenueEditor: View {
     @State private var draft: GiriVenue
     @State private var discard = false
     @State private var renaming = false
+    @State private var searchingMap = false
     private let original: GiriVenue
     private let isNew: Bool
     private let section: GiriProfileEditSection?
@@ -1668,17 +1664,23 @@ struct GiriVenueEditor: View {
                     } label: { GiriEditorLabel("都道府県") }
                     .pickerStyle(.menu).tint(.primary)
                     if isNew {
-                        NavigationLink {
-                            GiriMapSearchView(query: draft.name) { item in
-                                draft.latitude = item.placemark.coordinate.latitude
-                                draft.longitude = item.placemark.coordinate.longitude
-                                draft.mapAddress = [item.placemark.administrativeArea, item.placemark.locality, item.placemark.thoroughfare, item.placemark.subThoroughfare].compactMap { $0 }.joined()
-                                if draft.prefecture.isEmpty, let prefecture = item.placemark.administrativeArea { draft.prefecture = prefecture }
-                            }
-                        } label: { Label("マップを検索して登録", systemImage: "map") }
+                        // 0.27：LiveStair と同じく、地図の検索はシートで開いて結果を押すと紐付ける。
                         if draft.latitude != nil {
-                            LabeledContent("地図", value: draft.mapAddress.isEmpty ? "登録済み" : draft.mapAddress)
-                            Button("マップの登録を外す", role: .destructive) { draft.latitude = nil; draft.longitude = nil; draft.mapAddress = "" }
+                            LabeledContent {
+                                Text(draft.mapAddress.isEmpty ? "紐付け済み" : draft.mapAddress).foregroundStyle(.secondary).lineLimit(2)
+                            } label: { GiriEditorLabel("地図") }
+                            HStack(spacing: 16) {
+                                Button("変更") { searchingMap = true }
+                                Button("解除") { draft.latitude = nil; draft.longitude = nil; draft.mapAddress = "" }
+                                Spacer(minLength: 0)
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.subheadline)
+                            .foregroundStyle(accentActionColor)
+                        } else {
+                            Button { searchingMap = true } label: {
+                                Label("地図情報を紐付け", systemImage: "mappin.and.ellipse").foregroundStyle(accentActionColor)
+                            }
                         }
                     }
                 }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
@@ -1710,6 +1712,13 @@ struct GiriVenueEditor: View {
         }
         .interactiveDismissDisabled(changed)
         .giriDiscardChangesAlert(isPresented: $discard) { dismiss() }
+        .sheet(isPresented: $searchingMap) {
+            GiriMapSearchView(venueName: draft.name) { item in
+                var value = draft
+                giriApplyMapItem(item, to: &value)
+                draft = value
+            }
+        }
         .alert("会場名を変更しますか？", isPresented: $renaming) {
             Button("キャンセル", role: .cancel) {}
             Button("変更する") { save() }
@@ -1738,50 +1747,103 @@ struct GiriVenueEditor: View {
 }
 
 /// VenueMapSearchView。シートで開いた場合は「閉じる」を出す。
+/// 0.27：LiveStair の VenueMapSearchView と同じ紐付けの仕方。開くと会場名ですぐ検索し、
+/// 上の検索欄で探し直して、結果の行を押すと紐付ける（シートで開いて閉じるで戻る）。
 struct GiriMapSearchView: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var store: GiriStore
-    @State var query: String
-    var showsClose = false
+    let venueName: String
     var onSelect: (MKMapItem) -> Void
+    @State private var query = ""
     @State private var results: [MKMapItem] = []
-    @State private var searching = false
+    @State private var isSearching = false
+    @State private var errorMessage = ""
+
     var body: some View {
-        List {
-            Section {
-                AppCardSectionTitle(title: "会場を検索", systemImage: "magnifyingglass", accentColor: AppSectionAccent.venue).listRowSeparator(.hidden)
-                TextField("会場名・住所", text: $query).submitLabel(.search).onSubmit { Task { await search() } }
-                Button("検索") { Task { await search() } }.disabled(searching || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if searching { ProgressView() }
-                ForEach(Array(results.enumerated()), id: \.offset) { _, item in
-                    Button { onSelect(item); dismiss() } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.name ?? "名称未設定").foregroundStyle(.primary)
-                            Text(item.placemark.title ?? "").font(.caption).foregroundStyle(.secondary)
+        NavigationStack {
+            VStack(spacing: 0) {
+                HStack {
+                    TextField("会場名で検索", text: $query)
+                        .textFieldStyle(.roundedBorder)
+                        .submitLabel(.search)
+                        .onSubmit(search)
+                    Button("検索", action: search)
+                }
+                .padding()
+                if isSearching {
+                    ProgressView("検索中…").padding()
+                }
+                if !errorMessage.isEmpty {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding()
+                }
+                List {
+                    ForEach(results.indices, id: \.self) { index in
+                        let item = results[index]
+                        let address = item.placemark.title ?? ""
+                        Button {
+                            onSelect(item)
+                            dismiss()
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.name ?? "名称未設定")
+                                    .font(.headline)
+                                    .foregroundStyle(.primary)
+                                if !address.isEmpty {
+                                    Text(address)
+                                        .font(.caption)
+                                        .foregroundStyle(.primary)
+                                }
+                            }
                         }
                     }
                 }
-            }.appSectionCardStyle(accentColor: AppSectionAccent.venue)
-        }
-        .appIndexListStyle()
-        .giriNavigationBarStyle()
-        .navigationTitle("マップ検索").navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if showsClose {
-                ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
             }
+            .navigationTitle("地図情報を紐付け")
+            .scrollContentBackground(.hidden)
+            .background(appBackgroundColor)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { dismiss() }
+                }
+            }
+            .onAppear {
+                query = venueName
+                search()
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(appHeaderColor, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
     }
-    @MainActor private func search() async {
-        searching = true
-        defer { searching = false }
-        do {
-            let request = MKLocalSearch.Request()
-            request.naturalLanguageQuery = query
-            let response = try await MKLocalSearch(request: request).start()
-            results = response.mapItems
-        } catch { store.errorMessage = error.localizedDescription }
+
+    private func search() {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isSearching = true
+        errorMessage = ""
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = trimmed
+        MKLocalSearch(request: request).start { response, error in
+            isSearching = false
+            if let error {
+                errorMessage = "検索に失敗しました: \(error.localizedDescription)"
+                results = []
+                return
+            }
+            results = response?.mapItems ?? []
+            if results.isEmpty { errorMessage = "検索結果がありませんでした。" }
+        }
     }
+}
+
+/// 0.27：地図の検索結果を会場へ紐付ける（会場詳細のマップと、新しい会場の登録で共通）。
+func giriApplyMapItem(_ item: MKMapItem, to venue: inout GiriVenue) {
+    venue.latitude = item.placemark.coordinate.latitude
+    venue.longitude = item.placemark.coordinate.longitude
+    venue.mapAddress = [item.placemark.administrativeArea, item.placemark.locality, item.placemark.thoroughfare, item.placemark.subThoroughfare].compactMap { $0 }.joined()
+    if venue.prefecture.isEmpty, let prefecture = item.placemark.administrativeArea { venue.prefecture = prefecture }
 }
 
 /// プレイヤー詳細の「対戦の記録」：同じ組・対戦相手として記録した回数と、その時に自分が勝ち抜けた回数。

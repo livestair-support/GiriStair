@@ -2598,3 +2598,179 @@ func giriMergedPlayer(_ target: GiriPlayer, with candidate: GiriPlayer, oldName:
         .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
     return merged
 }
+
+
+// MARK: - 0.27 同じ会の複数の大会
+
+/// 大会名に番号を付ける。元の大会（大会）の名前が「大会名1」なら「大会名2」…、
+/// 通常会の中の大会は「会名 大会1」…。
+func giriNumberedTournamentTitle(rootTitle: String, rootIsTournament: Bool, groupCount: Int, number: Int) -> String {
+    let title = rootTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard rootIsTournament else { return title + " 大会\(number)" }
+    // 元の大会をもう「大会名1」にしてあれば、その「1」を外した名前に番号を付ける。
+    let base = groupCount >= 2 && title.hasSuffix("1") ? String(title.dropLast()) : title
+    return base + "\(number)"
+}
+
+/// 同じ会の大会の名前が「大会名1」「大会名2」…と番号だけ違う時の「大会名」。そうでなければ nil。
+func giriTournamentGroupBase(_ titles: [String]) -> String? {
+    let trimmed = titles.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    guard trimmed.count >= 2, let first = trimmed.first, first.hasSuffix("1") else { return nil }
+    let base = String(first.dropLast())
+    guard !base.isEmpty else { return nil }
+    for (offset, title) in trimmed.enumerated() where title != base + "\(offset + 1)" {
+        // 作った順と番号がずれていても、番号だけ違う名前ならよい。
+        guard title.hasPrefix(base), Int(title.dropFirst(base.count)) != nil else { return nil }
+    }
+    return base
+}
+
+// MARK: - 0.27 ルールの読み取り（ルールのページの画像の文字から）
+
+/// 読み取ったルールの文から、日程・回数・リーグ・規定数・プレーオフ・大会の段階などを入れる。
+/// 読めた所だけを変え、ほかの値はそのまま残す。返り値の found は読めた項目の名前（画面に出す）。
+func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule, found: [String]) {
+    var rule = base
+    var found: [String] = []
+    let text = giriHalfwidthDigits(raw)
+        .replacingOccurrences(of: "～", with: "〜").replacingOccurrences(of: "~", with: "〜")
+    let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    func number(_ value: String) -> Int? { Int(value) }
+    func firstInt(_ pattern: String, in line: String) -> Int? {
+        giriRegexGroups(pattern, in: line).first.flatMap { $0.count > 1 ? number($0[1]) : nil }
+    }
+    /// 「2分の1」「1/2」を「1/2」にする。
+    func fraction(in line: String) -> String? {
+        if let groups = giriRegexGroups(#"([0-9]+)\s*分の\s*([0-9]+)"#, in: line).first, let d = number(groups[1]), let n = number(groups[2]), n > 0, n <= d { return "\(n)/\(d)" }
+        if let groups = giriRegexGroups(#"([0-9]+)\s*/\s*([0-9]+)"#, in: line).first, let n = number(groups[1]), let d = number(groups[2]), n > 0, n <= d { return "\(n)/\(d)" }
+        if line.contains("半数") || line.contains("半分") { return "1/2" }
+        return nil
+    }
+    func leagueNames(in line: String) -> [String] {
+        giriRegexGroups(#"([0-9]+)\s*部"#, in: line).compactMap { $0.count > 1 ? "\($0[1])部" : nil }
+    }
+
+    // 日程
+    if let days = lines.lazy.compactMap({ firstInt(#"投稿(?:期間|期限)?\s*[:は]?\s*([0-9]+)\s*日"#, in: $0) }).first, (1...365).contains(days) {
+        rule.submissionDays = days; found.append("投稿\(days)日")
+    }
+    if let days = lines.lazy.compactMap({ firstInt(#"投票(?:期間|期限)?\s*[:は]?\s*([0-9]+)\s*日"#, in: $0) }).first, (1...365).contains(days) {
+        rule.votingDays = days; found.append("投票\(days)日")
+    }
+    if let bonus = lines.lazy.compactMap({ firstInt(#"投票ボーナス\s*[:は]?\s*([0-9]+)\s*点"#, in: $0) }).first {
+        rule.voteBonusPoints = bonus; found.append("投票ボーナス\(bonus)点")
+    }
+
+    if rule.effectiveScope == .regular {
+        // 1シーズンの回数
+        let cyclePatterns = [#"全\s*([0-9]+)\s*回"#, #"([0-9]+)\s*回で\s*1\s*シーズン"#, #"1\s*シーズン\s*[:は]?\s*([0-9]+)\s*回"#]
+        if let count = lines.lazy.compactMap({ line in cyclePatterns.lazy.compactMap { firstInt($0, in: line) }.first }).first, (1...200).contains(count) {
+            rule.regularCycleCount = count; found.append("全\(count)回")
+        }
+        // リーグ（2つ以上の「○部」がある時）
+        var names: [String] = []
+        for line in lines { for name in leagueNames(in: line) where !names.contains(name) { names.append(name) } }
+        names.sort { (Int($0.dropLast()) ?? 0) < (Int($1.dropLast()) ?? 0) }
+        if names.count >= 2 {
+            if rule.leagues != names { rule.setLeagues(names) }
+            found.append("リーグ（" + names.joined(separator: "・") + "）")
+        }
+        func update(_ name: String, _ change: (inout GiriRuleLeague) -> Void) {
+            guard let index = rule.leagueDetails.firstIndex(where: { $0.name == name }) else { return }
+            change(&rule.leagueDetails[index])
+        }
+        for line in lines {
+            let special = line.contains("プレーオフ") || line.contains("エキシビション")
+            // 規定数（「1部：結果お題数の2分の1以上」など）
+            if line.contains("以上"), !special {
+                // リーグごとに書いてある時（「1部：結果お題数の1/2以上、2部：1/8以上」）は、それぞれに入れる。
+                var assigned = false
+                for groups in giriRegexGroups(#"([0-9]+)\s*部[^0-9]{0,15}?([0-9]+)\s*(?:分の\s*([0-9]+)|/\s*([0-9]+))"#, in: line) {
+                    let pair = groups[3].isEmpty ? (number(groups[2]), number(groups[4])) : (number(groups[3]), number(groups[2]))
+                    guard let n = pair.0, let d = pair.1, n > 0, n <= d else { continue }
+                    update("\(groups[1])部") { $0.requiredFraction = "\(n)/\(d)" }
+                    assigned = true
+                }
+                if !assigned, let value = fraction(in: line) {
+                    let leagues = leagueNames(in: line)
+                    for name in leagues { update(name) { $0.requiredFraction = value } }
+                    assigned = !leagues.isEmpty
+                }
+                if assigned { found.append("規定数") }
+            }
+            // 「4題から1題」
+            for groups in giriRegexGroups(#"([0-9]+)\s*部[^0-9]{0,12}?([0-9]+)\s*題から\s*1\s*題"#, in: line) {
+                if let choices = number(groups[2]) { update("\(groups[1])部") { $0.promptChoices = choices } }
+            }
+            // 入れ替え（「1部下位15名と2部上位15名」）
+            if !special && (line.contains("入れ替え") || line.contains("入替") || line.contains("昇格") || line.contains("降格")) {
+                for groups in giriRegexGroups(#"([0-9]+)\s*部\s*[のはで]?\s*(上位|下位)\s*([0-9]+)\s*[名人]"#, in: line) {
+                    guard let count = number(groups[3]) else { continue }
+                    update("\(groups[1])部") { league in
+                        if groups[2] == "上位" { league.promotionCount = count } else { league.relegationCount = count }
+                    }
+                }
+                found.append("入れ替え")
+            }
+            if line.contains("最下位") && (line.contains("対象外") || line.contains("規定")) {
+                for name in leagueNames(in: line) { update(name) { $0.unqualifiedRanksLast = true } }
+            }
+            if line.contains("同率") || line.contains("同点") { rule.tieBreak = line; found.append("同率の扱い") }
+            // プレーオフ・エキシビション
+            for (word, kind) in [("プレーオフ", SitePeriodKind.playoff), ("エキシビション", SitePeriodKind.exhibition)] where line.contains(word) {
+                var plan = rule.specialPlans.first { $0.kind == kind } ?? GiriRuleSpecialPlan(kind: kind, title: word, submissionDays: rule.submissionDays, votingDays: rule.votingDays)
+                if let entrants = firstInt(#"上位\s*([0-9]+)\s*[名人]"#, in: line) { plan.entrantCount = entrants }
+                if let league = leagueNames(in: line).first { plan.entrantLeague = league }
+                if line.contains("合計") { plan.ranking = GiriRuleScoring.total.rawValue }
+                if line.contains("含めない") || line.contains("含まない") || line.contains("含みません") { plan.countsInSeason = false }
+                if let index = rule.specialPlans.firstIndex(where: { $0.kind == kind }) { rule.specialPlans[index] = plan } else { rule.specialPlans.append(plan); found.append(word) }
+            }
+        }
+    } else {
+        // 大会の段階（出てきた順。「1〜4回戦」は1回戦から4回戦に分ける）
+        var stages: [GiriRuleStage] = []
+        /// 段階を足す（もうある時は、形式・勝ち抜けの分かった所だけ入れる）。line はその段階が書かれた文の区切り。
+        func add(_ name: String, _ kind: StageKind, line: String) {
+            var stage = stages.first { $0.name == name } ?? GiriRuleStage(name: name, kind: kind.rawValue)
+            if line.contains("タイマン") || line.contains("1対1") || line.range(of: #"1\s*vs\s*1"#, options: [.regularExpression, .caseInsensitive]) != nil { stage.lineup = "タイマン（1対1）" }
+            else if line.contains("グループ") { stage.lineup = "グループ対戦" }
+            else if line.contains("お題毎") || line.contains("お題ごと") { stage.lineup = "お題ごとに勝ち抜け" }
+            if let count = firstInt(#"上位\s*([0-9]+)\s*[名人]"#, in: line) { stage.advanceCount = count; stage.advanceFraction = nil }
+            else if line.contains("勝ち抜け") || line.contains("通過") || line.contains("勝ち上がり"), let value = fraction(in: line) { stage.advanceFraction = value; stage.advanceCount = nil }
+            if let index = stages.firstIndex(where: { $0.name == name }) { stages[index] = stage } else { stages.append(stage) }
+        }
+        // 「1〜4回戦、準決勝、決勝。準決勝だけタイマン」のように、文の区切りごとに段階と形式を読む。
+        let segments = lines.flatMap { $0.components(separatedBy: CharacterSet(charactersIn: "、。,，・→⇒>＞")) }
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        for line in segments {
+            for groups in giriRegexGroups(#"([0-9]+)\s*〜\s*([0-9]+)\s*回戦"#, in: line) {
+                if let from = number(groups[1]), let to = number(groups[2]), from <= to, to - from < 20 {
+                    for value in from...to { add("\(value)回戦", .other, line: line) }
+                }
+            }
+            for groups in giriRegexGroups(#"(?<![0-9〜])([0-9]+)\s*回戦"#, in: line) { add("\(groups[1])回戦", .other, line: line) }
+            let named: [(String, StageKind)] = [("予選リーグ", .qualifier), ("予選", .qualifier), ("本戦", .main), ("敗者復活戦", .repechage), ("敗者復活", .repechage),
+                                                ("準々決勝", .quarterfinal), ("準決勝", .semifinal), ("決勝リーグ", .main), ("決勝戦", .final), ("決勝", .final)]
+            var rest = line
+            for (word, kind) in named where rest.contains(word) {
+                // 長い名前を先に取る（「予選リーグ」と「予選」を両方足さない）。
+                add(word, kind, line: line)
+                rest = rest.replacingOccurrences(of: word, with: "")
+            }
+        }
+        // 「お題毎に上位半数勝ち抜け」のように全体で決まっている時は、決勝以外の段階に入れる。
+        if let line = lines.first(where: { ($0.contains("勝ち抜け") || $0.contains("通過")) && fraction(in: $0) != nil }), let value = fraction(in: line) {
+            for index in stages.indices where stages[index].stageKind != .final && stages[index].advanceCount == nil && stages[index].advanceFraction == nil {
+                stages[index].advanceFraction = value
+            }
+            if stages.isEmpty { rule.advanceFraction = value }
+        }
+        if stages.count >= 2 {
+            rule.stages = stages
+            found.append("大会の流れ（" + stages.map(\.name).joined(separator: "→") + "）")
+        }
+        if lines.contains(where: { $0.contains("チーム戦") }) { rule.tournamentFormat = .team; found.append("チーム戦") }
+    }
+    var seen = Set<String>()
+    return (rule, found.filter { seen.insert($0).inserted })
+}

@@ -199,6 +199,8 @@ struct GiriResultEntry: View {
     /// 0.19：大会名（会の中に大会を足した時など、任意で名前を付ける）。
     @State private var tournamentTitle = ""
     @State private var originalTitle = ""
+    /// 0.27：「大会が複数ある」をオフにする時の確認。
+    @State private var mergingTournaments = false
     /// 0.15：イベントページの大会の説明から段階の骨組みを読む。
     @State private var skeletonPhoto: PhotosPickerItem?
     @State private var readingSkeleton = false
@@ -216,7 +218,6 @@ struct GiriResultEntry: View {
         boardHandlers(Form {
             if let event {
                 eventSection(event)
-                if event.eventFormat == .live { innerTournamentSection(event) }
                 if event.isSelfPlayer {
                     stageListSection(event)
                     finalSection(event)
@@ -228,6 +229,8 @@ struct GiriResultEntry: View {
                     }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
                 }
                 standingSections(event)
+                // 0.27：「この会の中の大会」の欄の代わりに、いちばん下で大会が複数あるかを選ぶ。
+                if event.eventFormat == .live { multipleTournamentsSection(event) }
             } else {
                 Text("この会は削除されています。").foregroundStyle(.secondary)
             }
@@ -481,42 +484,79 @@ struct GiriResultEntry: View {
         }.appSectionCardStyle(accentColor: AppSectionAccent.live)
     }
 
-    /// 0.19：同じ日の会の中の大会。大会名を付け、ほかの大会の結果へ移り、ここから大会を足す。
-    private func innerTournamentSection(_ event: GiriEvent) -> some View {
-        let parentID = event.parentEventId ?? event.id
-        let parent = store.events.first { $0.id == parentID }
-        let siblings = store.events.filter { ($0.parentEventId == parentID || $0.id == parentID) && $0.id != event.id && $0.meetingType == .tournament }
-            .sorted { $0.createdAt < $1.createdAt }
+    /// 0.27：同じ会で大会を2つ以上やった時。オンにすると「大会名1」「大会名2」に分かれ、
+    /// ほかの大会の結果へ移ったり、大会を足したりできる。オフにするとこの大会だけ残す。
+    private func multipleTournamentsSection(_ event: GiriEvent) -> some View {
+        let group = store.tournamentGroup(of: event.id)
+        let parent = event.parentEventId.flatMap { id in store.events.first { $0.id == id } }
+        let others = group.filter { $0.id != event.id }
         return Section {
-            AppCardSectionTitle(title: "この会の中の大会", systemImage: "trophy", accentColor: AppSectionAccent.ticket,
-                                infoTitle: "会の中の大会", infoMessage: "1日の会の中で大会を2つ以上やる時は、ここから大会を足します。それぞれ大会名を付けられます。")
+            AppCardSectionTitle(title: "大会の数", systemImage: "trophy", accentColor: AppSectionAccent.ticket,
+                                infoTitle: "大会が複数ある時", infoMessage: "同じ会で大会を2つ以上やった時にオンにします。大会1・大会2…に分かれ、それぞれの結果を残せます。")
                 .listRowSeparator(.hidden)
-            HStack(spacing: 12) {
-                GiriEditorLabel("大会名")
-                TextField("任意", text: $tournamentTitle).multilineTextAlignment(.trailing)
-            }
-            if let parent, parent.id != event.id, parent.meetingType != .tournament {
-                HStack { GiriEditorLabel("元の会"); Spacer(); Text(parent.title).font(.subheadline) }
-            }
-            ForEach(siblings) { other in
-                NavigationLink {
-                    GiriResultEntry(eventID: other.id)
-                } label: {
-                    HStack {
-                        Text(other.title).font(.subheadline.weight(.semibold))
-                        Spacer(minLength: 8)
-                        Text(other.finalResultTitle ?? "結果未入力").font(.caption).foregroundStyle(.secondary)
+            Toggle(isOn: Binding(get: { group.count > 1 }, set: { on in
+                if on { splitTournament(event) } else { mergingTournaments = true }
+            })) { GiriEditorLabel("大会が複数ある") }
+                .tint(AppSectionAccent.ticket)
+                .giriDeleteAlert("ほかの大会を削除しますか？", isPresented: $mergingTournaments,
+                                 message: "「\(others.map(\.title).joined(separator: "」「"))」を削除して、この大会だけにします。設定の「最近削除した会」に30日間残ります。") {
+                    mergeTournaments(event)
+                }
+            if group.count > 1 {
+                if let parent, parent.meetingType != .tournament {
+                    HStack { GiriEditorLabel("元の会"); Spacer(); Text(parent.title).font(.subheadline) }
+                }
+                ForEach(Array(group.enumerated()), id: \.element.id) { offset, other in
+                    if other.id == event.id {
+                        HStack(spacing: 12) {
+                            GiriEditorLabel("大会\(offset + 1)")
+                            TextField("大会名", text: $tournamentTitle).multilineTextAlignment(.trailing)
+                        }
+                    } else {
+                        NavigationLink {
+                            GiriResultEntry(eventID: other.id)
+                        } label: {
+                            HStack(spacing: 12) {
+                                GiriEditorLabel("大会\(offset + 1)")
+                                Spacer(minLength: 8)
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(other.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                                    Text(other.finalResultTitle ?? "結果未入力").font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
                     }
                 }
+                Button {
+                    store.run {
+                        try store.addTournament(inside: event.parentEventId ?? event.id)
+                        playLiveStairSaveFeedback()
+                    }
+                } label: { Label("大会を追加", systemImage: "plus.circle") }
+                .tint(accentActionColor)
             }
-            Button {
-                store.run {
-                    try store.addTournament(inside: event.id)
-                    playLiveStairSaveFeedback()
-                }
-            } label: { Label("この会の中に大会を追加", systemImage: "plus.circle") }
-            .tint(accentActionColor)
         }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
+    private func splitTournament(_ event: GiriEvent) {
+        store.run {
+            // 名前を変えるのは、この画面の大会が元の大会の時だけ（「大会名1」にする）。
+            if let renamed = try store.splitTournament(event.id) {
+                if tournamentTitle == originalTitle { tournamentTitle = renamed }
+                originalTitle = renamed
+            }
+            playLiveStairSaveFeedback()
+        }
+    }
+
+    private func mergeTournaments(_ event: GiriEvent) {
+        store.run {
+            if let renamed = try store.mergeTournamentGroup(keeping: event.id) {
+                if tournamentTitle == originalTitle { tournamentTitle = renamed }
+                originalTitle = renamed
+            }
+            playLiveStairDeleteFeedback()
+        }
     }
 
     private func eventSubtitle(_ event: GiriEvent) -> String {

@@ -601,7 +601,7 @@ struct GiriSiteDeadlineSheet: View {
                     }
                 }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
             }
-            if asksRules && store.rules.filter({ $0.kind == .online }).isEmpty {
+            if asksRules && store.rules.filter({ $0.kind == .online && $0.effectiveScope == .regular }).isEmpty {
                 Section {
                     AppCardSectionTitle(title: "ルール", systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.memo,
                                         infoTitle: "ルールの変更",
@@ -648,7 +648,7 @@ struct GiriSiteDeadlineSheet: View {
             }
             try store.ensureCurrentSiteCycles()
             playLiveStairSaveFeedback()
-            if asksRules && rulesChange && store.rules.filter({ $0.kind == .online }).isEmpty { onRulesChange?() }
+            if asksRules && rulesChange && store.rules.filter({ $0.kind == .online && $0.effectiveScope == .regular }).isEmpty { onRulesChange?() }
             dismiss()
         }
     }
