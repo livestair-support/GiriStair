@@ -923,7 +923,8 @@ extension GiriRule {
         let leagueNames = try c.decodeIfPresent([String].self, forKey: .leagues) ?? []
         leagues = leagueNames
         let details = try c.decodeIfPresent([GiriRuleLeague].self, forKey: .leagueDetails) ?? []
-        leagueDetails = leagueNames.map { name in details.first { $0.name == name } ?? GiriRuleLeague(name: name) }
+        // 決まりを書いていない（0.26以前の）ルールは空のまま読む（名前だけのリーグは leagueDetail で引ける）。
+        leagueDetails = details.isEmpty ? [] : leagueNames.map { name in details.first { $0.name == name } ?? GiriRuleLeague(name: name) }
         advanceFraction = try c.decodeIfPresent(String.self, forKey: .advanceFraction)
         tieBreak = try c.decodeIfPresent(String.self, forKey: .tieBreak) ?? ""
         voteBonusPoints = try c.decodeIfPresent(Int.self, forKey: .voteBonusPoints)

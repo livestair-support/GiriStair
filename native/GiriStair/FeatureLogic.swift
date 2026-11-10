@@ -2675,6 +2675,8 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
             if rule.leagues != names { rule.setLeagues(names) }
             found.append("リーグ（" + names.joined(separator: "・") + "）")
         }
+        // 決まりを持っていないリーグ（0.26以前のルール）も直せるように、名前と同じ順にそろえる。
+        if rule.leagueDetails.map(\.name) != rule.leagues { rule.setLeagues(rule.leagues) }
         func update(_ name: String, _ change: (inout GiriRuleLeague) -> Void) {
             guard let index = rule.leagueDetails.firstIndex(where: { $0.name == name }) else { return }
             change(&rule.leagueDetails[index])

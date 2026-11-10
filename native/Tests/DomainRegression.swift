@@ -1906,7 +1906,7 @@ struct DomainRegression {
 
             let oldRule = try JSONDecoder().decode(GiriRule.self, from: Data(#"{"id":"old","name":"昔のルール","kind":"live","leagues":[],"specialPlans":[],"stages":[{"id":"s","name":"予選"}]}"#.utf8))
             let oldOnline = try JSONDecoder().decode(GiriRule.self, from: Data(#"{"id":"old2","kind":"online","leagues":["1部","2部"]}"#.utf8))
-            try check(oldRule.effectiveScope == .tournament && oldOnline.scope == .regular && oldOnline.leagueDetails.map(\.name) == ["1部", "2部"],
+            try check(oldRule.effectiveScope == .tournament && oldOnline.scope == .regular && oldOnline.leagueDetails.isEmpty && oldOnline.leagueDetail("2部").name == "2部",
                       "rules saved before 0.27 read as live tournaments and online regular seasons")
             let plainRuleJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(oldOnline)) as? [String: Any]
             try check(plainRuleJSON?["leagueDetails"] == nil && plainRuleJSON?["voteBonusPoints"] == nil && plainRuleJSON?["tieBreak"] == nil, "empty new rule fields are not written")
