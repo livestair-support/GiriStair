@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 enum GiriBackupDestination: String, CaseIterable, Identifiable {
     case device, folder
     var id: String { rawValue }
-    var title: String { self == .device ? "端末" : "iCloud Drive（フォルダ）" }
+    var title: String { self == .device ? "端末" : "iCloud Drive" }
 }
 
 struct GiriAutoBackupFile: Identifiable, Equatable {
@@ -26,6 +26,9 @@ enum GiriAutoBackup {
     static let monthlyKey = "giriAutoBackupMonthlyToFolder"
     private static let lastDayKey = "giriAutoBackupLastDay"
     private static let lastMonthKey = "giriAutoBackupLastMonth"
+    private static let lastMonthlyDateKey = "giriAutoBackupLastMonthlyDate"
+    /// 前回、月1回のバックアップをフォルダに保存した日時。
+    static var lastMonthlyDate: Date? { UserDefaults.standard.object(forKey: lastMonthlyDateKey) as? Date }
     private static let prefix = "GiriStair-auto-"
 
     static var destination: GiriBackupDestination {
@@ -75,7 +78,10 @@ enum GiriAutoBackup {
                 try data.write(to: folder.appendingPathComponent("GiriStair-monthly-\(month).giribackup"), options: .atomic)
                 return true
             }) ?? nil
-            if saved == true { UserDefaults.standard.set(month, forKey: lastMonthKey) }
+            if saved == true {
+                UserDefaults.standard.set(month, forKey: lastMonthKey)
+                UserDefaults.standard.set(now, forKey: lastMonthlyDateKey)
+            }
         }
     }
 
@@ -118,6 +124,39 @@ enum GiriAutoBackup {
         if destination == .folder, let folderData = try withFolder({ _ in try Data(contentsOf: file.url) }) { raw = folderData }
         else { raw = try Data(contentsOf: file.url) }
         return try raw.decompressedBackup()
+    }
+
+    /// 0.23：端末内の自動バックアップをすべて消す（LiveStair「端末内バックアップを削除」）。消した数を返す。
+    @discardableResult
+    static func deleteDeviceBackups() -> Int {
+        let urls = (try? FileManager.default.contentsOfDirectory(at: deviceFolder, includingPropertiesForKeys: nil)) ?? []
+        var count = 0
+        for url in urls where url.lastPathComponent.hasPrefix(prefix) {
+            if (try? FileManager.default.removeItem(at: url)) != nil { count += 1 }
+        }
+        return count
+    }
+
+    /// 端末内の自動バックアップ（保存先にかかわらず、この端末の中にある分）。
+    static func deviceFiles() -> [GiriAutoBackupFile] {
+        let urls = (try? FileManager.default.contentsOfDirectory(at: deviceFolder, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey])) ?? []
+        return urls.filter { $0.lastPathComponent.hasPrefix(prefix) }.map { url in
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            return GiriAutoBackupFile(url: url, date: values?.contentModificationDate ?? .distantPast, size: values?.fileSize ?? 0)
+        }
+    }
+
+    /// 0.23：JSONを書き出す時などに作った一時ファイル（GiriStair-…）。
+    static func temporaryFiles() -> [URL] {
+        let urls = (try? FileManager.default.contentsOfDirectory(at: FileManager.default.temporaryDirectory, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        return urls.filter { $0.lastPathComponent.hasPrefix("GiriStair-") }
+    }
+
+    @discardableResult
+    static func clearTemporaryFiles() -> Int {
+        var count = 0
+        for url in temporaryFiles() where (try? FileManager.default.removeItem(at: url)) != nil { count += 1 }
+        return count
     }
 
     private static func prune(in folder: URL) throws {
@@ -237,7 +276,27 @@ struct GiriDataValueRow: View {
     }
 }
 
-// MARK: - 0.19 詳細データ管理
+// MARK: - 0.23 詳細データ管理（LiveStair DetailDataManagementView と同じ並び・文言。CSV はなし）
+
+private let giriBackupRestoreHelpText = """
+【自動バックアップ】
+1日1回、最初に開いたときに自動で作ります（設定の「自動バックアップを保存」でも作れます）。登録した画像も含みます。
+最新と1つ前の2つを残し、3つ目ができたときにいちばん古いものを削除します。
+容量を減らすため、自動バックアップ（月1回の分も含む）は圧縮して保存します。
+
+【保存先】
+・端末：この端末の中に保存します。iPhone本体のiCloudバックアップがオンなら、そこにも含まれます。
+・iCloud Drive：「ファイル」アプリのiCloud Driveから選んだフォルダに保存します。端末が壊れたり無くしたりしても、ほかの端末から復元できます。
+
+【月1回 iCloud Drive にも保存】
+保存先が「端末」のときに選べます。月が変わってから最初に開いたときに、選んだフォルダへバックアップを1つ保存します。
+
+【端末が壊れたとき・ほかの端末へ移すとき】
+移行先の端末で「JSONから復元」を選び、iCloud Driveのフォルダにあるバックアップ（GiriStair-auto-… または GiriStair-monthly-… で始まるファイル）を選択してください。
+
+【JSON】
+「JSONファイルを書き出す」で、今のデータをJSONファイルとして保存・送信できます。機種変更や別の端末への移行に使えます。移行先の端末で「JSONから復元」を選択してください。
+"""
 
 @MainActor
 struct GiriDataManagementView: View {
@@ -245,24 +304,26 @@ struct GiriDataManagementView: View {
     @AppStorage(GiriAutoBackup.destinationKey) private var destinationRaw = GiriBackupDestination.device.rawValue
     @AppStorage(GiriAutoBackup.monthlyKey) private var monthlyToFolder = false
     @State private var backups: [GiriAutoBackupFile] = []
+    @State private var deviceBackupCount = 0
     @State private var folderName: String?
     // fileImporter は1つの画面に1つだけ付ける（2つ付けると片方が開かないため、選ぶものを切り替える）。
     @State private var pickKind = GiriDataPick.backup
     @State private var pickerShown = false
     @State private var importData: Data?
     @State private var restorePrevious = false
+    @State private var deletingDeviceBackups = false
     @State private var shareURL: URL?
     @State private var sharing = false
     @State private var message: String?
-    @State private var usage = GiriStorageUsage()
 
     private var destination: GiriBackupDestination { GiriBackupDestination(rawValue: destinationRaw) ?? .device }
 
     var body: some View {
         List {
-            jsonSection
-            autoBackupSection
             storageSection
+            backupRestoreSection
+            fileCleanupSection
+            backupCleanupSection
         }
         .environment(\.defaultMinListRowHeight, settingsMinimumListRowHeight)
         .appIndexListStyle()
@@ -273,7 +334,8 @@ struct GiriDataManagementView: View {
         .fileImporter(isPresented: $pickerShown,
                       allowedContentTypes: pickKind == .folder ? [.folder] : [.json, .data],
                       allowsMultipleSelection: false, onCompletion: picked)
-        .modifier(GiriDataManagementAlerts(importData: $importData, restorePrevious: $restorePrevious, message: $message, previous: backups.count > 1 ? backups[1] : nil, onRestored: refresh))
+        .modifier(GiriDataManagementAlerts(importData: $importData, restorePrevious: $restorePrevious, deletingDeviceBackups: $deletingDeviceBackups,
+                                           message: $message, previous: backups.count > 1 ? backups[1] : nil, onRestored: refresh))
         .sheet(isPresented: $sharing) {
             if let shareURL {
                 GiriShareSheet(items: [shareURL]) { completed in
@@ -284,85 +346,132 @@ struct GiriDataManagementView: View {
         }
     }
 
-    private var jsonSection: some View {
-        Section {
-            AppCardSectionTitle(title: "JSON", systemImage: "doc.text", accentColor: AppSectionAccent.memo,
-                                infoTitle: "JSONについて", infoMessage: "GiriStairのデータを書き出し、機種変更や別の端末への移行・復元に使います。復元すると今のデータは置き換わります。")
-                .listRowSeparator(.hidden)
-            Button { exportJSON() } label: { Text("JSONファイルを書き出す").font(.body).foregroundStyle(.primary) }
-            Button { pick(.backup) } label: { Text("JSONから復元").font(.body).foregroundStyle(.primary) }
-            if let date = store.document.lastBackupAt {
-                GiriDataValueRow(title: "最終書き出し", value: GiriDateText.backupDateTime(date))
-            }
-        }
-        .tint(AppSectionAccent.memo)
-        .appSectionCardStyle(accentColor: AppSectionAccent.memo)
-    }
-
-    private var autoBackupSection: some View {
-        Section {
-            AppCardSectionTitle(title: "自動バックアップ", systemImage: "clock.arrow.circlepath", accentColor: AppSectionAccent.memo,
-                                infoTitle: "自動バックアップについて", infoMessage: "1日1回、最初に開いた時に作ります。最新と1つ前の2つまで残し、容量を減らすため圧縮して保存します。")
-                .listRowSeparator(.hidden)
-            HStack(spacing: 8) {
-                Text("保存先").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
-                Spacer(minLength: 8)
-                Picker("保存先", selection: Binding(get: { destination }, set: changeDestination)) {
-                    ForEach(GiriBackupDestination.allCases) { Text($0.title).tag($0) }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .tint(Color.primary)
-            }
-            if destination == .folder || monthlyToFolder {
-                Button { pick(.folder) } label: {
-                    HStack(spacing: 8) {
-                        Text("保存するフォルダ").font(.body).foregroundStyle(.primary)
-                        Spacer(minLength: 8)
-                        Text(folderName ?? "選ぶ").font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
-            }
-            if destination == .device {
-                Toggle("月1回 iCloud Drive にも保存", isOn: Binding(get: { monthlyToFolder }, set: { value in
-                    monthlyToFolder = value
-                    if value && folderName == nil { pick(.folder) }
-                }))
-                .tint(AppSectionAccent.memo)
-            }
-            if let latest = backups.first {
-                GiriDataValueRow(title: "最新", value: GiriDateText.backupDateTime(latest.date))
-            }
-            if backups.count > 1 {
-                Button { restorePrevious = true } label: {
-                    Text("1つ前の自動バックアップから復元").font(.body).foregroundStyle(.primary)
-                }
-                GiriDataValueRow(title: "1つ前", value: GiriDateText.backupDateTime(backups[1].date))
-            }
-        }
-        .tint(AppSectionAccent.memo)
-        .appSectionCardStyle(accentColor: AppSectionAccent.memo)
-    }
-
     private var storageSection: some View {
         Section {
-            AppCardSectionTitle(title: "ストレージ使用状況", systemImage: "internaldrive", accentColor: AppSectionAccent.venue,
-                                infoTitle: "ストレージ使用状況", infoMessage: "GiriStairがこの端末で使っている容量の目安です。画像は記録の中に含まれます。")
+            AppCardSectionTitle(title: "ストレージ", systemImage: "internaldrive", accentColor: AppSectionAccent.photo)
                 .listRowSeparator(.hidden)
-            GiriDataValueRow(title: "記録（会・お題・回答など）", value: usage.text(usage.document))
-            GiriDataValueRow(title: "うち画像", value: usage.text(usage.images))
-            GiriDataValueRow(title: "自動バックアップ", value: usage.text(usage.backups))
-            GiriDataValueRow(title: "移行前の元データ・予備", value: usage.text(usage.spare))
-            GiriDataValueRow(title: "合計", value: usage.text(usage.total))
-            GiriDataValueRow(title: "件数", value: "会\(store.events.count)件・お題\(store.notes.count)件・プレイヤー\(store.players.count)人")
+            NavigationLink { GiriStorageUsageView() } label: { managementRow("ストレージ使用状況") }
         }
-        .appSectionCardStyle(accentColor: AppSectionAccent.venue)
+        .appSectionCardStyle(accentColor: AppSectionAccent.photo)
+    }
+
+    private var backupRestoreSection: some View {
+        Section {
+            HStack(spacing: 4) {
+                AppCardSectionTitle(title: "バックアップ・復元", systemImage: "clock.arrow.circlepath", accentColor: AppSectionAccent.artist)
+                AppInfoButton(title: "バックアップ・復元について", message: giriBackupRestoreHelpText, tintColor: AppSectionAccent.artist)
+                Spacer(minLength: 0)
+            }
+            .listRowSeparator(.hidden)
+            destinationRow
+            // 端末に保存するときだけ、月1回 iCloud Drive にも保存するかを選べる
+            if destination == .device { monthlyRow }
+            if destination == .folder || monthlyToFolder { folderRow }
+            Button { restorePrevious = true } label: {
+                managementRow("1つ前の自動バックアップから復元", textColor: backups.count > 1 ? .primary : .secondary)
+            }
+            .disabled(backups.count < 2)
+            Button { exportJSON() } label: { managementRow("JSONファイルを書き出す") }
+            Button { pick(.backup) } label: { managementRow("JSONから復元") }
+        }
+        .appSectionCardStyle(accentColor: AppSectionAccent.artist)
+    }
+
+    private var destinationRow: some View {
+        HStack(spacing: 6) {
+            Text("自動バックアップの保存先").font(.body).foregroundStyle(.primary).lineLimit(1).minimumScaleFactor(0.8)
+            Spacer(minLength: 4)
+            Picker("自動バックアップの保存先", selection: Binding(get: { destination }, set: changeDestination)) {
+                ForEach(GiriBackupDestination.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .tint(AppSectionAccent.artist)
+            .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private var monthlyRow: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Toggle(isOn: Binding(get: { monthlyToFolder }, set: { value in
+                monthlyToFolder = value
+                if value && folderName == nil { pick(.folder) }
+            })) {
+                Text("月1回 iCloud Drive にも保存").font(.body).foregroundStyle(.primary).lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .tint(AppSectionAccent.artist)
+            if monthlyToFolder {
+                Text(GiriAutoBackup.lastMonthlyDate.map { "前回：" + GiriDateText.backupDateTime($0) } ?? "まだ保存していません")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var folderRow: some View {
+        Button { pick(.folder) } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text("保存フォルダ").font(.body).foregroundStyle(.primary).lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(folderName ?? "選ぶ")
+                        .font(.subheadline)
+                        .foregroundStyle(folderName == nil ? AppSectionAccent.artist : Color.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }
+                if folderName == nil {
+                    Text(destination == .folder ? "フォルダを選ぶまでは、端末に保存します。" : "フォルダを選ぶまでは、月1回のバックアップは保存しません。")
+                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+    }
+
+    private var fileCleanupSection: some View {
+        Section {
+            HStack(spacing: 4) {
+                AppCardSectionTitle(title: "ファイル整理", systemImage: "folder", accentColor: AppSectionAccent.memo)
+                AppInfoButton(title: "一時ファイルについて",
+                              message: "JSONを書き出す際などに作成された一時ファイルを削除します。\n\n書き出したJSONのファイルは、共有画面を閉じたときに自動で削除します。共有画面を開いたままアプリが終了したときなどに残った分は、ここで削除できます。",
+                              tintColor: AppSectionAccent.memo)
+                Spacer(minLength: 0)
+            }
+            .listRowSeparator(.hidden)
+            Button(role: .destructive) {
+                GiriAutoBackup.clearTemporaryFiles()
+                message = "一時ファイルを削除しました。"
+            } label: { managementRow("一時ファイルを削除", textColor: accentActionColor) }
+        }
+        .appSectionCardStyle(accentColor: AppSectionAccent.memo)
+    }
+
+    private var backupCleanupSection: some View {
+        Section {
+            AppCardSectionTitle(title: "端末内バックアップ", systemImage: "externaldrive.badge.timemachine", accentColor: AppSectionAccent.ticket)
+                .listRowSeparator(.hidden)
+            Button(role: .destructive) { deletingDeviceBackups = true } label: {
+                managementRow("端末内バックアップを削除", textColor: deviceBackupCount > 0 ? accentActionColor : .secondary)
+            }
+            .disabled(deviceBackupCount == 0)
+        }
+        .appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
+    private func managementRow(_ title: String, textColor: Color = .primary) -> some View {
+        Text(title)
+            .font(.body)
+            .foregroundStyle(textColor)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
     }
 
     private func refresh() {
         backups = GiriAutoBackup.files()
+        deviceBackupCount = GiriAutoBackup.deviceFiles().count
         folderName = GiriAutoBackup.folderName
-        usage = GiriStorageUsage.measure(store: store)
     }
 
     private func changeDestination(_ value: GiriBackupDestination) {
@@ -433,6 +542,7 @@ private struct GiriDataManagementAlerts: ViewModifier {
     @EnvironmentObject private var store: GiriStore
     @Binding var importData: Data?
     @Binding var restorePrevious: Bool
+    @Binding var deletingDeviceBackups: Bool
     @Binding var message: String?
     let previous: GiriAutoBackupFile?
     let onRestored: () -> Void
@@ -451,7 +561,7 @@ private struct GiriDataManagementAlerts: ViewModifier {
                     importData = nil
                     onRestored()
                 }
-            } message: { Text("今の記録と設定を、選んだバックアップの内容に置き換えます。") }
+            } message: { Text("今のGiriStairのデータと設定（通知・表示など）を、選んだバックアップの内容に置き換えます。そのあとに登録・編集した内容は元に戻せません。") }
             .alert("1つ前の自動バックアップから復元しますか？", isPresented: $restorePrevious) {
                 Button("キャンセル", role: .cancel) {}
                 Button("復元する", role: .destructive) {
@@ -462,7 +572,15 @@ private struct GiriDataManagementAlerts: ViewModifier {
                     }
                     onRestored()
                 }
-            } message: { Text("今の記録と設定を、1つ前の自動バックアップ（\(previous.map { GiriDateText.backupDateTime($0.date) } ?? "—")）の内容に置き換えます。") }
+            } message: { Text("今のGiriStairのデータと設定（通知・表示など）を、1つ前の自動バックアップ" + (previous.map { "（" + GiriDateText.backupDateTime($0.date) + "）" } ?? "") + "の内容に置き換えます。そのあとに登録・編集した内容は元に戻せません。") }
+            .alert("端末内バックアップの削除", isPresented: $deletingDeviceBackups) {
+                Button("キャンセル", role: .cancel) {}
+                Button("削除する", role: .destructive) {
+                    let count = GiriAutoBackup.deleteDeviceBackups()
+                    message = count > 0 ? "端末内バックアップを\(count)件削除しました。" : "削除できる端末内バックアップはありません。"
+                    onRestored()
+                }
+            } message: { Text("アプリ内の復元用バックアップをすべて削除します。現在のデータ、画像、設定、ファイルアプリへ書き出したJSONは削除されません。") }
             .alert(message ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
                 Button("OK") { message = nil }
             }
@@ -604,24 +722,149 @@ struct GiriCalendarBulkExportView: View {
     }
 }
 
-/// 0.19：ストレージ使用状況。
-struct GiriStorageUsage {
-    var document = 0
-    var images = 0
-    var backups = 0
-    var spare = 0
-    var total: Int { document + backups + spare }
-    func text(_ bytes: Int) -> String { ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file) }
+// MARK: - 0.23 ストレージ使用状況（LiveStair StorageUsageView）
+
+/// 内訳の1行。
+struct GiriStorageEntry: Identifiable {
+    var title: String
+    var detail: String
+    var systemImage: String
+    var accent: Color
+    var bytes: Int
+    var id: String { title }
+}
+
+struct GiriStorageSnapshot {
+    var entries: [GiriStorageEntry] = []
+    var total: Int { entries.reduce(0) { $0 + $1.bytes } }
 
     @MainActor
-    static func measure(store: GiriStore) -> GiriStorageUsage {
+    static func measure(store: GiriStore) -> GiriStorageSnapshot {
         func size(_ url: URL) -> Int { (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0 }
-        var usage = GiriStorageUsage()
-        usage.document = size(store.fileURL)
-        usage.images = store.notes.reduce(0) { $0 + $1.imageDataBase64.utf8.count } + store.players.reduce(0) { $0 + $1.iconDataBase64.utf8.count }
-        usage.backups = GiriAutoBackup.files().reduce(0) { $0 + $1.size }
-        usage.spare = size(store.migrationBackupURL) + size(store.directory.appendingPathComponent("giristair.json.bak"))
-        return usage
+        let documentBytes = size(store.fileURL)
+        let promptImages = store.notes.filter { !$0.imageDataBase64.isEmpty }
+        let icons = store.players.filter { !$0.iconDataBase64.isEmpty }
+        // 画像は記録（JSON）の中に入っているので、記録から画像の分を分けて出す。
+        let imageBytes = min(documentBytes, promptImages.reduce(0) { $0 + $1.imageDataBase64.utf8.count } + icons.reduce(0) { $0 + $1.iconDataBase64.utf8.count })
+        let backups = GiriAutoBackup.deviceFiles()
+        let spare = [store.migrationBackupURL, store.directory.appendingPathComponent("giristair.json.bak")]
+        let temporary = GiriAutoBackup.temporaryFiles()
+        var snapshot = GiriStorageSnapshot()
+        snapshot.entries = [
+            GiriStorageEntry(title: "記録と設定", detail: "\(store.events.count)件の会・\(store.notes.count)件のお題・各種設定", systemImage: "doc.text", accent: AppSectionAccent.live, bytes: documentBytes - imageBytes),
+            GiriStorageEntry(title: "画像", detail: "お題の画像・アイコン \(promptImages.count + icons.count)枚", systemImage: "photo", accent: AppSectionAccent.photo, bytes: imageBytes),
+            GiriStorageEntry(title: "自動バックアップ", detail: "最新と1つ前・登録画像も含む", systemImage: "clock.arrow.circlepath", accent: AppSectionAccent.artist, bytes: backups.reduce(0) { $0 + $1.size }),
+            GiriStorageEntry(title: "保存の予備", detail: "前回の保存・移行前のデータ", systemImage: "externaldrive", accent: AppSectionAccent.ticket, bytes: spare.reduce(0) { $0 + size($1) }),
+            GiriStorageEntry(title: "一時ファイル", detail: "\(temporary.count)ファイル", systemImage: "folder", accent: AppSectionAccent.memo, bytes: temporary.reduce(0) { $0 + size($1) }),
+        ]
+        return snapshot
+    }
+}
+
+@MainActor
+struct GiriStorageUsageView: View {
+    @EnvironmentObject private var store: GiriStore
+    @State private var snapshot = GiriStorageSnapshot()
+    @State private var loaded = false
+
+    var body: some View {
+        List {
+            overviewSection
+            if loaded { breakdownSection }
+        }
+        .environment(\.defaultMinListRowHeight, settingsMinimumListRowHeight)
+        .appIndexListStyle()
+        .giriNavigationBarStyle()
+        .navigationTitle("ストレージ使用状況")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { reload() } label: { Image(systemName: "arrow.clockwise") }
+                    .accessibilityLabel("再集計")
+            }
+        }
+        .onAppear(perform: reload)
+        .refreshable { reload() }
+    }
+
+    private var overviewSection: some View {
+        Section {
+            HStack(spacing: 4) {
+                AppCardSectionTitle(title: "端末内データ", systemImage: "internaldrive", accentColor: AppSectionAccent.photo)
+                AppInfoButton(title: "端末内データについて", message: "アプリ本体を除く、端末内の保存データです。", tintColor: AppSectionAccent.photo)
+                Spacer(minLength: 0)
+            }
+            .listRowSeparator(.hidden)
+            HStack(alignment: .firstTextBaseline) {
+                Text("GiriStairデータ").font(.body).foregroundStyle(.primary)
+                Spacer()
+                Text(sizeText(snapshot.total)).font(.title3.bold()).foregroundStyle(AppSectionAccent.photo).monospacedDigit()
+            }
+        }
+        .appSectionCardStyle(accentColor: AppSectionAccent.photo)
+    }
+
+    private var breakdownSection: some View {
+        Section {
+            HStack(spacing: 4) {
+                AppCardSectionTitle(title: "使用量の内訳", systemImage: "chart.bar", accentColor: AppSectionAccent.memo)
+                AppInfoButton(title: "使用量について",
+                              message: "表示している容量は、GiriStairが確認できるファイルから計算した目安です。iOSのストレージ画面には、アプリ本体やシステムが管理している領域も含まれるため、一致しない場合があります。\n\n「自動バックアップ」は、端末に保存した自動バックアップ（最新と1つ前の2つ）です。保存先を「iCloud Drive」にしている場合、iCloud Driveに保存した分はここに含まれません。",
+                              tintColor: AppSectionAccent.memo)
+                Spacer(minLength: 0)
+            }
+            .listRowSeparator(.hidden)
+            ForEach(snapshot.entries) { entry in row(entry) }
+        }
+        .appSectionCardStyle(accentColor: AppSectionAccent.memo)
+    }
+
+    private func row(_ entry: GiriStorageEntry) -> some View {
+        let ratio = snapshot.total > 0 ? Double(entry.bytes) / Double(snapshot.total) : 0
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 10) {
+                Image(systemName: entry.systemImage)
+                    .font(.system(size: appFontSize(16), weight: .semibold))
+                    .foregroundStyle(entry.accent)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.title).font(.body).foregroundStyle(.primary)
+                    Text(entry.detail).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(sizeText(entry.bytes)).font(.subheadline.bold()).foregroundStyle(.primary).monospacedDigit()
+                    Text(percentText(ratio)).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.08))
+                    Capsule().fill(entry.accent).frame(width: proxy.size.width * CGFloat(min(max(ratio, 0), 1)))
+                }
+            }
+            .frame(height: 6)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func reload() {
+        snapshot = GiriStorageSnapshot.measure(store: store)
+        loaded = true
+    }
+
+    private func sizeText(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useBytes, .useKB, .useMB, .useGB]
+        formatter.zeroPadsFractionDigits = false
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+
+    private func percentText(_ ratio: Double) -> String {
+        guard ratio > 0 else { return "0%" }
+        if ratio < 0.001 { return "<0.1%" }
+        return String(format: "%.1f%%", ratio * 100)
     }
 }
 

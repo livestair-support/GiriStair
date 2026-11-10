@@ -14,6 +14,9 @@ struct GiriNativeReminder: Identifiable {
 func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, sites: [OnlineSite] = [], now: Date = Date(), limit: Int = 64) -> [GiriNativeReminder] {
     guard preferences.notificationsEnabled, limit > 0 else { return [] }
     var reminders: [GiriNativeReminder] = []
+    // 0.23：通知の種類ごとの何分前（未設定は以前の版と同じく reminderMinutes）。
+    let deadlineLead = max(0, preferences.deadlineLeadMinutes ?? preferences.reminderMinutes)
+    let beforeLead = max(0, preferences.beforeMinutes ?? preferences.reminderMinutes)
     func append(_ event: GiriEvent, _ key: String, _ body: String, _ date: Date) {
         if date > now { reminders.append(GiriNativeReminder(id: event.id + ":" + key, eventID: event.id, title: event.title, body: body, date: date)) }
     }
@@ -22,13 +25,12 @@ func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, sites
     let activeSiteIDs = Set(sites.filter { !$0.isPaused }.map(\.id))
     for event in events where !event.isActualParticipant && !event.siteSkipped && !event.isInterested && event.status != .canceled {
         guard let siteID = event.onlineSiteId, activeSiteIDs.contains(siteID) else { continue }
-        let lead = TimeInterval(preferences.reminderMinutes * 60)
         for round in event.effectiveRounds {
             if let start = round.submissionStart {
                 append(event, "site-open:" + round.id, "新しいお題が出ました", start)
             }
-            if round.submissionEnabled, let deadline = round.submissionEnd {
-                append(event, "site-submission:" + round.id, preferences.reminderMinutes == 0 ? "投稿の締切です（参加・見送りを選べます）" : "投稿締切の\(preferences.reminderMinutes)分前です（参加・見送りを選べます）", deadline.addingTimeInterval(-lead))
+            if preferences.deadlineBeforeNotify, round.submissionEnabled, let deadline = round.submissionEnd {
+                append(event, "site-submission:" + round.id, deadlineLead == 0 ? "投稿の締切です（参加・見送りを選べます）" : "投稿締切の" + giriLeadText(deadlineLead) + "前です（参加・見送りを選べます）", deadline.addingTimeInterval(-TimeInterval(deadlineLead * 60)))
             }
         }
     }
@@ -45,13 +47,18 @@ func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, sites
         if preferences.entryNotifyAtStart { append(event, "entry-open", "募集が始まりました", start) }
     }
     for event in events where event.isActualParticipant {
-        let lead = TimeInterval(preferences.reminderMinutes * 60)
         if event.eventFormat.hasLiveTiming {
             let venue = event.venue.isEmpty ? "" : "・" + event.venue
-            if let start = event.startsAt {
-                append(event, "start", (preferences.reminderMinutes == 0 ? "開始時刻です" : "開始\(preferences.reminderMinutes)分前です") + venue, start.addingTimeInterval(-lead))
-            } else if let day = event.eventDate,
-                      let date = Calendar.current.date(bySettingHour: preferences.reminderHour, minute: preferences.reminderMinute, second: 0, of: day) {
+            // 会の前の通知：基準（開始・開場）の何分前。開場が分からない時は開始を基準にする。
+            let usesOpen = preferences.beforeBase == "open" && event.opensAt != nil
+            if preferences.beforeNotify, let base = usesOpen ? event.opensAt : event.startsAt {
+                let name = usesOpen ? "開場" : "開始"
+                append(event, "start", (beforeLead == 0 ? name + "時刻です" : name + "の" + giriLeadText(beforeLead) + "前です") + venue, base.addingTimeInterval(-TimeInterval(beforeLead * 60)))
+            }
+            // 当日通知：会の日の決まった時刻（時刻未定の会も）。始まる時刻がそれより早い時は出さない。
+            if preferences.dayNotify, let day = event.eventDate ?? event.startsAt,
+               let date = Calendar.current.date(bySettingHour: preferences.reminderHour, minute: preferences.reminderMinute, second: 0, of: day),
+               (event.opensAt ?? event.startsAt).map({ date < $0 }) ?? true {
                 append(event, "day", "今日は参加予定の日です" + venue, date)
             }
         }
@@ -68,11 +75,18 @@ func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, sites
                 }
                 for label in [event.affiliation, event.block, round.block] where !label.isEmpty && !labels.contains(label) { labels.append(label) }
                 let label = labels.isEmpty ? "" : labels.joined(separator: "・") + "・"
+                let lead = TimeInterval(deadlineLead * 60)
                 if round.submissionEnabled, let deadline = round.submissionEnd {
-                    append(event, prefix + "submission", label + (preferences.reminderMinutes == 0 ? "投稿の締切です" : "投稿締切の\(preferences.reminderMinutes)分前です"), deadline.addingTimeInterval(-lead))
+                    if preferences.deadlineBeforeNotify && (deadlineLead > 0 || !preferences.deadlineAtNotify) {
+                        append(event, prefix + "submission", label + (deadlineLead == 0 ? "投稿の締切です" : "投稿締切の" + giriLeadText(deadlineLead) + "前です"), deadline.addingTimeInterval(-lead))
+                    }
+                    if preferences.deadlineAtNotify { append(event, prefix + "submission-at", label + "投稿の締切になりました", deadline) }
                 }
                 if round.votingRequired, let deadline = round.votingEnd {
-                    append(event, prefix + "voting", label + (preferences.reminderMinutes == 0 ? "投票の締切です" : "投票締切の\(preferences.reminderMinutes)分前です"), deadline.addingTimeInterval(-lead))
+                    if preferences.deadlineBeforeNotify && (deadlineLead > 0 || !preferences.deadlineAtNotify) {
+                        append(event, prefix + "voting", label + (deadlineLead == 0 ? "投票の締切です" : "投票締切の" + giriLeadText(deadlineLead) + "前です"), deadline.addingTimeInterval(-lead))
+                    }
+                    if preferences.deadlineAtNotify { append(event, prefix + "voting-at", label + "投票の締切になりました", deadline) }
                 }
             }
         }

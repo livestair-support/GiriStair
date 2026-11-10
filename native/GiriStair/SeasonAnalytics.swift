@@ -11,8 +11,14 @@ struct GiriSeasonTotals: Equatable {
     var averageVoteRate: Double? = nil
     /// 1人あたりの点（得票÷投票人数）の算術平均。画面ではこちらを表示する。
     var averagePointsPerVoter: Double? = nil
+    /// 0.23：ルールの規定回答数（上位だけの平均にする時）。
+    var requiredAnswerCount: Int? = nil
+    /// 平均に使った数（規定回答数で上位だけにした時は、その数）。
+    var countedSampleCount: Int = 0
 
     var rateSampleCount: Int { scoredAnswerCount + legacyRoundResultCount }
+    /// 規定回答数より多く記録があり、低い方を平均から外したか。
+    var droppedLowerSamples: Bool { requiredAnswerCount.map { rateSampleCount > $0 } ?? false }
 }
 
 /// Arithmetic mean of each submitted answer's recorded vote rate. Unknown
@@ -24,7 +30,8 @@ func giriSeasonTotals(
     seasonID: String?,
     seasonName: String,
     events: [GiriEvent],
-    notes: [ThoughtNote]
+    notes: [ThoughtNote],
+    requiredAnswerCount: Int? = nil
 ) -> GiriSeasonTotals {
     let requestedID = seasonAnalyticsID(seasonID)
     let name = seasonName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -42,8 +49,8 @@ func giriSeasonTotals(
     }
 
     var totals = GiriSeasonTotals()
-    var rates: [Double] = []
-    var perVoter: [Double] = []
+    // 0.23：得票率と1人あたりの点を1組で持つ（規定回答数の上位だけにする時、同じ回答の値を使う）。
+    var samples: [(rate: Double, perVoter: Double?)] = []
     for event in included {
         let eventNotes = notes.filter {
             $0.eventId == event.id && $0.kind == .answers && !$0.isOthersAnswer
@@ -60,8 +67,7 @@ func giriSeasonTotals(
             totals.submittedAnswerCount += submitted.count
             for answer in submitted {
                 guard let rate = seasonAnalyticsRate(answer.voteRate) else { continue }
-                rates.append(rate)
-                if let value = seasonAnalyticsRate(answer.pointsPerVoter) { perVoter.append(value) }
+                samples.append((rate, seasonAnalyticsRate(answer.pointsPerVoter)))
                 totals.scoredAnswerCount += 1
                 if let roundID = seasonAnalyticsRoundID(note.roundId, event: event) {
                     roundsWithAnswerRates.insert(roundID)
@@ -95,12 +101,22 @@ func giriSeasonTotals(
             fallbackPerVoter[roundID] = seasonAnalyticsRate(stage.pointsPerVoter)
         }
         for key in fallbackRates.keys.sorted() {
-            if let rate = fallbackRates[key] { rates.append(rate) }
-            if let value = fallbackPerVoter[key] { perVoter.append(value) }
+            if let rate = fallbackRates[key] { samples.append((rate, fallbackPerVoter[key])) }
         }
         totals.legacyRoundResultCount += fallbackRates.count
     }
 
+    // 規定回答数より多い時は、得票率の高い規定回答数分だけを平均する（低い回答は考えない）。
+    if let required = requiredAnswerCount, required > 0 {
+        totals.requiredAnswerCount = required
+        if samples.count > required {
+            samples = Array(samples.enumerated().sorted { $0.element.rate == $1.element.rate ? $0.offset < $1.offset : $0.element.rate > $1.element.rate }
+                .prefix(required).map(\.element))
+        }
+    }
+    totals.countedSampleCount = samples.count
+    let rates = samples.map(\.rate)
+    let perVoter = samples.compactMap(\.perVoter)
     if !rates.isEmpty {
         // An incremental mean avoids overflowing a sum for finite input rates.
         var mean = 0.0

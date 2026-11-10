@@ -543,6 +543,8 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var kumiteMains: [String] = []
     /// 組手の対戦ごとの記録（主役から見た勝敗）。
     var kumiteBouts: [KumiteBout] = []
+    /// 0.23：生大喜利の大会で使ったルール（保存したルールのID）。ない時はキーを書かない。
+    var ruleID: String? = nil
     /// 0.10（生大喜利）：シリーズ名（「#5」などの回数を除いた名前）。空なら会の名前から判断する。
     var series: String = ""
 }
@@ -574,7 +576,7 @@ enum GiriSelfRole: String, CaseIterable, Identifiable {
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts, ruleID
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -692,6 +694,7 @@ extension GiriEvent {
         isKumite = try c.decodeIfPresent(Bool.self, forKey: .isKumite) ?? false
         kumiteMains = try c.decodeIfPresent([String].self, forKey: .kumiteMains) ?? []
         kumiteBouts = try c.decodeIfPresent([KumiteBout].self, forKey: .kumiteBouts) ?? []
+        ruleID = try c.decodeIfPresent(String.self, forKey: .ruleID)
 
         try validate()
     }
@@ -806,6 +809,7 @@ extension GiriEvent {
         if isKumite { try c.encode(isKumite, forKey: .isKumite) }
         if !kumiteMains.isEmpty { try c.encode(kumiteMains, forKey: .kumiteMains) }
         if !kumiteBouts.isEmpty { try c.encode(kumiteBouts, forKey: .kumiteBouts) }
+        try c.encodeIfPresent(ruleID, forKey: .ruleID)
 
     }
 }
@@ -1032,11 +1036,25 @@ struct AppPreferences: Codable, Equatable {
     var entryLeadMinutes: Int? = nil
     /// 募集開始の時刻ちょうどの通知。
     var entryNotifyAtStart: Bool = false
+    /// 0.23：LiveStair のライブ通知と同じく、会（生大喜利・短考・スプシ系）の当日通知と会の前の通知を分ける。
+    /// 当日通知（会の日の決まった時刻。時刻は reminderHour・reminderMinute）。
+    var dayNotify: Bool = true
+    /// 会の前の通知（開始・開場の何分前）。
+    var beforeNotify: Bool = true
+    /// 会の前の通知の基準（"start" 開始／"open" 開場）。
+    var beforeBase: String = "start"
+    /// 会の前の通知を何分前にするか。nil は以前の版と同じく reminderMinutes。
+    var beforeMinutes: Int? = nil
+    /// 0.23：長考などの投稿締切・投票締切の前の通知と、締切の時刻ちょうどの通知を分ける。
+    var deadlineBeforeNotify: Bool = true
+    /// 締切前の通知を何分前にするか。nil は以前の版と同じく reminderMinutes。
+    var deadlineLeadMinutes: Int? = nil
+    var deadlineAtNotify: Bool = false
 }
 
 extension AppPreferences {
     private enum CodingKeys: String, CodingKey {
-        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder, hiddenFormats, selfAliases, mergesSelfAliases, entryNotifyBefore, entryLeadMinutes, entryNotifyAtStart
+        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder, hiddenFormats, selfAliases, mergesSelfAliases, entryNotifyBefore, entryLeadMinutes, entryNotifyAtStart, dayNotify, beforeNotify, beforeBase, beforeMinutes, deadlineBeforeNotify, deadlineLeadMinutes, deadlineAtNotify
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1077,6 +1095,14 @@ extension AppPreferences {
         entryNotifyBefore = try c.decodeIfPresent(Bool.self, forKey: .entryNotifyBefore) ?? true
         entryLeadMinutes = try c.decodeIfPresent(Int.self, forKey: .entryLeadMinutes)
         entryNotifyAtStart = try c.decodeIfPresent(Bool.self, forKey: .entryNotifyAtStart) ?? false
+        dayNotify = try c.decodeIfPresent(Bool.self, forKey: .dayNotify) ?? true
+        beforeNotify = try c.decodeIfPresent(Bool.self, forKey: .beforeNotify) ?? true
+        let base = try c.decodeIfPresent(String.self, forKey: .beforeBase) ?? "start"
+        beforeBase = base == "open" ? "open" : "start"
+        beforeMinutes = try c.decodeIfPresent(Int.self, forKey: .beforeMinutes)
+        deadlineBeforeNotify = try c.decodeIfPresent(Bool.self, forKey: .deadlineBeforeNotify) ?? true
+        deadlineLeadMinutes = try c.decodeIfPresent(Int.self, forKey: .deadlineLeadMinutes)
+        deadlineAtNotify = try c.decodeIfPresent(Bool.self, forKey: .deadlineAtNotify) ?? false
 
         try validate()
     }
@@ -1119,6 +1145,13 @@ extension AppPreferences {
         try c.encode(entryNotifyBefore, forKey: .entryNotifyBefore)
         try c.encodeIfPresent(entryLeadMinutes, forKey: .entryLeadMinutes)
         try c.encode(entryNotifyAtStart, forKey: .entryNotifyAtStart)
+        try c.encode(dayNotify, forKey: .dayNotify)
+        try c.encode(beforeNotify, forKey: .beforeNotify)
+        try c.encode(beforeBase, forKey: .beforeBase)
+        try c.encodeIfPresent(beforeMinutes, forKey: .beforeMinutes)
+        try c.encode(deadlineBeforeNotify, forKey: .deadlineBeforeNotify)
+        try c.encodeIfPresent(deadlineLeadMinutes, forKey: .deadlineLeadMinutes)
+        try c.encode(deadlineAtNotify, forKey: .deadlineAtNotify)
 
     }
 }
@@ -1144,11 +1177,13 @@ struct OnlineSite: Codable, Equatable, Identifiable {
     var ruleHistory: [SiteRuleRevision] = []
     /// しばらく参加しないサイト。一覧のカードを隠し、通知と回の自動作成を止める。
     var isPaused: Bool = false
+    /// 0.23：シーズンごとに選んだルール（シーズンのID、シーズンがないサイトは "site" → ルールのID）。
+    var seasonRuleIDs: [String: String] = [:]
 }
 
 extension OnlineSite {
     private enum CodingKeys: String, CodingKey {
-        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline, ruleHistory, isPaused
+        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline, ruleHistory, isPaused, seasonRuleIDs
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1184,6 +1219,7 @@ extension OnlineSite {
         leagueBaseline = try c.decodeIfPresent(String.self, forKey: .leagueBaseline)
         ruleHistory = try c.decodeIfPresent([SiteRuleRevision].self, forKey: .ruleHistory) ?? []
         isPaused = try c.decodeIfPresent(Bool.self, forKey: .isPaused) ?? false
+        seasonRuleIDs = try c.decodeIfPresent([String: String].self, forKey: .seasonRuleIDs) ?? [:]
 
         try validate()
     }
@@ -1221,6 +1257,7 @@ extension OnlineSite {
         try c.encode(leagueBaseline, forKey: .leagueBaseline)
         try c.encode(ruleHistory, forKey: .ruleHistory)
         try c.encode(isPaused, forKey: .isPaused)
+        if !seasonRuleIDs.isEmpty { try c.encode(seasonRuleIDs, forKey: .seasonRuleIDs) }
 
     }
 }
@@ -1380,6 +1417,8 @@ struct GiriDocument: Codable, Equatable {
     var groups: [GiriGroup] = []
     /// 0.19：最近削除した会（30日残して戻せる）。ない時はキーを書かない。
     var deletedEvents: [GiriDeletedEvent] = []
+    /// 0.23：保存したルール（ネット大喜利のシーズン・生大喜利の大会で使い回す）。ない時はキーを書かない。
+    var rules: [GiriRule] = []
 }
 
 /// 0.19：削除した会と、その会に付いていたお題・回答（戻す時に付け直す）。
@@ -1446,7 +1485,7 @@ extension GiriGroup {
 
 extension GiriDocument {
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, events, notes, players, onlineSites, venues, preferences, lastBackupAt, groups, deletedEvents
+        case schemaVersion, events, notes, players, onlineSites, venues, preferences, lastBackupAt, groups, deletedEvents, rules
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1469,6 +1508,7 @@ extension GiriDocument {
 
         groups = try c.decodeIfPresent([GiriGroup].self, forKey: .groups) ?? []
         deletedEvents = try c.decodeIfPresent([GiriDeletedEvent].self, forKey: .deletedEvents) ?? []
+        rules = try c.decodeIfPresent([GiriRule].self, forKey: .rules) ?? []
 
         try validate()
     }
@@ -1493,6 +1533,7 @@ extension GiriDocument {
 
         try c.encode(groups, forKey: .groups)
         if !deletedEvents.isEmpty { try c.encode(deletedEvents, forKey: .deletedEvents) }
+        if !rules.isEmpty { try c.encode(rules, forKey: .rules) }
     }
 }
 
@@ -1755,6 +1796,7 @@ extension GiriDocument {
         try uniqueIDs(events); try uniqueIDs(notes); try uniqueIDs(players); try uniqueIDs(onlineSites); try uniqueIDs(venues)
         try require(Set(players.map { playerSearchKey($0.name) }).count == players.count, "プレイヤー名が重複しています。")
         try uniqueIDs(groups); try groups.forEach { try $0.validate() }
+        try uniqueIDs(rules); try rules.forEach { try $0.validate() }
         try require(Set(groups.map { playerSearchKey($0.name) }).count == groups.count, "団体名が重複しています。")
         try events.forEach { try $0.validate() }; try notes.forEach { try $0.validate() }; try players.forEach { try $0.validate() }; try onlineSites.forEach { try $0.validate() }; try venues.forEach { try $0.validate() }; try preferences.validate()
     }

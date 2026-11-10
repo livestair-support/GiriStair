@@ -944,6 +944,51 @@ final class GiriStore: ObservableObject {
         site.cycleSettings = siteNextSeasonSettings(site, firstDeadline: firstDeadline)
         try saveOnlineSite(site)
     }
+    /// 0.23：次のシーズンを始める時に、そのシーズンのルールも選ぶ（nil は前のシーズンと同じ）。
+    func startNextSiteSeason(_ siteID: String, firstDeadline: Date, ruleID: String?) throws {
+        guard var site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
+        let chosen = (ruleID ?? site.currentRuleID).flatMap { rule($0) }
+        // ルールの日数で最初の回の投稿開始を数えてから、日程・リーグ・プレーオフを入れる。
+        if let chosen, chosen.kind == .online {
+            site.submissionDays = chosen.submissionDays
+            site.votingDays = chosen.votingDays
+        }
+        site.cycleSettings = siteNextSeasonSettings(site, firstDeadline: firstDeadline)
+        if let chosen { giriApplyRule(chosen, to: &site) }
+        try saveOnlineSite(site)
+    }
+
+    // MARK: 0.23 ルール
+
+    var rules: [GiriRule] { document.rules }
+    func rule(_ id: String) -> GiriRule? { document.rules.first { $0.id == id } }
+    func saveRule(_ candidate: GiriRule) throws {
+        var rule = candidate
+        rule.name = rule.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        rule.leagues = rule.leagues.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        rule.stages = rule.stages.filter { !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.kind != nil }
+        rule.updatedAt = Date()
+        try rule.validate()
+        try mutate { next in Self.upsert(rule, into: &next.rules) }
+    }
+    /// ルールを消す。選んでいたシーズン・大会からは外す（日程などはそのまま残す）。
+    func deleteRule(_ id: String) throws {
+        try mutate { next in
+            next.rules.removeAll { $0.id == id }
+            for index in next.onlineSites.indices { next.onlineSites[index].seasonRuleIDs = next.onlineSites[index].seasonRuleIDs.filter { $0.value != id } }
+            for index in next.events.indices where next.events[index].ruleID == id { next.events[index].ruleID = nil }
+        }
+    }
+    /// サイトの今のシーズンのルールを選ぶ（nil は外す）。ルールの日程・リーグ・プレーオフをサイトに入れる。
+    func setSiteSeasonRule(_ siteID: String, ruleID: String?) throws {
+        guard var site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
+        if let ruleID, let rule = rule(ruleID) {
+            giriApplyRule(rule, to: &site)
+        } else {
+            site.seasonRuleIDs.removeValue(forKey: giriSeasonRuleKey(site.cycleSettings?.seasonID))
+        }
+        try saveOnlineSite(site)
+    }
     /// 次のお題を待っている間（シーズンの合間など）から、次の回の投稿締切で再開する。
     func resumeSiteCycle(_ siteID: String, firstDeadline: Date, cycleNumber: Int?) throws {
         guard var site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }

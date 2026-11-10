@@ -26,6 +26,8 @@ struct GiriSettingsView: View {
                 NavigationLink("主催団体一覧") { GiriGroupsView() }
                 NavigationLink("会場一覧") { GiriVenuesView() }
                 NavigationLink("ネット大喜利サイト一覧") { GiriSitesView() }
+                // 0.23：保存して使い回すルール（ネットはシーズンごと、生は大会ごとに選ぶ）。
+                NavigationLink("大喜利のルール") { GiriRulesView() }
             }
             settingSection("defaults", "デフォルト設定", "slider.horizontal.3", AppSectionAccent.live) {
                 defaultSettingsGroupTitle("表示", systemImage: "eye")
@@ -51,23 +53,8 @@ struct GiriSettingsView: View {
                 Toggle("予定・締切の通知", isOn: Binding(get: { store.preferences.notificationsEnabled }, set: enableNotifications))
                     .tint(AppSectionAccent.scan).disabled(notificationBusy)
                 if store.preferences.notificationsEnabled {
-                    Picker("開始・締切の前", selection: preference(\.reminderMinutes)) {
-                        ForEach(Array(Set([0, 15, 30, 60, 120, 1440, store.preferences.reminderMinutes])).sorted(), id: \.self) { minute in
-                            Text(minute == 0 ? "時刻ちょうど" : minute < 60 ? "\(minute)分" : minute == 1440 ? "1日" : "\(minute / 60)時間").tag(minute)
-                        }
-                    }.pickerStyle(.menu).tint(.primary)
-                    settingsTimeRow("時刻未定の当日通知", selection: morningTime)
-                    // 0.19：募集期間の通知（LiveStair のチケット通知と同じく、開始前と開始時を分ける）。
-                    defaultSettingsGroupTitle("募集期間", systemImage: "calendar.badge.clock")
-                    Toggle("募集開始前の通知", isOn: preference(\.entryNotifyBefore)).tint(AppSectionAccent.scan)
-                    if store.preferences.entryNotifyBefore {
-                        Picker("どのくらい前", selection: entryLead) {
-                            ForEach(Array(Set([5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, entryLead.wrappedValue])).sorted(), id: \.self) { minute in
-                                Text(giriLeadText(minute) + "前").tag(minute)
-                            }
-                        }.pickerStyle(.menu).tint(.primary)
-                    }
-                    Toggle("募集開始時の通知", isOn: preference(\.entryNotifyAtStart)).tint(AppSectionAccent.scan)
+                    // 0.23：LiveStair と同じく、通知の種類ごとに見出し（オンオフ）と設定の行を出す。
+                    GiriNotificationKindRows()
                 }
             }
             settingSection("data", "データ管理", "externaldrive", AppSectionAccent.memo) {
@@ -161,24 +148,6 @@ struct GiriSettingsView: View {
             var preferences = store.preferences
             preferences.submissionStartHour = Calendar.current.component(.hour, from: date)
             preferences.submissionStartMinute = Calendar.current.component(.minute, from: date)
-            store.run { try store.savePreferences(preferences) }
-        })
-    }
-    /// 募集開始前の通知の分数（以前の版の値がなければ「開始・締切の前」の分数。0 は60分にする）。
-    private var entryLead: Binding<Int> {
-        Binding(get: { max(5, store.preferences.entryLeadMinutes ?? (store.preferences.reminderMinutes == 0 ? 60 : store.preferences.reminderMinutes)) },
-                set: { value in
-                    var preferences = store.preferences
-                    preferences.entryLeadMinutes = value
-                    store.run { try store.savePreferences(preferences) }
-                })
-    }
-    private var morningTime: Binding<Date?> {
-        Binding(get: { Calendar.current.date(from: DateComponents(year: 2000, month: 1, day: 1, hour: store.preferences.reminderHour, minute: store.preferences.reminderMinute)) }, set: { date in
-            guard let date else { return }
-            var preferences = store.preferences
-            preferences.reminderHour = Calendar.current.component(.hour, from: date)
-            preferences.reminderMinute = Calendar.current.component(.minute, from: date)
             store.run { try store.savePreferences(preferences) }
         })
     }

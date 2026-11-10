@@ -582,3 +582,298 @@ func sitePastSeasonIdentity(_ site: OnlineSite, input: SitePastCycleInput, event
     let pastRule = sameSeason.compactMap(\.siteRuleRevisionID).first { $0 != settings.ruleRevisionID }
     return (name, seasonID, pastRule ?? "past-rule:" + UUID().uuidString, false)
 }
+
+// MARK: - 0.23 ルール（ネット大喜利のシーズン・生大喜利の大会で使い回す）
+
+/// ルールの種類。
+enum GiriRuleKind: String, Codable, CaseIterable, Identifiable {
+    case online, live
+    var id: String { rawValue }
+    var title: String { self == .online ? "ネット大喜利" : "生大喜利" }
+}
+
+/// シーズンの成績の出し方。
+enum GiriRuleScoring: String, Codable, CaseIterable, Identifiable {
+    /// 提出した全回答の平均。
+    case allAnswers
+    /// 規定回答数以上の時は、得票率の高い規定回答数分だけの平均。
+    case topRequired
+    var id: String { rawValue }
+    var title: String { self == .allAnswers ? "全回答の平均" : "規定回答数の上位の平均" }
+}
+
+/// プレーオフ・入れ替え戦などの日程の決め方（最後の通常回の投票締切から何日後か）。
+struct GiriRuleSpecialPlan: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    var kind: SitePeriodKind = .playoff
+    var title: String = ""
+    /// 最後の通常回の投票締切から、何日後に投稿を始めるか。
+    var startOffsetDays: Int = 0
+    var submissionDays: Int = 7
+    var votingDays: Int = 7
+    /// 同じ種類の回を何回行うか。
+    var count: Int = 1
+}
+
+extension GiriRuleSpecialPlan {
+    private enum CodingKeys: String, CodingKey { case id, kind, title, startOffsetDays, submissionDays, votingDays, count }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        kind = (try? c.decodeIfPresent(SitePeriodKind.self, forKey: .kind)) ?? .other
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        startOffsetDays = max(0, try c.decodeIfPresent(Int.self, forKey: .startOffsetDays) ?? 0)
+        submissionDays = max(1, try c.decodeIfPresent(Int.self, forKey: .submissionDays) ?? 7)
+        votingDays = max(1, try c.decodeIfPresent(Int.self, forKey: .votingDays) ?? 7)
+        count = max(1, try c.decodeIfPresent(Int.self, forKey: .count) ?? 1)
+    }
+    var displayTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? kind.title : title }
+}
+
+/// 生大喜利の大会の段階の骨組み（結果・順位・人数は持たない）。
+struct GiriRuleStage: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    var name: String = ""
+    /// StageKind の値（知らない値は nil として扱う）。
+    var kind: String? = nil
+    var lineup: String = ""
+    var judging: String = ""
+    var promptCount: Int? = nil
+    var advanceCount: Int? = nil
+}
+
+extension GiriRuleStage {
+    private enum CodingKeys: String, CodingKey { case id, name, kind, lineup, judging, promptCount, advanceCount }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        kind = try c.decodeIfPresent(String.self, forKey: .kind)
+        lineup = try c.decodeIfPresent(String.self, forKey: .lineup) ?? ""
+        judging = try c.decodeIfPresent(String.self, forKey: .judging) ?? ""
+        promptCount = try c.decodeIfPresent(Int.self, forKey: .promptCount)
+        advanceCount = try c.decodeIfPresent(Int.self, forKey: .advanceCount)
+    }
+    var stageKind: StageKind? { kind.flatMap(StageKind.init(rawValue:)) }
+}
+
+/// 保存して使い回すルール。ネット大喜利はシーズンごとに、生大喜利は大会ごとに選ぶ。
+struct GiriRule: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    var name: String = ""
+    var kind: GiriRuleKind = .online
+    var memo: String = ""
+    // ネット大喜利
+    var scoring: GiriRuleScoring = .allAnswers
+    var requiredAnswerCount: Int? = nil
+    var submissionDays: Int = 7
+    var votingDays: Int = 7
+    var nextPrompt: String = SiteNextPromptTiming.withVoting.rawValue
+    var intervalDays: Int = 7
+    /// 1シーズンの通常回の回数（分からない時は nil）。
+    var regularCycleCount: Int? = nil
+    var leagues: [String] = []
+    var specialPlans: [GiriRuleSpecialPlan] = []
+    // 生大喜利
+    var tournamentFormat: TournamentFormat = .individual
+    var knockout: Bool = false
+    var judging: String = ""
+    var stages: [GiriRuleStage] = []
+    var updatedAt: Date = Date()
+
+    var timing: SiteNextPromptTiming { SiteNextPromptTiming(rawValue: nextPrompt) ?? .withVoting }
+    var displayName: String { name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "名前のないルール" : name }
+
+    func validate() throws {
+        guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              (1...365).contains(submissionDays), (1...365).contains(votingDays), (1...730).contains(intervalDays),
+              requiredAnswerCount.map({ (1...10000).contains($0) }) ?? true,
+              regularCycleCount.map({ (1...10000).contains($0) }) ?? true,
+              Set(specialPlans.map(\.id)).count == specialPlans.count, Set(stages.map(\.id)).count == stages.count else {
+            throw GiriDataError.invalid("ルールの日数・回数を確認してください。")
+        }
+    }
+}
+
+extension GiriRule {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, kind, memo, scoring, requiredAnswerCount, submissionDays, votingDays, nextPrompt, intervalDays, regularCycleCount, leagues, specialPlans, tournamentFormat, knockout, judging, stages, updatedAt
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        kind = (try? c.decodeIfPresent(GiriRuleKind.self, forKey: .kind)) ?? .online
+        memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
+        scoring = (try? c.decodeIfPresent(GiriRuleScoring.self, forKey: .scoring)) ?? .allAnswers
+        requiredAnswerCount = try c.decodeIfPresent(Int.self, forKey: .requiredAnswerCount)
+        submissionDays = try c.decodeIfPresent(Int.self, forKey: .submissionDays) ?? 7
+        votingDays = try c.decodeIfPresent(Int.self, forKey: .votingDays) ?? 7
+        nextPrompt = try c.decodeIfPresent(String.self, forKey: .nextPrompt) ?? SiteNextPromptTiming.withVoting.rawValue
+        intervalDays = try c.decodeIfPresent(Int.self, forKey: .intervalDays) ?? 7
+        regularCycleCount = try c.decodeIfPresent(Int.self, forKey: .regularCycleCount)
+        leagues = try c.decodeIfPresent([String].self, forKey: .leagues) ?? []
+        specialPlans = try c.decodeIfPresent([GiriRuleSpecialPlan].self, forKey: .specialPlans) ?? []
+        tournamentFormat = (try? c.decodeIfPresent(TournamentFormat.self, forKey: .tournamentFormat)) ?? .individual
+        knockout = try c.decodeIfPresent(Bool.self, forKey: .knockout) ?? false
+        judging = try c.decodeIfPresent(String.self, forKey: .judging) ?? ""
+        stages = try c.decodeIfPresent([GiriRuleStage].self, forKey: .stages) ?? []
+        updatedAt = try c.giriDate(forKey: .updatedAt, required: false, calendarOnly: false) ?? Date()
+        try validate()
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(memo, forKey: .memo)
+        try c.encode(scoring, forKey: .scoring)
+        try c.encodeIfPresent(requiredAnswerCount, forKey: .requiredAnswerCount)
+        try c.encode(submissionDays, forKey: .submissionDays)
+        try c.encode(votingDays, forKey: .votingDays)
+        try c.encode(nextPrompt, forKey: .nextPrompt)
+        try c.encode(intervalDays, forKey: .intervalDays)
+        try c.encodeIfPresent(regularCycleCount, forKey: .regularCycleCount)
+        try c.encode(leagues, forKey: .leagues)
+        try c.encode(specialPlans, forKey: .specialPlans)
+        try c.encode(tournamentFormat, forKey: .tournamentFormat)
+        try c.encode(knockout, forKey: .knockout)
+        try c.encode(judging, forKey: .judging)
+        try c.encode(stages, forKey: .stages)
+        try c.encode(GiriDates.timestamp(updatedAt), forKey: .updatedAt)
+    }
+
+    /// 一覧に出す短い説明。
+    var summary: String {
+        switch kind {
+        case .online:
+            var parts = [timing.title, "投稿\(submissionDays)日・投票\(votingDays)日"]
+            if let count = regularCycleCount { parts.append("1シーズン\(count)回") }
+            if scoring == .topRequired, let required = requiredAnswerCount { parts.append("規定\(required)回答") }
+            if !specialPlans.isEmpty { parts.append(specialPlans.map(\.displayTitle).joined(separator: "・")) }
+            return parts.joined(separator: "・")
+        case .live:
+            var parts = [tournamentFormat.title]
+            if knockout { parts.append("トーナメント") }
+            if !stages.isEmpty { parts.append(stages.map { $0.name.isEmpty ? ($0.stageKind?.title ?? "段階") : $0.name }.joined(separator: "→")) }
+            return parts.joined(separator: "・")
+        }
+    }
+}
+
+/// シーズンのルールを引くキー（シーズンがないサイトはサイト全体で1つ）。
+func giriSeasonRuleKey(_ seasonID: String?) -> String {
+    let trimmed = seasonID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return trimmed.isEmpty ? "site" : trimmed
+}
+
+extension OnlineSite {
+    /// そのシーズンに選んだルールのID。
+    func ruleID(forSeason seasonID: String?) -> String? { seasonRuleIDs[giriSeasonRuleKey(seasonID)] }
+    /// 今のシーズンに選んだルールのID。
+    var currentRuleID: String? { ruleID(forSeason: cycleSettings?.seasonID) }
+}
+
+/// 今のサイトの設定からルールを作る（名前はサイト名・シーズン名から）。
+func giriRule(from site: OnlineSite) -> GiriRule {
+    let settings = site.cycleSettings ?? SiteCycleSettings()
+    var rule = GiriRule()
+    rule.kind = .online
+    rule.name = [site.name, settings.seasonName].filter { !$0.isEmpty }.joined(separator: " ")
+    rule.submissionDays = site.submissionDays
+    rule.votingDays = site.votingDays
+    let timing = SiteNextPromptTiming.current(site)
+    rule.nextPrompt = timing.rawValue
+    rule.intervalDays = timing == .interval ? settings.intervalDays : max(1, site.submissionDays)
+    rule.regularCycleCount = settings.regularCycleCount
+    rule.leagues = site.hasAffiliations ? settings.leagues : []
+    return rule
+}
+
+/// ルールの日程・リーグ・回数をサイトに入れる（今の回の締切・番号は変えない）。
+func giriApplyRule(_ rule: GiriRule, to site: inout OnlineSite) {
+    guard rule.kind == .online else { return }
+    site.submissionDays = rule.submissionDays
+    site.votingDays = rule.votingDays
+    applySiteTiming(rule.timing, to: &site, intervalDays: rule.intervalDays)
+    var settings = site.cycleSettings ?? SiteCycleSettings()
+    if let count = rule.regularCycleCount, count >= settings.anchorCycleNumber { settings.regularCycleCount = count }
+    else if rule.regularCycleCount == nil { settings.regularCycleCount = nil }
+    let leagues = rule.leagues.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    if !leagues.isEmpty {
+        settings.leagues = leagues
+        site.hasAffiliations = true
+        if !leagues.contains(site.affiliation) && site.affiliation.isEmpty { site.affiliation = leagues.last ?? "" }
+    }
+    site.cycleSettings = settings
+    site.seasonRuleIDs[giriSeasonRuleKey(settings.seasonID)] = rule.id
+    // プレーオフなどは、最後の通常回が分かる時だけ日程を作る。
+    let planned = giriRulePlanPeriods(rule, site: site)
+    site.cycleSettings?.specialPeriods = planned
+}
+
+/// ルールの「プレーオフ・入れ替え戦」から、シーズンの特別な日程を作る。
+/// 最後の通常回の投票締切から数えるので、1シーズンの回数が分からない時は作らない。
+/// 前にルールから作った日程は置き換え、手で入れた日程はそのまま残す。
+func giriRulePlanPeriods(_ rule: GiriRule, site: OnlineSite, calendar: Calendar = .current) -> [SiteSpecialPeriod] {
+    let settings = site.cycleSettings ?? SiteCycleSettings()
+    var periods = settings.specialPeriods.filter { !$0.id.hasPrefix("rule-plan:") }
+    guard rule.kind == .online, let lastEnd = siteSeasonLastCycleEnd(site, calendar: calendar) else { return periods }
+    let sequentialAfterVoting = rule.timing == .afterVoting
+    for plan in rule.specialPlans {
+        var start = addCalendarDays(lastEnd, plan.startOffsetDays, calendar: calendar)
+        for index in 0..<max(1, plan.count) {
+            var period = SiteSpecialPeriod(id: "rule-plan:\(plan.id):\(index + 1)")
+            period.kind = plan.kind
+            period.title = plan.count > 1 ? plan.displayTitle + " \(index + 1)回目" : plan.displayTitle
+            period.seasonName = settings.seasonName
+            var round = EventRound()
+            round.name = period.title
+            round.submissionStart = start
+            round = completeRoundSchedule(round, submissionDays: plan.submissionDays, votingDays: plan.votingDays)
+            period.round = round
+            periods.append(period)
+            // 同じ種類の次の回：投票が終わってから出るルールなら投票締切から、そうでなければ投稿締切から。
+            start = (sequentialAfterVoting ? round.votingEnd : round.submissionEnd) ?? addCalendarDays(start, plan.submissionDays, calendar: calendar)
+        }
+    }
+    return periods
+}
+
+/// 生大喜利の大会の形式から、ルールを作る（段階の名前・種類・形式・審査方法・お題数・通過枠）。
+func giriRule(from event: GiriEvent) -> GiriRule {
+    var rule = GiriRule()
+    rule.kind = .live
+    rule.name = event.series.isEmpty ? event.title : event.series
+    rule.tournamentFormat = event.tournamentFormat
+    rule.knockout = event.knockout
+    rule.judging = event.judging
+    rule.stages = event.stageResults.map { stage in
+        GiriRuleStage(name: stage.name, kind: stage.kind?.rawValue, lineup: stage.lineup, judging: stage.judging,
+                      promptCount: stage.promptCount, advanceCount: stage.advanceCount)
+    }
+    return rule
+}
+
+/// 生大喜利のルールを大会に入れる（参加形式・対戦形式・審査方法）。段階は結果の入力で入れる。
+func giriApplyRule(_ rule: GiriRule, to event: inout GiriEvent) {
+    guard rule.kind == .live else { return }
+    event.ruleID = rule.id
+    event.tournamentFormat = rule.tournamentFormat
+    event.knockout = rule.knockout
+    if !rule.judging.isEmpty { event.judging = rule.judging }
+}
+
+/// ルールの段階を、結果の段階（未入力）にする。
+func giriRuleStageResults(_ rule: GiriRule) -> [ResultStage] {
+    rule.stages.map { item in
+        var stage = ResultStage()
+        stage.name = item.name
+        stage.kind = item.stageKind
+        stage.lineup = item.lineup
+        stage.judging = item.judging
+        stage.promptCount = item.promptCount
+        stage.advanceCount = item.advanceCount
+        return stage
+    }
+}

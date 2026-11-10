@@ -273,6 +273,8 @@ struct DomainRegression {
         try check(featureRoundtrip == reopenedFeatures.document, "new optional fields roundtrip with schema one and all legacy values")
         var remindersPreferences = AppPreferences(notificationsEnabled: true)
         remindersPreferences.reminderMinutes = 0
+        // 0.23：当日通知は別の種類（下のテストで確かめる）。
+        remindersPreferences.dayNotify = false
         var remindersEvent = GiriEvent(title: "ハイブリッド通知")
         remindersEvent.eventFormat = .hybrid; remindersEvent.startsAt = now.addingTimeInterval(10800)
         var reminderRound = EventRound(); reminderRound.submissionEnd = now.addingTimeInterval(86400); reminderRound.votingEnd = now.addingTimeInterval(172800)
@@ -1590,6 +1592,119 @@ struct DomainRegression {
             try check(editedOther.otherAnswerRecords.first?.answerer == "あおい" && editedOther.otherAnswerRecords.first?.text == "直したツボ", "others' answers can change text and answerer")
             let blank = giriNoteEditingAnswer(editedOther, id: otherID, text: " ", answerer: " ")
             try check(blank.otherAnswerRecords.first?.answerer == "あおい" && blank.otherAnswerRecords.first?.text == "直したツボ", "blank edits keep the answer and answerer")
+        }
+
+        // 0.23 notification kinds, history order, rules and the top-N season average.
+        do {
+            let base = GiriDates.parse("2026-11-20T00:00:00Z") ?? Date()
+            func hour(_ value: Double) -> Date { base.addingTimeInterval(value * 3600) }
+            let oldPreferences = try JSONDecoder().decode(AppPreferences.self, from: Data(#"{"reminderMinutes":30}"#.utf8))
+            try check(oldPreferences.dayNotify && oldPreferences.beforeNotify && oldPreferences.beforeBase == "start" && oldPreferences.beforeMinutes == nil
+                      && oldPreferences.deadlineBeforeNotify && oldPreferences.deadlineLeadMinutes == nil && !oldPreferences.deadlineAtNotify,
+                      "older preferences decode the notification kinds with the previous behaviour")
+            var preferences = AppPreferences(notificationsEnabled: true)
+            preferences.reminderMinutes = 30
+            preferences.reminderHour = 9; preferences.reminderMinute = 0
+            var live = GiriEvent(title: "生の会"); live.eventFormat = .live
+            live.eventDate = Calendar.current.startOfDay(for: hour(48)); live.startsAt = Calendar.current.date(bySettingHour: 19, minute: 0, second: 0, of: hour(48))
+            live.opensAt = live.startsAt?.addingTimeInterval(-1800)
+            let liveReminders = planNativeReminders(events: [live], preferences: preferences, now: base)
+            try check(liveReminders.contains { $0.id.hasSuffix(":start") && $0.date == live.startsAt?.addingTimeInterval(-1800) }, "the before-meeting notice uses the start by default")
+            try check(liveReminders.contains { $0.id.hasSuffix(":day") && Calendar.current.component(.hour, from: $0.date) == 9 }, "the day notice is sent on the meeting day even with a start time")
+            var openFirst = preferences; openFirst.beforeBase = "open"; openFirst.beforeMinutes = 15; openFirst.dayNotify = false
+            let openReminders = planNativeReminders(events: [live], preferences: openFirst, now: base)
+            try check(openReminders.count == 1 && openReminders[0].date == live.opensAt?.addingTimeInterval(-900) && openReminders[0].body.contains("開場"), "the before-meeting notice can count from the doors opening")
+            var long = GiriEvent(title: "長考"); long.eventFormat = .onlineLong
+            var longRound = EventRound(id: "long-round"); longRound.submissionEnd = hour(24); longRound.votingEnd = hour(72)
+            long.rounds = [longRound]
+            var deadlines = preferences; deadlines.deadlineLeadMinutes = 120; deadlines.deadlineAtNotify = true
+            let longReminders = planNativeReminders(events: [long], preferences: deadlines, now: base)
+            try check(longReminders.contains { $0.id.hasSuffix("submission") && $0.date == hour(22) } && longReminders.contains { $0.id.hasSuffix("submission-at") && $0.date == hour(24) }
+                      && longReminders.contains { $0.id.hasSuffix("voting-at") && $0.date == hour(72) }, "long-think deadlines have separate before and on-time notices")
+            var onlyAt = deadlines; onlyAt.deadlineBeforeNotify = false
+            try check(!planNativeReminders(events: [long], preferences: onlyAt, now: base).contains { $0.id.hasSuffix(":submission") || $0.id.hasSuffix(":voting") }, "the before-deadline notice can be turned off alone")
+
+            var older = ThoughtNote(id: "older", title: "古いお題", kind: .answers); older.answerRecords = [AnswerRecord(text: "a", isSubmitted: true, placement: 3, points: 50, voterCount: 100)]
+            var newer = ThoughtNote(id: "newer", title: "新しいお題", kind: .answers); newer.answerRecords = [AnswerRecord(text: "b", isSubmitted: true, placement: 1, points: 20, voterCount: 100)]
+            var unranked = ThoughtNote(id: "unranked", title: "記録なし", kind: .answers); unranked.answerRecords = [AnswerRecord(text: "c", isSubmitted: true)]
+            let dates: [String: Date] = ["older": hour(0), "newer": hour(10), "unranked": hour(5)]
+            func order(_ value: GiriThoughtHistoryOrder) -> [String] { giriSortedThoughtHistory([older, newer, unranked], order: value) { dates[$0.id] ?? .distantPast }.map(\.id) }
+            try check(order(.newest) == ["newer", "unranked", "older"] && order(.oldest) == ["older", "unranked", "newer"], "history sorts by date both ways")
+            try check(order(.rank) == ["newer", "older", "unranked"] && order(.voteRate) == ["older", "newer", "unranked"], "history sorts by best rank and vote rate with unrecorded prompts last")
+
+            // Rules: JSON shape, applying to a site, playoff plans and the top-N average.
+            let plainDocument = GiriDocument()
+            let plainJSON = try JSONSerialization.jsonObject(with: GiriJSON.encode(plainDocument)) as? [String: Any] ?? [:]
+            try check(plainJSON["rules"] == nil, "documents without rules keep the older JSON shape")
+            let plainSite = try JSONSerialization.jsonObject(with: JSONEncoder().encode(OnlineSite(name: "サイト"))) as? [String: Any] ?? [:]
+            try check(plainSite["seasonRuleIDs"] == nil, "sites without rules keep the older JSON shape")
+            let plainEvent = try JSONSerialization.jsonObject(with: JSONEncoder().encode(GiriEvent(title: "会"))) as? [String: Any] ?? [:]
+            try check(plainEvent["ruleID"] == nil, "events without a rule keep the older JSON shape")
+
+            var rule = GiriRule(name: "規定8回答", kind: .online)
+            rule.scoring = .topRequired; rule.requiredAnswerCount = 2
+            rule.submissionDays = 7; rule.votingDays = 3; rule.nextPrompt = SiteNextPromptTiming.withVoting.rawValue
+            rule.regularCycleCount = 4; rule.leagues = ["1部", "2部"]
+            rule.specialPlans = [GiriRuleSpecialPlan(kind: .playoff, title: "プレーオフ", startOffsetDays: 2, submissionDays: 3, votingDays: 2, count: 2)]
+            try check(try JSONDecoder().decode(GiriRule.self, from: JSONEncoder().encode(rule)) == rule, "rules roundtrip")
+            let anchor = base
+            var site = OnlineSite(id: "rule-site", name: "ルールのサイト", recurrence: .weekly)
+            site.submissionDays = 5; site.votingDays = 5
+            site.cycleSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: anchor, intervalDays: 5, anchorCycleNumber: 1)
+            site.cycleSettings?.seasonID = "season-a"
+            giriApplyRule(rule, to: &site)
+            try check(site.submissionDays == 7 && site.votingDays == 3 && site.cycleSettings?.intervalDays == 7 && site.cycleSettings?.regularCycleCount == 4
+                      && site.hasAffiliations && site.cycleSettings?.leagues == ["1部", "2部"] && site.ruleID(forSeason: "season-a") == rule.id, "a rule fills the schedule, count and leagues and is linked to the season")
+            let lastEnd = siteSeasonLastCycleEnd(site)
+            let plans = (site.cycleSettings?.specialPeriods ?? []).filter { $0.id.hasPrefix("rule-plan:") }
+            try check(lastEnd != nil && plans.count == 2 && plans[0].round.submissionStart == lastEnd.map { addCalendarDays($0, 2) }
+                      && plans[1].round.submissionStart == plans[0].round.submissionEnd && plans[0].kind == .playoff, "playoffs are scheduled from the last regular round's vote end")
+            giriApplyRule(rule, to: &site)
+            try check((site.cycleSettings?.specialPeriods ?? []).filter { $0.id.hasPrefix("rule-plan:") }.count == 2, "applying a rule again replaces its generated periods")
+
+            var event = GiriEvent(id: "rule-event", title: "規定のある回"); event.eventFormat = .onlineLong
+            event.onlineSiteId = site.id; event.siteSeasonID = "season-a"
+            var note = ThoughtNote(id: "rule-note", title: "お題", kind: .answers); note.eventId = event.id
+            note.answerRecords = [AnswerRecord(text: "高い", isSubmitted: true, points: 80, voterCount: 100), AnswerRecord(text: "低い", isSubmitted: true, points: 10, voterCount: 100),
+                                  AnswerRecord(text: "中", isSubmitted: true, points: 40, voterCount: 100)]
+            note.usesAnswerRecords = true
+            let all = giriSeasonTotals(siteID: site.id, seasonID: "season-a", seasonName: "", events: [event], notes: [note])
+            let top = giriSeasonTotals(siteID: site.id, seasonID: "season-a", seasonName: "", events: [event], notes: [note], requiredAnswerCount: 2)
+            try check(all.averageVoteRate.map { abs($0 - 130.0 / 3.0) < 0.001 } == true && top.averageVoteRate == 60 && top.countedSampleCount == 2 && top.droppedLowerSamples,
+                      "with a required answer count only the highest rates are averaged")
+            let short = giriSeasonTotals(siteID: site.id, seasonID: "season-a", seasonName: "", events: [event], notes: [note], requiredAnswerCount: 5)
+            try check(short.averageVoteRate == all.averageVoteRate && !short.droppedLowerSamples, "below the required count every answer is averaged")
+
+            let ruleDirectory = temp.appendingPathComponent("rules", isDirectory: true)
+            let ruleStore = GiriStore(directory: ruleDirectory)
+            try ruleStore.saveRule(rule)
+            var storedSite = OnlineSite(id: "stored-rule-site", name: "保存するサイト", recurrence: .weekly)
+            storedSite.cycleSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: anchor, intervalDays: 7, anchorCycleNumber: 1)
+            storedSite.cycleSettings?.seasonID = "first"; storedSite.cycleSettings?.seasonNumber = 1
+            try ruleStore.saveOnlineSite(storedSite)
+            try ruleStore.setSiteSeasonRule(storedSite.id, ruleID: rule.id)
+            try ruleStore.startNextSiteSeason(storedSite.id, firstDeadline: addCalendarDays(anchor, 60), ruleID: nil)
+            let nextSeasonSite = ruleStore.onlineSiteById(storedSite.id)
+            let nextSeasonID = nextSeasonSite?.cycleSettings?.seasonID
+            try check(nextSeasonID != "first" && nextSeasonSite?.ruleID(forSeason: nextSeasonID) == rule.id && nextSeasonSite?.ruleID(forSeason: "first") == rule.id,
+                      "a new season keeps the previous season's rule unless another is chosen")
+            try check(nextSeasonSite?.cycleSettings?.specialPeriods.contains { $0.id.hasPrefix("rule-plan:") } == true, "a new season with a rule gets its playoff schedule")
+            let reopenedRules = GiriStore(directory: ruleDirectory)
+            try check(reopenedRules.rules == ruleStore.rules && reopenedRules.onlineSiteById(storedSite.id)?.seasonRuleIDs == nextSeasonSite?.seasonRuleIDs, "rules and season links survive restart")
+            try reopenedRules.deleteRule(rule.id)
+            try check(reopenedRules.rules.isEmpty && reopenedRules.onlineSiteById(storedSite.id)?.seasonRuleIDs.isEmpty == true, "deleting a rule unlinks it from seasons")
+
+            var tournament = GiriEvent(title: "生の大会"); tournament.eventFormat = .live; tournament.meetingType = .tournament
+            var qualifier = ResultStage(); qualifier.name = "予選"; qualifier.kind = .qualifier; qualifier.lineup = "横並び5人"; qualifier.promptCount = 3; qualifier.advanceCount = 2
+            tournament.tournamentResult = TournamentResult(stages: [qualifier]); tournament.judging = "拍手"; tournament.knockout = false
+            let liveRule = giriRule(from: tournament)
+            try check(liveRule.kind == .live && liveRule.stages.count == 1 && liveRule.stages[0].stageKind == .qualifier && liveRule.judging == "拍手", "a live tournament's form becomes a rule")
+            var nextTournament = GiriEvent(title: "次の大会"); nextTournament.eventFormat = .live; nextTournament.meetingType = .tournament
+            giriApplyRule(liveRule, to: &nextTournament)
+            let stages = giriRuleStageResults(liveRule)
+            try check(nextTournament.ruleID == liveRule.id && nextTournament.judging == "拍手" && stages.count == 1 && stages[0].name == "予選" && stages[0].advanceCount == 2 && stages[0].placement == nil,
+                      "a live rule fills the tournament and its stages without results")
+            try check(giriSeasonRuleKey(nil) == "site" && giriSeasonRuleKey(" ") == "site", "sites without seasons keep one rule")
         }
 
         print("Native domain regressions passed: \(passed)")

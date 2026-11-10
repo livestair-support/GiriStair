@@ -7,12 +7,15 @@ enum GiriSiteRoute: Hashable, Identifiable {
     case cycleResult(String)
     /// 0.14：過去に参加した回を追加する（サイトのID）。
     case pastCycle(String)
+    /// 0.23：現在の状況（今の状態・締切・次のお題）だけを直す（サイトのID）。
+    case status(String)
     var id: String {
         switch self {
         case .detail(let id): return "detail:" + id
         case .editor(let id): return "editor:" + id
         case .cycleResult(let id): return "result:" + id
         case .pastCycle(let id): return "past:" + id
+        case .status(let id): return "status:" + id
         }
     }
 }
@@ -28,6 +31,9 @@ struct GiriSiteRouteView: View {
             else { CenteredEmptyMessage(systemImage: "globe", title: "サイトが見つかりません") }
         case .cycleResult(let id): GiriCycleResultEditor(eventID: id)
         case .pastCycle(let id): GiriSitePastCycleEditor(siteID: id)
+        case .status(let id):
+            if let site = store.onlineSiteById(id) { GiriSiteEditor(site: site, statusOnly: true) }
+            else { CenteredEmptyMessage(systemImage: "globe", title: "サイトが見つかりません") }
         }
     }
 }
@@ -526,6 +532,9 @@ struct GiriSiteDeadlineSheet: View {
     @State private var votingEnd: Date? = nil
     @State private var cycleNumber = 1
     @State private var rulesChange = false
+    /// 0.23：次のシーズンのルール（nil は前のシーズンと同じ）。
+    @State private var seasonRuleID: String?
+    @State private var creatingRule: GiriRule?
 
     /// シーズン明けのルール変更は、ルールが複雑なサイトだけ聞く。
     private var asksRules: Bool { request == .nextSeason && siteHasComplexRules(site, events: store.events) }
@@ -570,7 +579,29 @@ struct GiriSiteDeadlineSheet: View {
                     }
                 }
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
-            if asksRules {
+            if request == .nextSeason {
+                // 0.23：シーズンごとのルール。同じ・別のルール・新しく作るから選ぶ。
+                Section {
+                    AppCardSectionTitle(title: "このシーズンのルール", systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.memo,
+                                        infoTitle: "ルールについて",
+                                        infoMessage: "選んだルールの日程・リーグ・1シーズンの回数を入れ、プレーオフ・入れ替え戦の日程も作ります。")
+                        .listRowSeparator(.hidden)
+                    HStack(spacing: 8) {
+                        GiriEditorLabel("ルール")
+                        Spacer(minLength: 8)
+                        GiriRuleMenuPicker(kind: .online, selectedID: seasonRuleID ?? site.currentRuleID,
+                                           noneTitle: site.currentRuleID == nil ? "選ばない" : "前のシーズンと同じ",
+                                           onSelect: { seasonRuleID = $0 },
+                                           onCreate: {
+                                               var rule = site.currentRuleID.flatMap { store.rule($0) } ?? giriRule(from: site)
+                                               rule.id = UUID().uuidString
+                                               rule.name = [site.name, "第\(nextSeasonNumber)シーズン"].joined(separator: " ")
+                                               creatingRule = rule
+                                           })
+                    }
+                }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+            }
+            if asksRules && store.rules.filter({ $0.kind == .online }).isEmpty {
                 Section {
                     AppCardSectionTitle(title: "ルール", systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.memo,
                                         infoTitle: "ルールの変更",
@@ -584,6 +615,9 @@ struct GiriSiteDeadlineSheet: View {
             }
         }
         .appEditorFormStyle()
+        .sheet(item: $creatingRule) { rule in
+            NavigationStack { GiriRuleEditor(rule: rule, isNew: true) { saved in seasonRuleID = saved.id } }
+        }
         .navigationTitle(pageTitle).navigationBarTitleDisplayMode(.inline)
         .giriNavigationBarStyle()
         .toolbar {
@@ -605,7 +639,7 @@ struct GiriSiteDeadlineSheet: View {
         guard let deadline else { return }
         store.run {
             if request == .nextSeason {
-                try store.startNextSiteSeason(site.id, firstDeadline: deadline)
+                try store.startNextSiteSeason(site.id, firstDeadline: deadline, ruleID: seasonRuleID)
             } else if request == .resume {
                 try store.resumeSiteCycle(site.id, firstDeadline: deadline, cycleNumber: cycleNumber)
             } else {
@@ -614,7 +648,7 @@ struct GiriSiteDeadlineSheet: View {
             }
             try store.ensureCurrentSiteCycles()
             playLiveStairSaveFeedback()
-            if asksRules && rulesChange { onRulesChange?() }
+            if asksRules && rulesChange && store.rules.filter({ $0.kind == .online }).isEmpty { onRulesChange?() }
             dismiss()
         }
     }
@@ -639,6 +673,8 @@ struct GiriSiteCycleSettingsForm: View {
     @EnvironmentObject private var store: GiriStore
     @Binding var site: OnlineSite
     var isNew = false
+    /// 0.23：サイト詳細の「現在の状況」の編集では、投稿・投票（今の状態・締切・次のお題）だけを出す。
+    var statusOnly = false
     @State private var initialized = false
     @State private var timing: SiteNextPromptTiming = .withVoting
     @State private var phase: SiteSetupPhase = .posting
@@ -653,6 +689,8 @@ struct GiriSiteCycleSettingsForm: View {
     @State private var nextStart: Date?
     /// 次のお題待ちにした時、前の決まりで作る回をここまでにする（今の回より前）。
     @State private var waitingCutoff = Date()
+    /// 0.23：今のサイトの設定から作るルール（シートで開く）。
+    @State private var creatingRule: GiriRule?
 
     private var settings: Binding<SiteCycleSettings> {
         Binding(get: { site.cycleSettings ?? SiteCycleSettings() }, set: { site.cycleSettings = $0 })
@@ -660,12 +698,18 @@ struct GiriSiteCycleSettingsForm: View {
 
     var body: some View {
         Group {
+            if !statusOnly { ruleSection }
             scheduleSection
-            leagueSection
-            seasonSection
-            specialSection
+            if !statusOnly {
+                leagueSection
+                seasonSection
+                specialSection
+            }
         }
         .onAppear(perform: initialize)
+        .sheet(item: $creatingRule) { rule in
+            NavigationStack { GiriRuleEditor(rule: rule, isNew: true) { saved in selectRule(saved.id, saved: saved) } }
+        }
         .sheet(item: $editingSpecial) { period in
             NavigationStack {
                 GiriSiteSpecialPeriodEditor(period: period) { saved in
@@ -675,6 +719,48 @@ struct GiriSiteCycleSettingsForm: View {
                     settings.wrappedValue = value
                 }
             }
+        }
+    }
+
+    /// 0.23：シーズンごとのルール。選ぶと日程・リーグ・回数・プレーオフをルールに合わせる。
+    private var ruleSection: some View {
+        Section {
+            AppCardSectionTitle(title: "ルール", systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.memo,
+                                infoTitle: "ルールについて",
+                                infoMessage: "保存したルールを選ぶと、日程・リーグ・1シーズンの回数・プレーオフなどをまとめて入れます。シーズンごとに選べます。")
+                .listRowSeparator(.hidden)
+            HStack(spacing: 8) {
+                GiriEditorLabel(seasons ? "今のシーズンのルール" : "ルール")
+                Spacer(minLength: 8)
+                GiriRuleMenuPicker(kind: .online, selectedID: site.currentRuleID,
+                                   onSelect: { selectRule($0) },
+                                   onCreate: { creatingRule = giriRule(from: site) })
+            }
+            if let rule = site.currentRuleID.flatMap({ store.rule($0) }) {
+                Text(rule.summary).font(.caption).foregroundStyle(.secondary)
+            } else {
+                Button("今の設定からルールを作る", systemImage: "square.and.arrow.down") { creatingRule = giriRule(from: site) }
+                    .buttonStyle(.borderless).tint(accentActionColor)
+            }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+    }
+
+    private func selectRule(_ id: String?, saved: GiriRule? = nil) {
+        if let id, let rule = saved ?? store.rule(id) {
+            // 今の状態と締切（サイトに書いてある値）はそのままにして、日数・出方・回数・リーグをルールに合わせる。
+            let kept = (phase: phase, deadline: deadline, nextStart: nextStart, cycle: currentCycle)
+            giriApplyRule(rule, to: &site)
+            initialized = false
+            initialize()
+            phase = kept.phase; deadline = kept.deadline; nextStart = kept.nextStart; currentCycle = kept.cycle
+            timing = rule.timing
+            if rule.timing == .interval { intervalDays = rule.intervalDays }
+            updateSchedule()
+            // 締切から数え直した最後の回に合わせて、プレーオフなどの日程を作り直す。
+            let planned = giriRulePlanPeriods(rule, site: site)
+            site.cycleSettings?.specialPeriods = planned
+        } else {
+            site.seasonRuleIDs.removeValue(forKey: giriSeasonRuleKey(site.cycleSettings?.seasonID))
         }
     }
 
@@ -995,6 +1081,14 @@ struct GiriSiteCycleSettingsForm: View {
     private func changeSeason(_ enabled: Bool) {
         seasons = enabled
         var value = settings.wrappedValue
+        let oldRuleKey = giriSeasonRuleKey(value.seasonID)
+        defer {
+            // 0.23：シーズンの有無を切り替えても、選んだルールは今の期間のものとして引き継ぐ。
+            let newRuleKey = giriSeasonRuleKey(site.cycleSettings?.seasonID)
+            if oldRuleKey != newRuleKey, let ruleID = site.seasonRuleIDs.removeValue(forKey: oldRuleKey) {
+                site.seasonRuleIDs[newRuleKey] = ruleID
+            }
+        }
         if enabled {
             if value.seasonID == nil { value.seasonID = UUID().uuidString }
             if value.seasonNumber == nil { value.seasonNumber = 1 }

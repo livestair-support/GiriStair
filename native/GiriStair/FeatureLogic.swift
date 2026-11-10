@@ -2233,3 +2233,68 @@ extension GiriEvent {
         kumiteMains(of: bout).contains(where: isSelf) || bout.opponents.contains(where: isSelf)
     }
 }
+
+// MARK: - 0.23 お題/回答の履歴の並び
+
+/// 履歴の並び（新しい順・古い順・順位が高い順・得票率が高い順）。
+enum GiriThoughtHistoryOrder: String, CaseIterable, Identifiable {
+    case newest, oldest, rank, voteRate
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .newest: return "新しい順"
+        case .oldest: return "古い順"
+        case .rank: return "順位が高い順"
+        case .voteRate: return "得票率が高い順"
+        }
+    }
+}
+
+extension ThoughtNote {
+    /// 自分の回答のいちばん良い順位（提出した回答を優先。なければ記録のある回答）。
+    var bestOwnPlacement: Int? {
+        let own = ownAnswerRecords
+        let submitted = own.filter(\.isSubmitted).compactMap(\.placement)
+        return (submitted.isEmpty ? own.compactMap(\.placement) : submitted).filter { $0 > 0 }.min()
+    }
+    /// 自分の回答のいちばん高い得票率。
+    var bestOwnVoteRate: Double? {
+        let own = ownAnswerRecords
+        let submitted = own.filter(\.isSubmitted).compactMap(\.voteRate)
+        return (submitted.isEmpty ? own.compactMap(\.voteRate) : submitted).filter(\.isFinite).max()
+    }
+}
+
+/// 履歴を並べる。順位・得票率のないお題は、その並びでは後ろへ（その中は新しい順）。
+func giriSortedThoughtHistory(_ notes: [ThoughtNote], order: GiriThoughtHistoryOrder, date: (ThoughtNote) -> Date) -> [ThoughtNote] {
+    let dated = notes.map { (note: $0, date: date($0)) }
+    func newer(_ a: (note: ThoughtNote, date: Date), _ b: (note: ThoughtNote, date: Date)) -> Bool {
+        a.date == b.date ? a.note.id < b.note.id : a.date > b.date
+    }
+    let sorted: [(note: ThoughtNote, date: Date)]
+    switch order {
+    case .newest:
+        sorted = dated.sorted(by: newer)
+    case .oldest:
+        sorted = dated.sorted { $0.date == $1.date ? $0.note.id < $1.note.id : $0.date < $1.date }
+    case .rank:
+        sorted = dated.sorted { a, b in
+            switch (a.note.bestOwnPlacement, b.note.bestOwnPlacement) {
+            case let (x?, y?): return x == y ? newer(a, b) : x < y
+            case (.some, nil): return true
+            case (nil, .some): return false
+            case (nil, nil): return newer(a, b)
+            }
+        }
+    case .voteRate:
+        sorted = dated.sorted { a, b in
+            switch (a.note.bestOwnVoteRate, b.note.bestOwnVoteRate) {
+            case let (x?, y?): return x == y ? newer(a, b) : x > y
+            case (.some, nil): return true
+            case (nil, .some): return false
+            case (nil, nil): return newer(a, b)
+            }
+        }
+    }
+    return sorted.map(\.note)
+}
