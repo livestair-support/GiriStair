@@ -741,6 +741,8 @@ struct GiriOCRLine: Equatable {
     var midY: Double
     /// 文字の高さ（0〜1）。見出し・タイトルの大きさを比べるのに使う。分からない時は 0。
     var height: Double = 0
+    /// 0.25：文字の左端（0〜1）。欄（列）を左端で分ける。分からない時は nil（中央で分ける）。
+    var minX: Double? = nil
 }
 
 /// トーナメント表の名前らしくない行（回戦名・数字・得点など）を除く。
@@ -1090,6 +1092,24 @@ func giriParticipantHeader(_ text: String) -> GiriParticipantSection? {
     return nil
 }
 
+/// 0.25：ページに書いてある参加者の人数（「参加者（30人／定員30人）」「参加者 30人」）。
+/// 見出しの人数が次の行に分かれた時（「参加者（30」「人／定員…」）も読む。
+func giriListedParticipantCount(_ texts: [String]) -> Int? {
+    for (index, raw) in texts.enumerated() where giriParticipantHeader(raw) == .participants {
+        let value = giriHalfwidthDigits(raw)
+        if let match = value.range(of: #"[0-9]+(?=\s*人)"#, options: .regularExpression) ?? value.range(of: #"[0-9]+"#, options: .regularExpression),
+           let count = Int(value[match]) { return count }
+        if index + 1 < texts.count {
+            let next = giriHalfwidthDigits(texts[index + 1])
+            if let match = next.range(of: #"^[（(]?\s*[0-9]+(?=\s*人)"#, options: .regularExpression) {
+                let digits = next[match].filter(\.isNumber)
+                if let count = Int(digits) { return count }
+            }
+        }
+    }
+    return nil
+}
+
 /// 一覧の終わり（ボタン・コメント欄など）。
 func giriParticipantListEnds(_ text: String) -> Bool {
     let value = text.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
@@ -1201,6 +1221,16 @@ func giriParticipantCandidates(lines: [GiriOCRLine], known: [String]) -> [GiriPa
         // 欄は位置で決める（アイコンの形では決めない）：同じ列にある見出しのうち、すぐ上のもの。
         // 同じ列に見出しがなければ、横の位置がいちばん近い見出し。
         let above = headers.filter { $0.line.midY < line.midY }
+        // 0.25：左端が分かる時は、列の始まり（見出しの左端）で分ける。長い名前や「？」のアイコンで
+        // 中央がずれても、その列の見出しより左に出ることはないので、隣の欄に入らない。
+        if let left = line.minX, above.allSatisfy({ $0.line.minX != nil }) {
+            let starts = above.filter { ($0.line.minX ?? 0) <= left + 0.04 }
+            let rightmost = starts.map { $0.line.minX ?? 0 }.max()
+            if let rightmost, let column = starts.filter({ abs(($0.line.minX ?? 0) - rightmost) < 0.02 }).max(by: { $0.line.midY < $1.line.midY }) {
+                entries.append((line.text, column.section))
+                continue
+            }
+        }
         guard let nearest = above.map({ abs($0.line.midX - line.midX) }).min() else { continue }
         let sameColumn = above.filter { abs($0.line.midX - line.midX) <= nearest + 0.08 }
         guard let column = sameColumn.max(by: { $0.line.midY < $1.line.midY }) else { continue }
@@ -1247,6 +1277,8 @@ struct GiriEventPageDraft: Equatable, Identifiable {
     var organizer = ""
     var fee: Int? = nil
     var participants: [GiriParticipantCandidate] = []
+    /// 0.25：ページに書いてある参加者の人数（読み取った人数と比べる）。
+    var listedParticipantCount: Int? = nil
     var recognizedText = ""
 
     var hasBasicInfo: Bool {
@@ -1417,6 +1449,7 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     // イベントページの参加者は「参加者」などの見出しの下だけ（見出しがなければ説明文を名前にしない）。
     let hasParticipantHeader = sorted.contains { giriParticipantHeader($0.text) != nil }
     draft.participants = hasParticipantHeader ? giriParticipantCandidates(lines: lines, known: known) : []
+    draft.listedParticipantCount = giriListedParticipantCount(sorted.map(\.text))
     // 基本情報は参加者の欄より上だけから読む（下のコメント欄の時刻などを使わない）。
     let listTop = sorted.first { giriParticipantHeader($0.text) == .participants }?.midY ?? .infinity
     let info = sorted.filter { $0.midY < listTop }
@@ -2347,4 +2380,164 @@ func giriSortedThoughtHistory(_ notes: [ThoughtNote], order: GiriThoughtHistoryO
         }
     }
     return sorted.map(\.note)
+}
+
+// MARK: - 0.25 組み合わせ（ブロック・トーナメント）
+
+/// 1組の人数：形式（「横並び5人」「タイマン」）から。トーナメント（1対1）は2人。分からなければ4人。
+func giriBoardBlockSize(_ stage: ResultStage, knockout: Bool) -> Int {
+    if let opponents = giriOpponentSlotCount(stage.lineup) { return max(2, opponents + 1) }
+    return knockout ? 2 : 4
+}
+
+/// 組の名前：2人ずつ（対戦）は「第1試合」、それ以外は「Aブロック」から。
+func giriBoardBlockName(_ index: Int, size: Int) -> String {
+    if size == 2 { return "第\(index + 1)試合" }
+    let letters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    return index < letters.count ? "\(letters[index])ブロック" : "ブロック\(index + 1)"
+}
+
+/// 名前を並びのまま、size 人ずつの組に分ける（同じ人は1回だけ）。
+func giriBoardBlocks(members: [String], size: Int) -> [GiriBoardBlock] {
+    let step = max(1, size)
+    var seen = Set<String>()
+    let names = members.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    var blocks: [GiriBoardBlock] = []
+    var index = 0
+    while index < names.count {
+        blocks.append(GiriBoardBlock(name: giriBoardBlockName(blocks.count, size: step), members: Array(names[index..<min(names.count, index + step)])))
+        index += step
+    }
+    return blocks
+}
+
+/// 勝ち上がった人（組の順・組の中の並び順）。
+func giriBoardWinners(_ board: GiriStageBoard) -> [String] {
+    board.blocks.flatMap { block in block.members.filter { member in block.winners.contains { playerSearchKey($0) == playerSearchKey(member) } } }
+}
+
+/// 組み合わせの1行（組の見出し、または人）。≡で並べ替える一覧に使う。
+enum GiriBoardRow: Equatable, Identifiable {
+    case header(String)
+    case member(String)
+    var id: String {
+        switch self {
+        case .header(let id): return "header:" + id
+        case .member(let name): return "member:" + playerSearchKey(name)
+        }
+    }
+}
+
+func giriBoardRows(_ blocks: [GiriBoardBlock]) -> [GiriBoardRow] {
+    blocks.flatMap { block in [GiriBoardRow.header(block.id)] + block.members.map { GiriBoardRow.member($0) } }
+}
+
+/// 並べ替えた行から組を作り直す。人は直前の見出しの組に入る（最初の見出しより上は最初の組）。
+/// 勝ち上がりは、その人がまだ同じ組にいる時だけ残す。
+func giriBoardBlocks(rows: [GiriBoardRow], previous: [GiriBoardBlock]) -> [GiriBoardBlock] {
+    var blocks: [GiriBoardBlock] = []
+    var leading: [String] = []
+    for row in rows {
+        switch row {
+        case .header(let id):
+            var block = previous.first { $0.id == id } ?? GiriBoardBlock(id: id)
+            block.members = []
+            blocks.append(block)
+        case .member(let name):
+            if blocks.isEmpty { leading.append(name) } else { blocks[blocks.count - 1].members.append(name) }
+        }
+    }
+    if !leading.isEmpty {
+        if blocks.isEmpty { blocks.append(GiriBoardBlock(name: giriBoardBlockName(0, size: max(2, leading.count)))) }
+        blocks[0].members.insert(contentsOf: leading, at: 0)
+    }
+    return blocks.map { block in
+        var value = block
+        let keys = Set(block.members.map(playerSearchKey))
+        value.winners = (previous.first { $0.id == block.id }?.winners ?? []).filter { keys.contains(playerSearchKey($0)) }
+        return value
+    }
+}
+
+/// 勝ち上がりを付け外しする。2人の組（対戦）は勝った1人だけにする。
+func giriBoardTogglingWinner(_ block: GiriBoardBlock, name: String) -> GiriBoardBlock {
+    var value = block
+    let key = playerSearchKey(name)
+    if value.winners.contains(where: { playerSearchKey($0) == key }) {
+        value.winners.removeAll { playerSearchKey($0) == key }
+    } else if value.members.count == 2 {
+        value.winners = [name]
+    } else {
+        value.winners.append(name)
+    }
+    return value
+}
+
+/// 組の見出し（「Aブロック」「ブロックB」「1組」「グループC」「第2試合」など）。名前を返す。
+func giriBoardHeader(_ text: String) -> String? {
+    let value = giriHalfwidthAlphanumerics(text).replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+        .replacingOccurrences(of: #"[:：]$"#, with: "", options: .regularExpression)
+    guard !value.isEmpty, value.count <= 12 else { return nil }
+    let patterns = [#"^[A-Za-z0-9]{1,2}(ブロック|組|グループ|卓|班)$"#, #"^[一二三四五六七八九十]{1,3}(ブロック|組|グループ|卓|班)$"#,
+                    #"^(ブロック|グループ|卓|班)[A-Za-z0-9]{1,2}$"#, #"^第?[0-9]{1,2}試合$"#]
+    guard patterns.contains(where: { value.range(of: $0, options: .regularExpression) != nil }) else { return nil }
+    return value
+}
+
+/// 組み合わせの画像から組を読む。見出しの下の名前を、同じ列のすぐ上の見出しの組に入れる。
+/// 見出しがない時は、上から順（左右に山がある表は左 → 右）の名前を size 人ずつに分ける。
+func giriBoardBlocks(lines: [GiriOCRLine], known: [String], size: Int) -> [GiriBoardBlock] {
+    func clean(_ text: String) -> String? {
+        let value = giriCleanParticipantText(text).name
+        guard !value.isEmpty, !giriIsParticipantNoise(value), giriBoardHeader(value) == nil else { return nil }
+        return giriMatchRegisteredName(value, truncated: false, known: known) ?? value
+    }
+    let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }
+    let headers = sorted.compactMap { line in giriBoardHeader(line.text).map { (line: line, name: $0) } }
+    guard !headers.isEmpty else {
+        return giriBoardBlocks(members: giriBracketOrder(lines).compactMap(clean), size: size)
+    }
+    var blocks = headers.map { GiriBoardBlock(name: $0.name) }
+    var seen = Set<String>()
+    for line in sorted where giriBoardHeader(line.text) == nil {
+        let above = headers.enumerated().filter { $0.element.line.midY < line.midY }
+        guard !above.isEmpty, let name = clean(line.text), seen.insert(playerSearchKey(name)).inserted else { continue }
+        let chosen: Int?
+        if let left = line.minX, above.allSatisfy({ $0.element.line.minX != nil }) {
+            let starts = above.filter { ($0.element.line.minX ?? 0) <= left + 0.04 }
+            let rightmost = starts.map { $0.element.line.minX ?? 0 }.max()
+            chosen = rightmost.flatMap { edge in starts.filter { abs(($0.element.line.minX ?? 0) - edge) < 0.02 }.max { $0.element.line.midY < $1.element.line.midY }?.offset }
+        } else {
+            let nearest = above.map { abs($0.element.line.midX - line.midX) }.min() ?? 0
+            chosen = above.filter { abs($0.element.line.midX - line.midX) <= nearest + 0.08 }.max { $0.element.line.midY < $1.element.line.midY }?.offset
+        }
+        if let chosen { blocks[chosen].members.append(name) }
+    }
+    return blocks.filter { !$0.members.isEmpty }
+}
+
+/// 組み合わせから、自分の記録（組・相手・通過／敗退）を入れる。自分がいない組み合わせは何もしない。
+/// 通過／敗退は、組の勝ち上がりが決まっていて、自分の結果が未記録か組み合わせから入れた結果の時だけ変える。
+func giriApplyingBoard(_ board: GiriStageBoard, to stage: ResultStage, isSelf: (String) -> Bool) -> ResultStage {
+    guard let block = board.blocks.first(where: { $0.members.contains(where: isSelf) }) else { return stage }
+    var value = stage
+    let opponents = block.members.filter { !isSelf($0) }
+    if value.laps.isEmpty {
+        value.group = block.name
+        value.opponents = opponents
+    } else {
+        value.laps[0].group = block.name
+        value.laps[0].opponents = opponents
+    }
+    guard !block.winners.isEmpty else { return value }
+    let won = block.winners.contains(where: isSelf)
+    let derived: Set<TournamentOutcome> = [.unrecorded, .advanced, .eliminated, .champion, .runnerUp]
+    guard derived.contains(value.outcome) else { return value }
+    if value.effectiveKind == .final {
+        value.outcome = won ? .champion : (block.members.count == 2 ? .runnerUp : .unrecorded)
+    } else {
+        value.outcome = won ? .advanced : .eliminated
+    }
+    return value
 }
