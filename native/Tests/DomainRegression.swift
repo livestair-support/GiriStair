@@ -1840,6 +1840,40 @@ struct DomainRegression {
             try check(giriListedParticipantCount(page.map(\.text)) == 10 && read.filter(\.included).count == 6, "the page count can be compared with the selected people")
         }
 
+        // 0.26 OCR names with @/bracket notes and 一/ー, merging two records of the same player.
+        do {
+            try check(giriCleanParticipantText("しゅにく@大喜利垢").name == "しゅにく" && giriCleanParticipantText("しゅにく ＠告知").name == "しゅにく"
+                      && giriCleanParticipantText("@handle").name == "@handle", "an @ note after an X name is removed")
+            try check(giriMatchRegisteredName("しゅにく(大喜利)", known: ["しゅにく"]) == "しゅにく" && giriMatchRegisteredName("しゅにく【告知】", known: ["しゅにく"]) == "しゅにく",
+                      "a bracket note after a name still matches the registered name")
+            try check(giriMatchRegisteredName("新しい(仮)", known: ["しゅにく"]) == nil && giriNameWithoutTrailingNote("(仮)") == "(仮)", "unknown names keep their brackets")
+            try check(giriMatchRegisteredName("金田ー", known: ["金田一"]) == "金田一" && giriMatchRegisteredName("一ノ瀬", known: ["ー之瀬", "一ノ瀬"]) == "一ノ瀬",
+                      "the kanji one and the long mark are read as the same letter")
+            let read = giriParticipantCandidates(text: "参加者（2人）\n金田ー\nたろう@大喜利", known: ["金田一", "たろう"])
+            try check(read.map(\.name) == ["金田一", "たろう"] && read.allSatisfy { $0.registered != nil }, "pasted lists link misread and annotated names to registered players")
+
+            let mergeDirectory = temp.appendingPathComponent("merge", isDirectory: true)
+            let mergeStore = GiriStore(directory: mergeDirectory)
+            var kana = GiriPlayer(name: "たろう"); kana.furigana = "たろう"; kana.memo = "ひらがなの記録"; kana.aliases = ["タロ"]
+            var kanji = GiriPlayer(name: "太郎"); kanji.memo = "漢字の記録"; kanji.region = "関西"
+            try mergeStore.savePlayer(kana)
+            try mergeStore.savePlayer(kanji)
+            var meeting = GiriEvent(title: "統合の会"); meeting.eventFormat = .live; meeting.participants = ["たろう", "はなこ"]
+            meeting.stageBoards = [GiriStageBoard(id: "s", blocks: [GiriBoardBlock(name: "A", members: ["たろう"], winners: ["たろう"])])]
+            try mergeStore.saveEvent(meeting)
+            var note = ThoughtNote(title: "お題", kind: .answers); note.answerRecords = [AnswerRecord(text: "ツボ", answerer: "たろう")]
+            try mergeStore.saveNote(note)
+            var renamed = kana; renamed.name = "太郎"
+            try mergeStore.mergePlayer(renamed, into: "太郎")
+            let merged = mergeStore.players.filter { playerSearchKey($0.name) == playerSearchKey("太郎") || playerSearchKey($0.name) == playerSearchKey("たろう") }
+            try check(merged.count == 1 && merged[0].name == "太郎" && merged[0].furigana == "たろう" && merged[0].region == "関西"
+                      && merged[0].memo.contains("漢字の記録") && merged[0].memo.contains("ひらがなの記録") && merged[0].aliases == ["タロ"],
+                      "merging keeps one player with the target's fields and fills the empty ones")
+            let event = mergeStore.events.first { $0.title == "統合の会" }
+            try check(event?.participants == ["太郎", "はなこ"] && event?.stageBoards.first?.blocks.first?.winners == ["太郎"]
+                      && mergeStore.notes.first?.answerRecords.first?.answerer == "太郎", "records under the old name move to the merged player")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

@@ -1013,8 +1013,10 @@ func giriMarkingAlreadyAdded(_ candidates: [GiriParticipantCandidate], existing:
 
 /// 照合用の名前：読み（ひらがな）・小書き文字・記号・空白の違いを吸収する。
 func giriOCRNameKey(_ value: String) -> String {
+    // 0.26：漢数字の「一」と伸ばし棒の「ー」は読み違えやすいので、同じ文字として比べる（金田一 ↔ 金田ー）。
     let small: [Character: Character] = ["ぁ": "あ", "ぃ": "い", "ぅ": "う", "ぇ": "え", "ぉ": "お", "っ": "つ",
-                                         "ゃ": "や", "ゅ": "ゆ", "ょ": "よ", "ゎ": "わ", "ゕ": "か", "ゖ": "け"]
+                                         "ゃ": "や", "ゅ": "ゆ", "ょ": "よ", "ゎ": "わ", "ゕ": "か", "ゖ": "け",
+                                         "一": "ー", "ｰ": "ー"]
     let ignored = Set("・･.。、,，-‐－―—~〜…‥()（）[]［］「」『』【】!！?？:：;；'\"’”*＊#＃@＠_")
     return String(playerSearchKey(value).compactMap { character -> Character? in
         if character.isWhitespace || ignored.contains(character) { return nil }
@@ -1049,6 +1051,9 @@ func giriMatchRegisteredName(_ text: String, truncated: Bool = false, known: [St
         return (name, normalized)
     }
     if let hit = index.first(where: { $0.1 == key }) { return hit.0 }
+    // 0.26：名前の後ろに付けた「(〇〇)」「【〇〇】」などを外した名前が登録されていれば、その人にする。
+    let base = giriNameWithoutTrailingNote(text)
+    if base != text, let hit = index.first(where: { $0.1 == giriOCRNameKey(base) && !$0.1.isEmpty }) { return hit.0 }
     for drop in 1...2 where key.count - drop >= 2 {
         let rest = String(key.dropFirst(drop))
         if let hit = index.first(where: { $0.1 == rest }) { return hit.0 }
@@ -1138,6 +1143,14 @@ func giriIsParticipantNoise(_ text: String) -> Bool {
     return patterns.contains { value.range(of: $0, options: .regularExpression) != nil }
 }
 
+/// 0.26：名前の後ろに付けた括弧書き（「しゅにく(大喜利)」「しゅにく【告知】」）を外した名前。括弧がなければそのまま。
+func giriNameWithoutTrailingNote(_ text: String) -> String {
+    let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let range = value.range(of: #"\s*[（(\[［【〔「『][^（(\[［【〔「『）)\]］】〕」』]*[）)\]］】〕」』]$"#, options: .regularExpression) else { return value }
+    let base = String(value[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    return base.isEmpty ? value : base
+}
+
 /// 名前の前に付いたアイコンの読み違い（●・◆・①・「(」など）と、末尾の「…」を外す。
 func giriCleanParticipantText(_ raw: String) -> (name: String, truncated: Bool) {
     var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1152,6 +1165,11 @@ func giriCleanParticipantText(_ raw: String) -> (name: String, truncated: Bool) 
     if let range = value.range(of: #"^[A-Za-z0-9Ａ-Ｚａ-ｚ０-９]\s+(?=\S)"#, options: .regularExpression) { value.removeSubrange(range) }
     if !value.contains("(") && !value.contains("（") {
         value = value.replacingOccurrences(of: #"[)）]+$"#, with: "", options: .regularExpression)
+    }
+    // 0.26：Xの名前の後ろに付けた「@〇〇」（告知・所属など）は名前ではないので外す（「@」で始まる名前はそのまま）。
+    if let range = value.range(of: #"\s*[@＠][^@＠]*$"#, options: .regularExpression) {
+        let base = String(value[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !base.isEmpty { value = base }
     }
     return (value.trimmingCharacters(in: .whitespacesAndNewlines), truncated)
 }
@@ -2555,4 +2573,28 @@ func giriApplyingBoard(_ board: GiriStageBoard, to stage: ResultStage, isSelf: (
         value.outcome = won ? .advanced : .eliminated
     }
     return value
+}
+
+
+// MARK: - 0.26 プレイヤーの統合
+
+/// 統合した人のプロフィール：統合先の項目を残し、空の項目だけ candidate から足す。メモは両方を残し、別名義はまとめる。
+func giriMergedPlayer(_ target: GiriPlayer, with candidate: GiriPlayer, oldName: String) -> GiriPlayer {
+    var merged = target
+    func fill(_ value: inout String, _ other: String) {
+        if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { value = other.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+    fill(&merged.furigana, candidate.furigana)
+    fill(&merged.region, candidate.region)
+    fill(&merged.prefecture, candidate.prefecture)
+    fill(&merged.iconDataBase64, candidate.iconDataBase64)
+    fill(&merged.twitterUrl, candidate.twitterUrl)
+    let memo = candidate.memo.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !memo.isEmpty && !merged.memo.contains(memo) {
+        merged.memo = merged.memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? memo : merged.memo + "\n" + memo
+    }
+    var seen: Set<String> = [playerSearchKey(merged.name), playerSearchKey(oldName)]
+    merged.aliases = (target.aliases + candidate.aliases).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    return merged
 }

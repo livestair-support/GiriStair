@@ -411,6 +411,28 @@ final class GiriStore: ObservableObject {
         }
     }
     func deletePlayer(_ id: String) throws { try mutate { $0.players.removeAll { $0.id == id } } }
+
+    /// 0.26：同じ人が2つの名前で登録されている時、candidate（直した内容）を targetName の人へ統合する。
+    /// candidate の元の名前の記録はすべて targetName に変え、プロフィールは targetName の人の空の項目だけ candidate から足す。
+    func mergePlayer(_ candidate: GiriPlayer, into targetName: String) throws {
+        let targetKey = playerSearchKey(targetName)
+        guard !targetKey.isEmpty, let target = playerDirectory.first(where: { playerSearchKey($0.name) == targetKey }) else {
+            throw GiriDataError.invalid("統合先のプレイヤーが見つかりません。")
+        }
+        let source = playerDirectory.first { $0.id == candidate.id }
+        let oldName = source?.name ?? candidate.name
+        var merged = giriMergedPlayer(target, with: candidate, oldName: oldName)
+        if merged.id.hasPrefix("history:") { merged.id = newId() }
+        try merged.validate()
+        let saved = merged
+        let oldKey = playerSearchKey(oldName)
+        try mutate { next in
+            // 元の名前の記録（自動で作られた記録を含む）を外し、統合した人を1件だけ残す。
+            next.players.removeAll { $0.id == candidate.id || $0.id == target.id || (playerSearchKey($0.name) == oldKey && oldKey != targetKey) || playerSearchKey($0.name) == targetKey }
+            next.players.append(saved)
+            if !oldKey.isEmpty && oldKey != targetKey { Self.renamePlayer(from: oldName, to: saved.name, in: &next) }
+        }
+    }
     func saveGroup(_ candidate: GiriGroup) throws {
         var group = candidate
         group.name = group.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -540,8 +562,32 @@ final class GiriStore: ObservableObject {
             for standing in next.events[index].standings.indices { next.events[index].standings[standing].playerNames = next.events[index].standings[standing].playerNames.map(rename) }
             if var result = next.events[index].tournamentResult {
                 result.members = result.members.map(rename)
-                for stage in result.stages.indices { result.stages[stage].opponents = result.stages[stage].opponents.map(rename) }
+                for stage in result.stages.indices {
+                    result.stages[stage].opponents = result.stages[stage].opponents.map(rename)
+                    result.stages[stage].advancedWith = result.stages[stage].advancedWith.map(rename)
+                    for lap in result.stages[stage].laps.indices {
+                        result.stages[stage].laps[lap].opponents = result.stages[stage].laps[lap].opponents.map(rename)
+                        for other in result.stages[stage].laps[lap].others.indices {
+                            result.stages[stage].laps[lap].others[other].name = rename(result.stages[stage].laps[lap].others[other].name)
+                        }
+                    }
+                }
                 next.events[index].tournamentResult = result
+            }
+            // 0.26：組手・組み合わせ・会の中の結果の名前も変える。
+            next.events[index].kumiteMains = next.events[index].kumiteMains.map(rename)
+            for bout in next.events[index].kumiteBouts.indices {
+                next.events[index].kumiteBouts[bout].mains = next.events[index].kumiteBouts[bout].mains.map(rename)
+                next.events[index].kumiteBouts[bout].opponents = next.events[index].kumiteBouts[bout].opponents.map(rename)
+            }
+            for board in next.events[index].stageBoards.indices {
+                for block in next.events[index].stageBoards[board].blocks.indices {
+                    next.events[index].stageBoards[board].blocks[block].members = next.events[index].stageBoards[board].blocks[block].members.map(rename)
+                    next.events[index].stageBoards[board].blocks[block].winners = next.events[index].stageBoards[board].blocks[block].winners.map(rename)
+                }
+            }
+            for item in next.events[index].sideResults.indices {
+                next.events[index].sideResults[item].members = next.events[index].sideResults[item].members.map(rename)
             }
         }
         for index in next.groups.indices { next.groups[index].members = next.groups[index].members.map(rename) }

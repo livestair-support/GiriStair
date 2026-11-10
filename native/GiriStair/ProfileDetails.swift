@@ -1069,6 +1069,8 @@ struct GiriPlayerEditor: View {
     @State private var photo: PhotosPickerItem?
     @State private var discard = false
     @State private var renaming = false
+    /// 0.26：同じ名前の人がいる時に統合する相手。
+    @State private var mergeTarget: String?
     /// 自分の別名義は設定と同じ保存先（設定の「自分の名前」）。
     @State private var selfAliases: [String] = []
     @State private var mergesSelfAliases = false
@@ -1214,6 +1216,14 @@ struct GiriPlayerEditor: View {
         } message: {
             Text("「\(original.name)」を「\(trimmedName)」へ変更すると、これまでの記録の名前もすべて変更されます。")
         }
+        .alert("「\(mergeTarget ?? "")」と統合しますか？", isPresented: Binding(get: { mergeTarget != nil }, set: { if !$0 { mergeTarget = nil } })) {
+            Button("キャンセル", role: .cancel) { mergeTarget = nil }
+            Button("統合する", role: .destructive) { merge() }
+        } message: {
+            Text(isNew
+                 ? "「\(mergeTarget ?? "")」はもう登録されています。入れた内容は、その人の空の項目に足します。"
+                 : "「\(original.name)」の記録をすべて「\(mergeTarget ?? "")」にまとめます。プロフィールは「\(mergeTarget ?? "")」の空の項目だけ足し、メモと別名義は両方を残します。元に戻せません。")
+        }
         .onAppear {
             guard !loadedSelf else { return }
             selfAliases = store.preferences.selfAliases
@@ -1231,7 +1241,26 @@ struct GiriPlayerEditor: View {
     }
 
     private func requestSave() {
+        // 0.26：同じ名前の人がいる時は「同じ人がいます」で止めず、統合するかを聞く。
+        if let duplicate = store.playerDirectory.first(where: { $0.id != draft.id && playerSearchKey($0.name) == playerSearchKey(trimmedName) }) {
+            mergeTarget = duplicate.name
+            return
+        }
         if !isNew && trimmedName != original.name { renaming = true } else { save() }
+    }
+
+    /// 0.26：同じ名前の人へ統合する。
+    private func merge() {
+        guard let target = mergeTarget else { return }
+        mergeTarget = nil
+        store.run {
+            var value = draft
+            value.twitterUrl = giriNormalizedXURL(value.twitterUrl)
+            try store.mergePlayer(value, into: target)
+            onSaved?(store.playerByName(target) ?? value)
+            playLiveStairSaveFeedback()
+            dismiss()
+        }
     }
 
     private func save() {
