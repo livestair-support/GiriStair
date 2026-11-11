@@ -1104,6 +1104,7 @@ struct GiriResultEntry: View {
 /// （左に小さな項目名、右に値）で、形式・審査方法・結果・ネットの集計を分ける。
 struct GiriStageEditor: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: GiriStore
     let event: GiriEvent
     @Binding var stage: ResultStage
     @Binding var answerNotes: [ThoughtNote]
@@ -1156,7 +1157,7 @@ struct GiriStageEditor: View {
                             .font(.subheadline.weight(.semibold)).lineLimit(4)
                         // 0.17：画像のお題は画像も出す。
                         if !answerNotes[index].imageDataBase64.isEmpty { GiriThoughtImage(base64: answerNotes[index].imageDataBase64) }
-                        GiriAnswerResultFields(records: $answerNotes[index].answerRecords)
+                        GiriAnswerResultFields(records: $answerNotes[index].answerRecords, teammates: event.teammates(isSelf: store.preferences.isSelf))
                     }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
                 }
             }

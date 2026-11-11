@@ -1456,6 +1456,8 @@ struct GiriThoughtEditor: View {
 
     private var event: GiriEvent? { store.events.first { $0.id == draft.eventId } }
     private var isLong: Bool { selectedFormat == .onlineLong }
+    /// 0.28：チーム戦の大会のメンバー（自分を除く）。
+    private var teammates: [String] { event?.teammates(isSelf: store.preferences.isSelf) ?? [] }
 
     /// 0.16：新しいお題を保存したあと、どちらのモードで回答を入れるかを選ぶ。
     /// 0.17：「このお題に参加」はお題の側で決める（nil は触っていない）。
@@ -1491,7 +1493,7 @@ struct GiriThoughtEditor: View {
                     Section {
                         AppCardSectionTitle(title: isLong ? "採用した回答の結果" : "出した回答の結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket)
                             .listRowSeparator(.hidden)
-                        GiriAnswerResultFields(records: $ownAnswers)
+                        GiriAnswerResultFields(records: $ownAnswers, teammates: teammates)
                     }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
                 }
                 if !isNewNote {
@@ -1730,22 +1732,44 @@ struct GiriThoughtEditor: View {
 
     private var othersSection: some View {
         Section {
-            AppCardSectionTitle(title: "ツボ（他の人の回答）", systemImage: "face.smiling", accentColor: AppSectionAccent.favorite,
+            AppCardSectionTitle(title: teammates.isEmpty ? "ツボ（他の人の回答）" : "ツボ・チームメンバーの回答", systemImage: "face.smiling", accentColor: AppSectionAccent.favorite,
                                 infoTitle: "ツボについて",
-                                infoMessage: "面白かった他の人の回答を回答者と一緒に残します。プレイヤー詳細の「好きな回答」にも出ます。")
+                                infoMessage: teammates.isEmpty
+                                    ? "面白かった他の人の回答を回答者と一緒に残します。プレイヤー詳細の「好きな回答」にも出ます。"
+                                    : "チームメンバーが出した回答は「チームメンバーの回答」にすると、結果を入れて、その人の成績（プレイヤー詳細）に数えます。")
                 .listRowSeparator(.hidden)
             ForEach(otherAnswers) { record in
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 8) {
-                        GiriPlayerSuggestionField(title: "回答者", text: otherBinding(record.id).answerer, showsLabel: true, textAlignment: .trailing)
+                        GiriPlayerSuggestionField(title: "回答者", text: otherBinding(record.id).answerer, showsLabel: true, textAlignment: .trailing,
+                                                  priorityNames: teammates)
                         Button(role: .destructive) { otherAnswers.removeAll { $0.id == record.id } } label: {
                             Image(systemName: "minus.circle").frame(minWidth: 28, minHeight: 32)
                         }.buttonStyle(.borderless).accessibilityLabel("このツボを外す")
                     }
                     TextField("回答", text: otherBinding(record.id).text, axis: .vertical).lineLimit(1...8)
+                    if !teammates.isEmpty {
+                        Toggle(isOn: otherBinding(record.id).isTeammate) { GiriEditorLabel("チームメンバーの回答") }
+                            .tint(AppSectionAccent.favorite)
+                        if record.isTeammate {
+                            GiriIntegerField(title: "順位（任意）", value: otherBinding(record.id).placement, suffix: "位")
+                            HStack {
+                                TextField("得点（任意）", value: otherBinding(record.id).points, format: .number).keyboardType(.decimalPad)
+                                Text("点").foregroundStyle(.secondary)
+                            }
+                            GiriIntegerField(title: "投票人数（任意）", value: otherBinding(record.id).voterCount, suffix: "人")
+                        }
+                    }
                 }.padding(.vertical, 4)
             }
             Button("ツボを追加", systemImage: "plus.circle") { otherAnswers.append(AnswerRecord()) }
+            if !teammates.isEmpty {
+                Button("チームメンバーの回答を追加", systemImage: "person.2.badge.plus") {
+                    var record = AnswerRecord(answerer: teammates.first ?? "")
+                    record.isTeammate = true
+                    otherAnswers.append(record)
+                }
+            }
         }.appSectionCardStyle(accentColor: AppSectionAccent.favorite)
     }
 
@@ -2005,6 +2029,8 @@ func giriAuthorFromOCR(_ line: String) -> String {
 struct GiriAnswerResultFields: View {
     @EnvironmentObject private var store: GiriStore
     @Binding var records: [AnswerRecord]
+    /// 0.28：チーム戦のメンバー（自分を除く）。いる時は、出した回答の原案と、メンバーの回答の結果も入れる。
+    var teammates: [String] = []
     /// 0.15：結果のページのスクリーンショットから、出した回答の順位・得点・投票人数を読む。
     @State private var resultPhoto: PhotosPickerItem?
     @State private var readingResult = false
@@ -2032,7 +2058,30 @@ struct GiriAnswerResultFields: View {
                 if let value = record.pointsPerVoter {
                     LabeledContent("1人あたり", value: giriScoreText(value))
                 }
+                if !teammates.isEmpty {
+                    // 0.28：チームで出した回答の原案（成績は原案の人に数える）。
+                    Picker(selection: recordBinding(record.id).drafter) {
+                        Text("自分").tag("")
+                        ForEach(teammates, id: \.self) { Text($0).tag($0) }
+                        let drafter = record.drafter
+                        if !drafter.isEmpty && !teammates.contains(drafter) { Text(drafter).tag(drafter) }
+                    } label: { GiriEditorLabel("原案") }
+                    .pickerStyle(.menu).tint(.primary)
+                }
                 TextField("回答のメモ", text: recordBinding(record.id).memo, axis: .vertical).lineLimit(1...5)
+            }.padding(.vertical, 4)
+        }
+        // 0.28：チームメンバーの回答（他の人の回答で「チームメンバー」にしたもの）の結果。
+        ForEach(records.filter { !$0.isOwn && $0.isTeammate }) { record in
+            VStack(alignment: .leading, spacing: 6) {
+                Text(record.answerer).font(.caption.weight(.semibold)).foregroundStyle(AppSectionAccent.favorite)
+                Text(record.text).font(.subheadline.weight(.semibold)).lineLimit(4)
+                GiriIntegerField(title: "この回答の順位（任意）", value: recordBinding(record.id).placement, suffix: "位")
+                HStack {
+                    TextField("得点（任意）", value: recordBinding(record.id).points, format: .number).keyboardType(.decimalPad)
+                    Text("点").foregroundStyle(.secondary)
+                }
+                GiriIntegerField(title: "投票人数（任意）", value: recordBinding(record.id).voterCount, suffix: "人")
             }.padding(.vertical, 4)
         }
     }

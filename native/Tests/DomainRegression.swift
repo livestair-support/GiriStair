@@ -2118,6 +2118,61 @@ struct DomainRegression {
             try check(tagged.leagueDetail("1部").stayCount == 35 && tagged.leagueDetail("1部").relegationCount == 15, "reading the tag page keeps the single division as it was")
         }
 
+        // 0.28 team answers credited to the drafter, tag partner rates and entry deadline notices.
+        do {
+            let me: (String) -> Bool = { $0 == "わたし" }
+            var plainRecord = AnswerRecord(text: "回答")
+            let plainJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plainRecord)) as? [String: Any] ?? [:]
+            try check(plainJSON["drafter"] == nil && plainJSON["isTeammate"] == nil && plainJSON["answerer"] as? String == "", "answers without team data keep the older JSON shape")
+            plainRecord.drafter = "はるか"; plainRecord.isTeammate = false
+            let decodedRecord = try JSONDecoder().decode(AnswerRecord.self, from: JSONEncoder().encode(plainRecord))
+            try check(decodedRecord.drafter == "はるか" && decodedRecord.isOwn && !decodedRecord.countsForSelf && decodedRecord.creditedName == "はるか" && decodedRecord.isTeamCredit,
+                      "a team answer drafted by a teammate is credited to the teammate")
+            var teammateRecord = AnswerRecord(text: "メンバーの回答", answerer: "たろう"); teammateRecord.isTeammate = true
+            try check(!teammateRecord.isOwn && teammateRecord.creditedName == "たろう" && teammateRecord.isTeamCredit && AnswerRecord(text: "自分").countsForSelf,
+                      "teammates' answers are credited to them and own answers stay mine")
+
+            var teamCup = GiriEvent(title: "架空チーム杯"); teamCup.meetingType = .tournament; teamCup.tournamentFormat = .team; teamCup.eventFormat = .onlineLong
+            teamCup.teams = [GiriTeam(name: "自分のチーム", members: ["わたし", "はるか", "たろう"], isMine: true), GiriTeam(name: "相手", members: ["じろう"])]
+            try check(teamCup.teammates(isSelf: me) == ["はるか", "たろう"], "teammates are the other members of my team")
+            var single = teamCup; single.tournamentFormat = .individual
+            try check(single.teammates(isSelf: me).isEmpty, "individual tournaments have no teammates")
+
+            var cycle = GiriEvent(title: "架空サイト 第1回"); cycle.eventFormat = .onlineLong; cycle.onlineSiteId = "site-x"; cycle.siteSeasonID = "s1"
+            var mine = ThoughtNote(title: "お題", kind: .answers); mine.eventId = cycle.id; mine.usesAnswerRecords = true
+            var drafted = AnswerRecord(text: "相手が原案", isSubmitted: true, points: 30, voterCount: 100); drafted.drafter = "はるか"
+            var partnerAnswer = AnswerRecord(text: "相手の回答", points: 10, voterCount: 100, answerer: "はるか")
+            partnerAnswer.isTeammate = false
+            mine.answerRecords = [AnswerRecord(text: "自分の回答", isSubmitted: true, points: 20, voterCount: 100), drafted, partnerAnswer]
+            let own = giriSeasonTotals(siteID: "site-x", seasonID: "s1", seasonName: "", events: [cycle], notes: [mine])
+            try check(own.submittedAnswerCount == 1 && own.averageVoteRate == 20, "answers drafted by someone else do not count in my season")
+            let partner = giriPersonSeasonRate(name: "はるか", siteID: "site-x", seasonID: "s1", seasonName: "", events: [cycle], notes: [mine], topCount: 1)
+            try check(partner.sampleCount == 2 && partner.countedSampleCount == 1 && partner.averageVoteRate == 30, "the partner's rate uses their recorded answers and keeps the top ones")
+            try check(giriTagSeasonRate(own: 20, ownCount: 4, partner: 30, partnerCount: 4, topCount: 4, scoring: "sum", shortfallZero: true) == 50
+                      && giriTagSeasonRate(own: 20, ownCount: 4, partner: 30, partnerCount: 2, topCount: 4, scoring: "sum", shortfallZero: true) == 20
+                      && giriTagSeasonRate(own: 20, ownCount: 4, partner: 30, partnerCount: 4, topCount: 4, scoring: "average", shortfallZero: false) == 25
+                      && giriTagSeasonRate(own: 20, ownCount: 4, partner: nil, partnerCount: nil, topCount: 4, scoring: "sum", shortfallZero: false) == nil,
+                      "tag totals add or average the two and count a short member as zero when the rule says so")
+
+            var tagSite = OnlineSite(name: "架空サイト")
+            let plainTagSite = try JSONSerialization.jsonObject(with: JSONEncoder().encode(tagSite)) as? [String: Any] ?? [:]
+            try check(plainTagSite["tagPartnerRates"] == nil, "sites without typed partner rates keep the older JSON shape")
+            tagSite.tagPartnerRates = ["s1": 12.5]
+            try check(try JSONDecoder().decode(OnlineSite.self, from: JSONEncoder().encode(tagSite)).tagPartnerRates == ["s1": 12.5], "typed partner rates roundtrip")
+
+            let base = GiriDates.parse("2026-11-05T00:00:00Z") ?? Date()
+            var entryCup = GiriEvent(title: "エントリーのある大会"); entryCup.eventFormat = .onlineLong; entryCup.meetingType = .tournament
+            entryCup.entryStart = base.addingTimeInterval(86400); entryCup.entryEnd = base.addingTimeInterval(4 * 86400)
+            var prefs = AppPreferences(notificationsEnabled: true); prefs.entryLeadMinutes = 60
+            let reminders = planNativeReminders(events: [entryCup], preferences: prefs, now: base)
+            try check(reminders.contains { $0.id.hasSuffix(":entry-end") && $0.date == base.addingTimeInterval(4 * 86400 - 3600) }
+                      && reminders.contains { $0.id.hasSuffix(":entry-start") }, "entry start and deadline notices are both planned")
+            var noEnd = prefs; noEnd.entryEndNotify = false
+            try check(!planNativeReminders(events: [entryCup], preferences: noEnd, now: base).contains { $0.id.hasSuffix(":entry-end") }, "the deadline notice can be turned off")
+            let oldPrefs = try JSONDecoder().decode(AppPreferences.self, from: Data("{}".utf8))
+            try check(oldPrefs.entryEndNotify, "older preferences turn the entry deadline notice on")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

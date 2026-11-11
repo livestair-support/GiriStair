@@ -780,6 +780,34 @@ struct GiriPlayerDetail: View {
         .background { appBackgroundColor.ignoresSafeArea() }
     }
 
+    /// 0.28：チーム戦での回答と成績（順位・得票率）。
+    private func teamAnswersCard(_ records: [AnswerRecord]) -> some View {
+        let rates = records.compactMap(\.voteRate)
+        return GiriDetailCard(title: "チーム戦の回答", systemImage: "person.2", accentColor: AppSectionAccent.favorite) {
+            VStack(alignment: .leading, spacing: 0) {
+                GiriProfileInfoRow(title: "回答", value: "\(records.count)回答", labelWidth: 80, verticalPadding: 8)
+                if let best = records.compactMap(\.placement).min() {
+                    Divider().overlay(appSeparatorColor)
+                    GiriProfileInfoRow(title: "最高順位", value: "\(best)位", labelWidth: 80, verticalPadding: 8)
+                }
+                if !rates.isEmpty {
+                    Divider().overlay(appSeparatorColor)
+                    GiriProfileInfoRow(title: "平均得票率", value: String(format: "%.1f%%", rates.reduce(0, +) / Double(rates.count)), labelWidth: 80, verticalPadding: 8)
+                }
+                ForEach(records.prefix(10)) { record in
+                    Divider().overlay(appSeparatorColor)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(record.text).font(.subheadline).lineLimit(2)
+                        Spacer(minLength: 8)
+                        Text([record.placement.map { "\($0)位" }, record.voteRate.map { String(format: "%.1f%%", $0) }].compactMap { $0 }.joined(separator: "・"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+        }
+    }
+
     // MARK: 基本情報
 
     private func basicPage(_ player: GiriPlayer) -> some View {
@@ -788,7 +816,9 @@ struct GiriPlayerDetail: View {
         let keys = store.nameKeys(for: player.name)
         let together = store.events.filter { $0.isActualParticipant && giriEventPeople($0).contains { keys.contains(playerSearchKey($0)) } }
         let hosted = store.events.filter { $0.isActualParticipant && $0.isHosted(byKeys: keys) }
-        let favorites = store.notes.flatMap(\.otherAnswerRecords).filter { keys.contains(playerSearchKey($0.answerer)) }
+        let favorites = store.notes.flatMap(\.otherAnswerRecords).filter { !$0.isTeammate && keys.contains(playerSearchKey($0.answerer)) }
+        // 0.28：チーム戦で、この人の回答（メンバーの回答・この人が原案のチーム回答）。
+        let teamAnswers = store.notes.flatMap(\.effectiveAnswerRecords).filter { $0.isTeamCredit && keys.contains(playerSearchKey($0.creditedName)) }
         let authored = store.notes.filter { keys.contains(playerSearchKey($0.promptAuthor)) }
         return ScrollView {
             VStack(spacing: 14) {
@@ -821,6 +851,7 @@ struct GiriPlayerDetail: View {
                         }
                     }
                 }
+                if !teamAnswers.isEmpty { teamAnswersCard(teamAnswers) }
                 GiriDetailCard(title: "リンク", systemImage: "link", accentColor: AppSectionAccent.memo,
                                trailing: { GiriCardEditButton { editing = .links } }) {
                     let url = giriWebURL(player.twitterUrl)

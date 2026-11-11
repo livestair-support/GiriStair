@@ -332,8 +332,8 @@ struct GiriEventDetail: View {
                 }
             }
             // 募集期間の開始・締切（入れた時だけ）。
-            if let start = event.entryStart { detailValue("募集開始", GiriDateText.dateTime(start)) }
-            if let end = event.entryEnd { detailValue("募集締切", GiriDateText.dateTime(end)) }
+            if let start = event.entryStart { detailValue("エントリー開始", GiriDateText.dateTime(start)) }
+            if let end = event.entryEnd { detailValue("エントリー締切", GiriDateText.dateTime(end)) }
             // イベントページ・サイトのURL（どの形式でも）。
             if !event.siteUrl.isEmpty, let url = URL(string: event.siteUrl), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
                 Link(destination: url) { Label(event.siteUrl, systemImage: "globe").lineLimit(2) }

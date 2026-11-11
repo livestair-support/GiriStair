@@ -759,7 +759,7 @@ struct GiriEventEditor: View {
     private var entrySection: some View {
         Section {
             HStack(spacing: 8) {
-                GiriEventCardSectionTitle(title: "募集期間", systemImage: "calendar.badge.clock", accentColor: AppSectionAccent.ticket)
+                GiriEventCardSectionTitle(title: "エントリー期間", systemImage: "calendar.badge.clock", accentColor: AppSectionAccent.ticket)
                 if showsEntry {
                     Spacer(minLength: 8)
                     Button(role: .destructive) {
@@ -768,7 +768,7 @@ struct GiriEventEditor: View {
                         showsEntry = false
                     } label: { Image(systemName: "xmark.circle").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("募集期間を外す")
+                    .accessibilityLabel("エントリー期間を外す")
                 }
             }
             .listRowSeparator(.hidden)
@@ -798,7 +798,7 @@ struct GiriEventEditor: View {
         }
         .appEventEditorCardStyle(accentColor: AppSectionAccent.ticket)
         .sheet(item: $entryEndpoint) { endpoint in
-            GiriDateTimePickerSheet(title: endpoint == .start ? "募集開始" : "募集締切",
+            GiriDateTimePickerSheet(title: endpoint == .start ? "エントリー開始" : "エントリー締切",
                                     date: (endpoint == .start ? draft.entryStart : draft.entryEnd) ?? giriFiveMinuteRounded(Date())) { date in
                 if endpoint == .start { draft.entryStart = date } else { draft.entryEnd = date }
             }
@@ -807,12 +807,13 @@ struct GiriEventEditor: View {
 
     private var entryNotificationCaption: String {
         let preferences = store.preferences
-        guard preferences.notificationsEnabled else { return "設定で通知をオンにすると、募集開始を知らせます。" }
+        guard preferences.notificationsEnabled else { return "設定で通知をオンにすると、エントリーの開始・締切を知らせます。" }
         var parts: [String] = []
         let lead = preferences.entryLeadMinutes ?? preferences.reminderMinutes
         if preferences.entryNotifyBefore && lead > 0 { parts.append("開始の" + giriLeadText(lead) + "前") }
         if preferences.entryNotifyAtStart || (preferences.entryNotifyBefore && lead == 0) { parts.append("開始時") }
-        return parts.isEmpty ? "募集期間の通知はオフです（設定の通知で変えられます）。" : "募集の" + parts.joined(separator: "と") + "に通知します（設定の通知で変えられます）。"
+        if preferences.entryEndNotify { parts.append(lead > 0 ? "締切の" + giriLeadText(lead) + "前" : "締切時") }
+        return parts.isEmpty ? "エントリー期間の通知はオフです（設定の通知で変えられます）。" : "エントリーの" + parts.joined(separator: "と") + "に通知します（設定の通知で変えられます）。"
     }
 
     /// チーム戦（参加者の欄がない時）のリザーバー。

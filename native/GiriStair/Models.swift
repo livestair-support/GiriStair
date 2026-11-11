@@ -1054,6 +1054,8 @@ struct AppPreferences: Codable, Equatable {
     var entryLeadMinutes: Int? = nil
     /// 募集開始の時刻ちょうどの通知。
     var entryNotifyAtStart: Bool = false
+    /// 0.28：エントリー締切の前の通知（何分前かは entryLeadMinutes と同じ）。
+    var entryEndNotify: Bool = true
     /// 0.23：LiveStair のライブ通知と同じく、会（生大喜利・短考・スプシ系）の当日通知と会の前の通知を分ける。
     /// 当日通知（会の日の決まった時刻。時刻は reminderHour・reminderMinute）。
     var dayNotify: Bool = true
@@ -1072,7 +1074,7 @@ struct AppPreferences: Codable, Equatable {
 
 extension AppPreferences {
     private enum CodingKeys: String, CodingKey {
-        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder, hiddenFormats, selfAliases, mergesSelfAliases, entryNotifyBefore, entryLeadMinutes, entryNotifyAtStart, dayNotify, beforeNotify, beforeBase, beforeMinutes, deadlineBeforeNotify, deadlineLeadMinutes, deadlineAtNotify
+        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder, hiddenFormats, selfAliases, mergesSelfAliases, entryNotifyBefore, entryLeadMinutes, entryNotifyAtStart, entryEndNotify, dayNotify, beforeNotify, beforeBase, beforeMinutes, deadlineBeforeNotify, deadlineLeadMinutes, deadlineAtNotify
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1113,6 +1115,7 @@ extension AppPreferences {
         entryNotifyBefore = try c.decodeIfPresent(Bool.self, forKey: .entryNotifyBefore) ?? true
         entryLeadMinutes = try c.decodeIfPresent(Int.self, forKey: .entryLeadMinutes)
         entryNotifyAtStart = try c.decodeIfPresent(Bool.self, forKey: .entryNotifyAtStart) ?? false
+        entryEndNotify = try c.decodeIfPresent(Bool.self, forKey: .entryEndNotify) ?? true
         dayNotify = try c.decodeIfPresent(Bool.self, forKey: .dayNotify) ?? true
         beforeNotify = try c.decodeIfPresent(Bool.self, forKey: .beforeNotify) ?? true
         let base = try c.decodeIfPresent(String.self, forKey: .beforeBase) ?? "start"
@@ -1163,6 +1166,7 @@ extension AppPreferences {
         try c.encode(entryNotifyBefore, forKey: .entryNotifyBefore)
         try c.encodeIfPresent(entryLeadMinutes, forKey: .entryLeadMinutes)
         try c.encode(entryNotifyAtStart, forKey: .entryNotifyAtStart)
+        if !entryEndNotify { try c.encode(false, forKey: .entryEndNotify) }
         try c.encode(dayNotify, forKey: .dayNotify)
         try c.encode(beforeNotify, forKey: .beforeNotify)
         try c.encode(beforeBase, forKey: .beforeBase)
@@ -1200,11 +1204,13 @@ struct OnlineSite: Codable, Equatable, Identifiable {
     /// 0.28：参加している部門（"" はシングル・"tag" はタッグ）とタッグの相手。値がある時だけ書く。
     var division: String = ""
     var tagPartner: String = ""
+    /// 0.28：相手の回答を記録していないシーズンに、手で入れた相手の得票率（シーズンのキー → 値）。
+    var tagPartnerRates: [String: Double] = [:]
 }
 
 extension OnlineSite {
     private enum CodingKeys: String, CodingKey {
-        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline, ruleHistory, isPaused, seasonRuleIDs, division, tagPartner
+        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline, ruleHistory, isPaused, seasonRuleIDs, division, tagPartner, tagPartnerRates
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1243,6 +1249,7 @@ extension OnlineSite {
         seasonRuleIDs = try c.decodeIfPresent([String: String].self, forKey: .seasonRuleIDs) ?? [:]
         division = try c.decodeIfPresent(String.self, forKey: .division) ?? ""
         tagPartner = try c.decodeIfPresent(String.self, forKey: .tagPartner) ?? ""
+        tagPartnerRates = (try c.decodeIfPresent([String: Double].self, forKey: .tagPartnerRates) ?? [:]).filter { $0.value.isFinite && $0.value >= 0 }
 
         try validate()
     }
@@ -1283,6 +1290,7 @@ extension OnlineSite {
         if !seasonRuleIDs.isEmpty { try c.encode(seasonRuleIDs, forKey: .seasonRuleIDs) }
         if !division.isEmpty { try c.encode(division, forKey: .division) }
         if !tagPartner.isEmpty { try c.encode(tagPartner, forKey: .tagPartner) }
+        if !tagPartnerRates.isEmpty { try c.encode(tagPartnerRates, forKey: .tagPartnerRates) }
 
     }
 }

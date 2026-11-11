@@ -605,6 +605,10 @@ final class GiriStore: ObservableObject {
             for record in next.notes[index].answerRecords.indices where !next.notes[index].answerRecords[record].answerer.isEmpty {
                 next.notes[index].answerRecords[record].answerer = rename(next.notes[index].answerRecords[record].answerer)
             }
+            // 0.28：チーム回答の原案の人。
+            for record in next.notes[index].answerRecords.indices where !next.notes[index].answerRecords[record].drafter.isEmpty {
+                next.notes[index].answerRecords[record].drafter = rename(next.notes[index].answerRecords[record].drafter)
+            }
         }
         next.preferences.selfAliases = next.preferences.selfAliases.map(rename)
         if playerSearchKey(next.preferences.selfName) == key { next.preferences.selfName = name }
