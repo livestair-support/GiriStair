@@ -19,6 +19,9 @@ struct GiriEventDetail: View {
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
     @State private var addingToCalendar = false
+    /// 0.29：大会のルール（登録のあとでも選ぶ・作る・直す）。
+    @State private var creatingRule: GiriRule?
+    @State private var editingRule: GiriRule?
     /// 0.25：会の中の結果（ミニトナメなど）を直す・足す。
     @State private var editingSideResult: GiriSideResult?
 
@@ -42,6 +45,7 @@ struct GiriEventDetail: View {
                         participants(event.participants, title: bracket ? "トーナメント表" : "参加者", numbered: bracket)
                     }
                     teams(event)
+                    if event.meetingType == .tournament { ruleSection(event) }
                     if event.isKumiteEvent { kumiteSection(event) }
                     // 0.25：通常会・企画の中のミニトナメ・ミニ組手・総当たりなどの結果（戦績・集計には入れない）。
                     // 0.27：基本情報で「対戦がある」にした会と、もう結果を入れた会だけに出す。
@@ -225,6 +229,43 @@ struct GiriEventDetail: View {
             }
             // 0.19：大会を足すのは、戦績の結果の入力（この会の中の大会）から。
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
+    /// 0.29：大会のルール。選んだルールの中身をそのまま見せ、ここから選ぶ・作る・直すができる。
+    private func ruleSection(_ event: GiriEvent) -> some View {
+        let rule = event.ruleID.flatMap { store.rule($0) }
+        return Section {
+            GiriEventCardSectionTitle(title: "ルール", systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.ticket)
+                .listRowSeparator(.hidden)
+            HStack(spacing: 8) {
+                Text("ルール").foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                GiriRuleMenuPicker(kind: event.eventFormat.isOnline ? .online : .live, scope: .tournament, selectedID: event.ruleID,
+                                   onSelect: { setRule($0, for: event) },
+                                   onCreate: { creatingRule = giriRule(from: event) })
+            }
+            if let rule {
+                GiriRuleDetailRows(rule: rule)
+                Button("このルールを直す", systemImage: "square.and.pencil") { editingRule = rule }
+                    .buttonStyle(.borderless).font(.subheadline).tint(accentActionColor)
+            } else {
+                Text("ルールを選ぶか作ると、段階・勝ち抜け・審査方法などをここで見られます。").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .appEventDetailCardStyle(accentColor: AppSectionAccent.ticket)
+        .sheet(item: $creatingRule) { rule in
+            NavigationStack { GiriRuleEditor(rule: rule, isNew: true) { saved in setRule(saved.id, for: event, saved: saved) } }
+        }
+        .sheet(item: $editingRule) { rule in NavigationStack { GiriRuleEditor(rule: rule) } }
+    }
+
+    private func setRule(_ id: String?, for event: GiriEvent, saved: GiriRule? = nil) {
+        guard var current = store.events.first(where: { $0.id == event.id }) else { return }
+        if let id, let rule = saved ?? store.rule(id) { giriApplyRule(rule, to: &current) } else { current.ruleID = nil }
+        store.run {
+            try store.saveEvent(current)
+            playLiveStairSaveFeedback()
+        }
     }
 
     private func basic(_ event: GiriEvent) -> some View {

@@ -771,12 +771,18 @@ struct GiriRuleEditor: View {
             defer { reading = false; photo = nil }
             do {
                 guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
-                let text = try await GiriParticipantOCR.recognize(data)
+                // 0.29：ツイプラなどの縦に長いページは、縦に分けて読む（小さい文字も読めるように）。
+                let lines = try await GiriParticipantOCR.recognizeLines(data)
+                let text = giriOCRText(lines)
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw GiriParticipantReadError.noText }
                 let result = giriRuleReadingText(text, into: draft)
-                guard !result.found.isEmpty else { throw GiriParticipantReadError.noText }
-                draft = result.rule
                 selectedStageID = nil
-                readSummary = result.found.joined(separator: "・") + " を入れました。違う所は直してから保存してください。"
+                if result.found.isEmpty {
+                    readSummary = "ルールの項目（日程・段階・勝ち抜けなど）は見つかりませんでした。ルールの説明が写っている部分の画像で試してください。"
+                } else {
+                    draft = result.rule
+                    readSummary = result.found.joined(separator: "・") + " を入れました。違う所は直してから保存してください。"
+                }
             } catch {
                 store.errorMessage = error.localizedDescription
             }
@@ -879,6 +885,110 @@ struct GiriRuleMenuPicker: View {
             }
             .font(.subheadline)
             .foregroundStyle(Color.primary)
+        }
+    }
+}
+
+// MARK: - 0.29 ルールの中身（登録・詳細・読み取りの確認で同じ書き方にする）
+
+/// ルールの中身を、ルールの編集画面で入れた項目と同じ順に並べて見せる。
+struct GiriRuleDetailRows: View {
+    let rule: GiriRule
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            line("種類", rule.kind.title + "・" + rule.effectiveScope.title)
+            if rule.effectiveScope == .tournament {
+                line("参加形式", rule.tournamentFormat.title)
+                if rule.kind == .live && rule.knockout { line("対戦形式", "トーナメント（1対1）") }
+                if let style = rule.teamAnswerStyle, let title = GiriRule.teamAnswerStyles.first(where: { $0.value == style })?.title { line("チームの回答", title) }
+                if rule.hasMemberChanges { line("メンバー", "途中で変わる") }
+            }
+            if !rule.judging.isEmpty { line("審査方法", rule.judging) }
+            if rule.kind == .online {
+                line("日程", (rule.effectiveScope == .regular ? rule.timing.title + "・" : "") + "投稿\(rule.submissionDays)日・投票\(rule.votingDays)日")
+                if let count = rule.regularCycleCount { line("1シーズン", "全\(count)回") }
+            }
+            if let days = rule.entryDays {
+                line("エントリー", "\(days)日" + (rule.capacity.map { "・定員\($0)人" } ?? ""))
+            }
+            if !rule.entryNote.isEmpty { note(rule.entryNote) }
+            if !rule.stages.isEmpty {
+                heading("大会の流れ")
+                ForEach(Array(rule.stages.enumerated()), id: \.element.id) { index, stage in
+                    stageLine(index, stage)
+                }
+            }
+            if !rule.leagueDetails.isEmpty || !rule.leagues.isEmpty {
+                heading("リーグ")
+                ForEach(rule.leagues, id: \.self) { name in
+                    let detail = rule.leagueDetail(name)
+                    line(name, detail.summary.isEmpty ? "決まりなし" : detail.summary)
+                }
+            }
+            if let tag = rule.tagDivision {
+                heading(tag.name + "部門")
+                note(tag.summary)
+                ForEach(rule.leagues, id: \.self) { name in
+                    let detail = tag.leagueDetail(name)
+                    if !detail.summary.isEmpty { line(name, detail.summary) }
+                }
+                if !tag.tieBreak.isEmpty { note(tag.tieBreak) }
+                if !tag.formationNote.isEmpty { note(tag.formationNote) }
+            }
+            if rule.usesScoring {
+                heading("成績の出し方")
+                line("順位の決め方", rule.scoring.title)
+                if rule.scoring == .topRequired, let required = rule.requiredAnswerCount { line("規定回答数", "\(required)回答") }
+                if let advance = giriAdvanceText(count: rule.advanceCount, fraction: rule.advanceFraction) { line("勝ち抜け", advance) }
+                if !rule.tieBreak.isEmpty { line("同率の時", rule.tieBreak) }
+                if let bonus = rule.voteBonusPoints { line("投票ボーナス", "\(bonus)点") }
+            }
+            if !rule.specialPlans.isEmpty {
+                heading("プレーオフ・入れ替え戦など")
+                ForEach(rule.specialPlans) { plan in line(plan.displayTitle, plan.detailText) }
+            }
+            if !rule.memo.isEmpty { note(rule.memo) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func heading(_ title: String) -> some View {
+        Text(title).font(.subheadline.weight(.bold)).foregroundStyle(AppSectionAccent.ticket).padding(.top, 4)
+    }
+
+    private func line(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                .frame(minWidth: 72, alignment: .leading)
+            Text(value).font(.subheadline).foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .trailing).multilineTextAlignment(.trailing)
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func stageLine(_ index: Int, _ stage: GiriRuleStage) -> some View {
+        let name = stage.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (stage.stageKind?.title ?? "段階") : stage.name
+        let details = [stage.lineup.isEmpty ? nil : stage.lineup,
+                       stage.judging.isEmpty ? nil : stage.judging,
+                       stage.promptCount.map { "お題\($0)問" },
+                       stage.advanceText.map { $0 + "が勝ち抜け" },
+                       stage.advanceNote.isEmpty ? nil : stage.advanceNote,
+                       rule.hasMemberChanges ? stage.memberChangeText : nil].compactMap { $0 }
+        return HStack(alignment: .top, spacing: 10) {
+            Text("\(index + 1)").font(.caption.weight(.bold)).monospacedDigit()
+                .foregroundStyle(AppSectionAccent.ticket)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(AppSectionAccent.ticket.opacity(0.14)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(.subheadline.weight(.semibold))
+                if !details.isEmpty {
+                    Text(details.joined(separator: "・")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 }

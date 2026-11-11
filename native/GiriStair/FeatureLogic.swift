@@ -1090,6 +1090,13 @@ func giriOCRNameKey(_ value: String) -> String {
     })
 }
 
+/// 0.29：名前の文字（ひらがな・カタカナ・漢字）か。
+func giriIsNameLetter(_ character: Character) -> Bool {
+    character.unicodeScalars.contains { scalar in
+        (0x3041...0x30FF).contains(scalar.value) || (0x4E00...0x9FFF).contains(scalar.value) || (0x3400...0x4DBF).contains(scalar.value)
+    }
+}
+
 /// 2つの名前の近さ（0〜1）。文字の置き換え・抜け・増えを1文字ずつ数える。
 func giriNameSimilarity(_ first: String, _ second: String) -> Double {
     let a = Array(first), b = Array(second)
@@ -1120,6 +1127,15 @@ func giriMatchRegisteredName(_ text: String, truncated: Bool = false, known: [St
     // 0.26：名前の後ろに付けた「(〇〇)」「【〇〇】」などを外した名前が登録されていれば、その人にする。
     let base = giriNameWithoutTrailingNote(text)
     if base != text, let hit = index.first(where: { $0.1 == giriOCRNameKey(base) && !$0.1.isEmpty }) { return hit.0 }
+    // 0.29：登録した名前がそのまま入っている時（名前の前後に絵文字・記号・「大喜利垢」などを付けた人）は、その人にする。
+    // 1文字だけ多い（「はるかぜ」と「はるか」）時は別の人のことがあるので、余りが記号だけの時に限る。
+    if let hit = index.filter({ $0.1.count >= 2 && $0.1 != key && key.contains($0.1) }).max(by: { $0.1.count < $1.1.count }),
+       let range = key.range(of: hit.1) {
+        var leftover = key
+        leftover.removeSubrange(range)
+        let letters = leftover.filter(giriIsNameLetter)
+        if leftover.count >= 2 || letters.isEmpty { return hit.0 }
+    }
     for drop in 1...2 where key.count - drop >= 2 {
         let rest = String(key.dropFirst(drop))
         if let hit = index.first(where: { $0.1 == rest }) { return hit.0 }
@@ -1380,6 +1396,12 @@ struct GiriEventPageDraft: Equatable, Identifiable {
     var listedParticipantCount: Int? = nil
     /// 0.28：ページの書き方から推した会の種類（"tournament"・"kumite"・"project"・"show"。分からなければ nil）。
     var meetingKind: String? = nil
+    /// 0.29：タッグ・チーム戦（大会の時）。分からなければ nil。
+    var tournamentFormat: TournamentFormat? = nil
+    /// 0.29：説明やコメントに書いてあるチーム（タッグ）の名前とメンバー。
+    var teams: [GiriEventPageTeam] = []
+    /// 0.29：説明に書いてある大会のルール（段階など）。読めなければ nil。
+    var rule: GiriRule? = nil
     var recognizedText = ""
 
     var hasBasicInfo: Bool {
@@ -1502,6 +1524,11 @@ func giriSplitVenueRoom(_ raw: String, venues: [String]) -> (venue: String, room
         let rest = String(text.dropFirst(min(text.count, registered.count))).trimmingCharacters(in: .whitespacesAndNewlines)
         if playerSearchKey(String(text.prefix(registered.count))) == playerSearchKey(registered) { return (registered, rest) }
     }
+    // 0.29：登録した会場の名前が途中にある時（前に施設の運営名などが付いた時）も、その会場にする。
+    if let inside = venues.filter({ playerSearchKey($0).count >= 2 && compact.contains(playerSearchKey($0)) }).max(by: { $0.count < $1.count }),
+       let range = text.range(of: inside) {
+        return (inside, String(text[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines))
+    }
     // 施設名の終わり（センター・公民館・会館など）の後ろを部屋にする。部屋は空白の後か、
     // 番号・「室」「階」などで始まる・終わる時だけ（「カフェ＆バー」を分けない）。
     let facility = #"^(.*(センター|公民館|会館|市民館|区民館|コミュニティ|プラザ|ホール|会議所|ビル|カフェ|スタジオ|劇場|図書館|学習館|交流館))(\s*)(\S.*)?$"#
@@ -1543,6 +1570,7 @@ private func giriIsEventPageNoise(_ text: String) -> Bool {
 /// イベントページの画面（ツイプラなど）から、会の名前・日付・時刻・会場・主催・参加費・参加者を読む。
 /// 特定のサイトの決まった位置ではなく、日付の近くの大きい文字・項目名・時刻の書き方から判断する。
 func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String], organizers: [String] = [],
+                        venueRooms: [String: [String]] = [:], venueAddresses: [String: String] = [:],
                         now: Date = Date(), calendar: Calendar = .current) -> GiriEventPageDraft {
     let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }
     var draft = GiriEventPageDraft()
@@ -1622,8 +1650,119 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     draft.start = times.compactMap(\.start).first ?? times.compactMap(\.rangeStart).first
         ?? dateIndex.flatMap { times[$0].lone.first }
     draft.end = times.compactMap(\.end).first ?? times.compactMap(\.rangeEnd).first ?? times.compactMap(\.teardown).first
-    draft.meetingKind = giriInferredMeetingKind(title: draft.title, text: info.map(\.text).joined(separator: "\n"))
+    // 0.29：会の種類は、会の名前とページの上の方（タイトルのまわり）の書き方から推す。
+    let head = info.prefix(10).map(\.text).joined(separator: " ")
+    draft.meetingKind = giriInferredMeetingKind(title: draft.title + " " + head, text: info.map(\.text).joined(separator: "\n"))
+    // 0.29：会場は1つなので、登録した会場の名前（なければ住所）がページのどこかにあれば、それを使う。
+    if let venue = giriRegisteredVenue(in: info.map(\.text), venues: venues, addresses: venueAddresses) {
+        if playerSearchKey(venue) != playerSearchKey(draft.venue) {
+            draft.venue = venue
+            draft.venueRoom = ""
+        }
+        if let room = giriRegisteredRoom(in: info.map(\.text), rooms: venueRooms[venue] ?? []) { draft.venueRoom = room }
+    }
+    let allText = sorted.map(\.text)
+    draft.tournamentFormat = giriInferredTournamentFormat(title: draft.title + " " + head, lines: allText)
+    if draft.tournamentFormat != nil && draft.meetingKind == nil { draft.meetingKind = "tournament" }
+    // チーム（タッグ）の名前とメンバーは、説明とコメント欄（ページ全体）から読む。
+    draft.teams = giriEventPageTeams(allText, known: known)
+    if !draft.teams.isEmpty && draft.tournamentFormat == nil {
+        draft.tournamentFormat = draft.teams.allSatisfy { $0.members.count == 2 } ? .pair : .team
+    }
+    // ルール：番号付きの段階や「ルール」の見出しがある説明から読む。
+    let ruleLines = giriEventPageRuleLines(info.map(\.text))
+    if !ruleLines.isEmpty {
+        var base = GiriRule(kind: .live, scope: .tournament)
+        base.name = draft.title.isEmpty ? "読み取ったルール" : draft.title
+        if let format = draft.tournamentFormat { base.tournamentFormat = format }
+        let read = giriRuleReadingText(ruleLines.joined(separator: "\n"), into: base)
+        if !read.rule.stages.isEmpty || read.rule.knockout { draft.rule = read.rule }
+    }
     return draft
+}
+
+/// 0.29：チーム（タッグ）の名前とメンバー。
+struct GiriEventPageTeam: Equatable, Identifiable {
+    var id = UUID().uuidString
+    var name = ""
+    var members: [String] = []
+}
+
+/// 0.29：タイトルのまわりに「タッグ」「チーム戦」などとあれば、その参加形式。
+func giriInferredTournamentFormat(title: String, lines: [String]) -> TournamentFormat? {
+    if title.contains("タッグ") || title.contains("コンビ") || title.contains("ペア") { return .pair }
+    if title.contains("チーム") || title.contains("団体") { return .team }
+    if lines.contains(where: { $0.contains("チーム戦") || $0.contains("団体戦") }) { return .team }
+    if lines.contains(where: { $0.contains("タッグ戦") || $0.contains("タッグで参加") || $0.contains("タッグを組") }) { return .pair }
+    return nil
+}
+
+/// 0.29：説明のうちルールの部分（「ルール」の見出しから、または番号付きの段階のあたり）。
+func giriEventPageRuleLines(_ lines: [String]) -> [String] {
+    if let start = lines.firstIndex(where: { $0.contains("ルール") && $0.count <= 20 }) {
+        return Array(lines[start...])
+    }
+    let circled = "①②③④⑤⑥⑦⑧⑨⑩"
+    if lines.filter({ $0.first.map { circled.contains($0) } ?? false }).count >= 2 { return lines }
+    return []
+}
+
+/// 名前の区切り（「A・B」「A&B」「A×B」など）。
+private let giriTeamMemberSeparators = CharacterSet(charactersIn: "・&＆×/／、,，+＋")
+
+/// 「A・B」をメンバーの名前に分ける（登録済みの名前に合わせる）。2人以上の時だけ。
+private func giriTeamMembers(_ text: String, known: [String]) -> [String] {
+    let parts = text.components(separatedBy: giriTeamMemberSeparators)
+        .flatMap { $0.components(separatedBy: " と ") }
+        .map { giriCleanParticipantText($0).name.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && $0.count <= 20 }
+    // 「8人2ブロック 3名×16」のような人数・時間の書き方は名前にしない。
+    let looksLikeCount = parts.contains { $0.range(of: #"^[0-9０-９]+$|[0-9０-９]+\s*(?:人|名|組|ブロック|分|秒|点|票|円)"#, options: .regularExpression) != nil }
+    guard parts.count >= 2, !looksLikeCount else { return [] }
+    var seen = Set<String>()
+    return parts.map { giriMatchRegisteredName($0, known: known) ?? $0 }.filter { seen.insert(playerSearchKey($0)).inserted }
+}
+
+/// 0.29：説明・コメントに書いてあるチーム（タッグ）。
+/// 「チーム名：〇〇」（同じ行か次の行にメンバー）、「【〇〇】A・B」、「〇〇（A・B）」の書き方を読む。
+func giriEventPageTeams(_ rawLines: [String], known: [String]) -> [GiriEventPageTeam] {
+    let lines = rawLines.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    var teams: [GiriEventPageTeam] = []
+    var seen = Set<String>()
+    func add(_ name: String, _ members: [String]) {
+        let title = name.trimmingCharacters(in: CharacterSet(charactersIn: " 　「」『』【】[]：:"))
+        guard !title.isEmpty, title.count <= 24, !members.isEmpty,
+              title.range(of: #"^[①-⑳0-9０-９]"#, options: .regularExpression) == nil,
+              seen.insert(playerSearchKey(title)).inserted else { return }
+        teams.append(GiriEventPageTeam(name: title, members: members))
+    }
+    for (index, line) in lines.enumerated() {
+        // 「チーム名：〇〇」「タッグ名「〇〇」」
+        if let groups = giriRegexGroups(#"(?:チーム名|タッグ名|コンビ名|ユニット名)\s*[:：]?\s*[「『【]?([^」』】\s（(]+)[」』】]?(.*)$"#, in: line).first {
+            var rest = groups[2]
+            if let memberPart = giriRegexGroups(#"メンバー\s*[:：]?\s*(.+)$"#, in: rest).first { rest = memberPart[1] }
+            rest = rest.trimmingCharacters(in: CharacterSet(charactersIn: " 　（()）"))
+            var members = giriTeamMembers(rest, known: known)
+            if members.isEmpty, index + 1 < lines.count {
+                var next = lines[index + 1]
+                if let memberPart = giriRegexGroups(#"メンバー\s*[:：]?\s*(.+)$"#, in: next).first { next = memberPart[1] }
+                members = giriTeamMembers(next, known: known)
+            }
+            add(groups[1], members)
+            continue
+        }
+        // 「【〇〇】A・B」
+        if let groups = giriRegexGroups(#"^[【「『]([^】」』]{1,20})[】」』]\s*(.+)$"#, in: line).first {
+            let members = giriTeamMembers(groups[2], known: known)
+            if !members.isEmpty { add(groups[1], members); continue }
+        }
+        // 「〇〇（A・B）」
+        if let groups = giriRegexGroups(#"^([^（(]{1,20})[（(]([^）)]+)[）)]\s*$"#, in: line).first {
+            let members = giriTeamMembers(groups[2], known: known)
+            if !members.isEmpty { add(groups[1], members) }
+        }
+    }
+    return teams
 }
 
 /// 0.28：会の種類の表示名。
@@ -2702,6 +2841,9 @@ func giriMergedPlayer(_ target: GiriPlayer, with candidate: GiriPlayer, oldName:
     var seen: Set<String> = [playerSearchKey(merged.name), playerSearchKey(oldName)]
     merged.aliases = (target.aliases + candidate.aliases).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    // 0.29：Xのアカウントも両方残す（同じIDは1つ）。
+    var handles = Set(target.xAccounts.map { playerSearchKey($0.cleanHandle + "|" + $0.displayName) })
+    merged.xAccounts = target.xAccounts + candidate.xAccounts.filter { handles.insert(playerSearchKey($0.cleanHandle + "|" + $0.displayName)).inserted }
     return merged
 }
 
@@ -2927,8 +3069,14 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
             else if line.contains("勝ち抜け") || line.contains("通過") || line.contains("勝ち上がり"), let value = fraction(in: line) { stage.advanceFraction = value; stage.advanceCount = nil }
             if let index = stages.firstIndex(where: { $0.name == name }) { stages[index] = stage } else { stages.append(stage) }
         }
+        // 0.29：「①予選（8人2ブロック）」「2. 本戦」のように番号を付けて並べた段階を先に読む。
+        // 段階の下の行（次の番号まで）にある審査方法・上位○名・お題の数も、その段階に入れる。
+        let numbered = giriNumberedRuleStages(lines)
+        if numbered.count >= 2 {
+            stages = numbered
+        }
         // 「1〜4回戦、準決勝、決勝。準決勝だけタイマン」のように、文の区切りごとに段階と形式を読む。
-        let segments = lines.flatMap { $0.components(separatedBy: CharacterSet(charactersIn: "、。,，・→⇒>＞")) }
+        let segments = numbered.count >= 2 ? [] : lines.flatMap { $0.components(separatedBy: CharacterSet(charactersIn: "、。,，・→⇒>＞")) }
             .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         for line in segments {
             for groups in giriRegexGroups(#"([0-9]+)\s*〜\s*([0-9]+)\s*回戦"#, in: line) {
@@ -2957,7 +3105,15 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
             rule.stages = stages
             found.append("大会の流れ（" + stages.map(\.name).joined(separator: "→") + "）")
         }
-        if lines.contains(where: { $0.contains("チーム戦") }) { rule.tournamentFormat = .team; found.append("チーム戦") }
+        if lines.contains(where: { $0.contains("チーム戦") || $0.contains("団体戦") }) { rule.tournamentFormat = .team; found.append("チーム戦") }
+        else if lines.contains(where: { $0.contains("タッグ") }) { rule.tournamentFormat = .pair; found.append("タッグ戦") }
+        // 0.29：「タイマントーナメント」など1対1の勝ち抜き（生大喜利）。
+        if rule.kind == .live, lines.contains(where: { $0.contains("タイマン") && $0.contains("トーナメント") }) { rule.knockout = true; found.append("トーナメント（1対1）") }
+        // 0.29：大会全体の審査方法（段階ごとに書いていない時）。
+        if rule.judging.isEmpty, let judging = lines.lazy.compactMap({ giriRuleJudgingText($0) }).first {
+            rule.judging = judging
+            found.append("審査方法")
+        }
     }
     var seen = Set<String>()
     return (rule, found.filter { seen.insert($0).inserted })
@@ -3046,4 +3202,117 @@ func giriLastTagPartner(site: OnlineSite, events: [GiriEvent]) -> String {
     let latest = events.filter { $0.onlineSiteId == site.id && !$0.tagPartner.isEmpty }
         .max { ($0.effectiveRounds.compactMap(\.submissionStart).min() ?? $0.createdAt) < ($1.effectiveRounds.compactMap(\.submissionStart).min() ?? $1.createdAt) }
     return latest?.tagPartner ?? site.tagPartner
+}
+
+
+// MARK: - 0.29 番号付きの段階・審査方法の読み取り
+
+/// 段階ではない番号付きの項目（進行の説明など）。
+private let giriNonStageWords = ["祝福", "撤収", "休憩", "受付", "開場", "乾杯", "表彰", "閉会", "開会", "挨拶", "注意", "募集", "参加費", "会場", "日時", "定員", "懇親", "集合", "解散", "説明", "抽選"]
+
+/// 審査方法の書き方（「印象審査（3票振り分け）」など）。なければ nil。
+func giriRuleJudgingText(_ line: String) -> String? {
+    let text = giriHalfwidthDigits(line)
+    guard let groups = giriRegexGroups(#"(印象審査|拍手審査|挙手審査|加点審査|超加点審査|超加点|審査員審査|投票審査|拍手|挙手)\s*(?:[（(]([^）)]{1,20})[）)])?"#, in: text).first else { return nil }
+    return groups[2].isEmpty ? groups[1] : groups[1] + "（" + groups[2] + "）"
+}
+
+/// 「①ウォーミングアップ（8人4ブロック 3分）」「2. 予選」のように番号を付けて並べた段階。
+/// 番号の後ろの名前を段階の名前、括弧の中を形式にし、次の番号までの行の審査方法・上位○名・お題の数を入れる。
+func giriNumberedRuleStages(_ rawLines: [String]) -> [GiriRuleStage] {
+    let lines = rawLines.map { giriHalfwidthDigits($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    let circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+    var stages: [GiriRuleStage] = []
+    var current: Int? = nil
+    for line in lines {
+        var header: (name: String, detail: String)? = nil
+        if let first = line.first, circled.contains(first) {
+            let rest = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
+            header = giriSplitStageHeader(rest)
+        } else if let groups = giriRegexGroups(#"^(?:[0-9]{1,2}\s*[.．)）]|[（(][0-9]{1,2}[）)])\s*(.+)$"#, in: line).first {
+            header = giriSplitStageHeader(groups[1])
+        }
+        if let header {
+            let name = header.name
+            if name.isEmpty || name.count > 16 || giriNonStageWords.contains(where: { name.contains($0) }) {
+                current = nil
+                continue
+            }
+            var stage = GiriRuleStage(name: name, kind: giriInferredStageKind(name).rawValue)
+            stage.lineup = header.detail
+            giriFillStageDetails(&stage, from: header.detail)
+            stages.append(stage)
+            current = stages.count - 1
+            continue
+        }
+        guard let index = current else { continue }
+        giriFillStageDetails(&stages[index], from: line)
+    }
+    return stages
+}
+
+/// 「予選（8人2ブロック）」を名前と括弧の中に分ける。
+private func giriSplitStageHeader(_ text: String) -> (name: String, detail: String) {
+    let value = text.trimmingCharacters(in: .whitespaces)
+    if let groups = giriRegexGroups(#"^([^（(【\[]+?)\s*[（(【\[]([^）)】\]]*)[）)】\]]"#, in: value).first {
+        return (groups[1].trimmingCharacters(in: .whitespaces), groups[2].trimmingCharacters(in: .whitespaces))
+    }
+    // 括弧がない時は、最初の区切り（空白・読点・コロン）までを名前にする。
+    let name = value.split(whereSeparator: { " 　、。:：".contains($0) }).first.map(String.init) ?? value
+    return (name, "")
+}
+
+/// 段階の説明の行から、審査方法・勝ち抜け・お題の数を入れる（まだ入れていない所だけ）。
+private func giriFillStageDetails(_ stage: inout GiriRuleStage, from line: String) {
+    if stage.judging.isEmpty, let judging = giriRuleJudgingText(line) { stage.judging = judging }
+    if stage.advanceCount == nil, let groups = giriRegexGroups(#"(各組|各ブロック|ブロック|組)?\s*上位\s*([0-9]+)\s*(?:名|人|組|チーム)"#, in: line).first,
+       let count = Int(groups[2]) {
+        stage.advanceCount = count
+        if !groups[1].isEmpty && stage.advanceNote.isEmpty { stage.advanceNote = "各組上位\(count)" }
+    }
+    if stage.promptCount == nil, let groups = giriRegexGroups(#"お題\s*([0-9]+)\s*(?:問|題)"#, in: line).first, let count = Int(groups[1]) {
+        stage.promptCount = count
+    }
+    if stage.lineup.isEmpty || !stage.lineup.contains("タイマン") {
+        if line.contains("タイマン") || line.contains("1対1") { stage.lineup = stage.lineup.isEmpty ? "タイマン（1対1）" : stage.lineup + "・タイマン" }
+    }
+}
+
+
+/// 0.29：読み取った行を上から順に1つの文にする（同じ高さの行は左から）。
+func giriOCRText(_ lines: [GiriOCRLine]) -> String {
+    lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }.map(\.text).joined(separator: "\n")
+}
+
+
+// MARK: - 0.29 登録した会場・部屋の照合
+
+/// 住所の照合に使う部分（都道府県を外し、番地の数字より前の「〇〇区〇〇町」まで）。短すぎる時は nil。
+func giriAddressKey(_ address: String) -> String? {
+    var value = playerSearchKey(giriHalfwidthDigits(address))
+    if let range = value.range(of: #"^(東京都|北海道|(京都|大阪)府|.{2,3}県)"#, options: .regularExpression) { value.removeSubrange(range) }
+    if let digit = value.firstIndex(where: { $0.isNumber }) { value = String(value[..<digit]) }
+    value = value.trimmingCharacters(in: CharacterSet(charactersIn: "丁目番地号-"))
+    return value.count >= 4 ? value : nil
+}
+
+/// ページの文に、登録した会場の名前（長い方を優先）か住所があれば、その会場。
+func giriRegisteredVenue(in lines: [String], venues: [String], addresses: [String: String] = [:]) -> String? {
+    let text = playerSearchKey(giriHalfwidthDigits(lines.joined(separator: " ")))
+    if let hit = venues.filter({ playerSearchKey($0).count >= 2 && text.contains(playerSearchKey($0)) }).max(by: { playerSearchKey($0).count < playerSearchKey($1).count }) {
+        return hit
+    }
+    // 少し違う名前で書いてある時は、住所で照合する（1つに決まる時だけ）。
+    let byAddress = addresses.compactMap { name, address -> String? in
+        guard let key = giriAddressKey(address), text.contains(key) else { return nil }
+        return name
+    }
+    return byAddress.count == 1 ? byAddress[0] : nil
+}
+
+/// ページの文に、その会場に登録した部屋（長い方を優先）があれば、その部屋。
+func giriRegisteredRoom(in lines: [String], rooms: [String]) -> String? {
+    let text = playerSearchKey(giriHalfwidthDigits(lines.joined(separator: " ")))
+    return rooms.filter { playerSearchKey(giriHalfwidthDigits($0)).count >= 2 && text.contains(playerSearchKey(giriHalfwidthDigits($0))) }
+        .max { $0.count < $1.count }
 }

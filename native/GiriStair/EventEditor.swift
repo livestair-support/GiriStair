@@ -42,6 +42,9 @@ struct GiriEventEditor: View {
     @State private var entryEndpoint: GiriEntryEndpoint?
     /// 0.23：今の大会の形式から作るルール（シートで開く）。
     @State private var creatingRule: GiriRule?
+    /// 0.29：イベントページから読み取ったルール（保存する時にルール一覧へ登録してこの大会に選ぶ）。
+    @State private var pendingRule: GiriRule?
+    @State private var editingRule: GiriRule?
 
     init(event: GiriEvent? = nil, onSaved: (() -> Void)? = nil) {
         self.event = event
@@ -251,6 +254,8 @@ struct GiriEventEditor: View {
                 if showsParticipantSection { participantSection }
                 if draft.meetingType == .tournament { teamSections }
                 if showsReserves && !showsParticipantSection { reserveSection }
+                // 0.29：大会のルールは参加者の後ろで選ぶ・作る（中身もここで見る）。
+                if draft.meetingType == .tournament { ruleSection }
                 // 応募の日程は参加者の下。入れる時だけ欄を出す。
                 entrySection
                 if draft.eventFormat.hasOnlineRounds { scheduleSections }
@@ -386,8 +391,11 @@ struct GiriEventEditor: View {
             if let event { navigation.markEditor(event.id, unsaved: false) }
             dismiss()
         }
+        .sheet(item: $editingRule) { rule in
+            NavigationStack { GiriRuleEditor(rule: rule) { saved in applyLiveRule(saved.id, saved: saved) } }
+        }
         .sheet(item: $creatingRule) { rule in
-            NavigationStack { GiriRuleEditor(rule: rule, isNew: true) { saved in applyLiveRule(saved.id, saved: saved) } }
+            NavigationStack { GiriRuleEditor(rule: rule, isNew: true) { saved in pendingRule = nil; applyLiveRule(saved.id, saved: saved) } }
         }
     }
 
@@ -439,13 +447,40 @@ struct GiriEventEditor: View {
         }
     }
 
+    /// 0.29：大会のルール。保存したルールを選ぶか、この大会の形から作る。選んだルールの中身も見せる。
+    private var ruleSection: some View {
+        Section {
+            GiriEventCardSectionTitle(title: "ルール", systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.ticket)
+                .listRowSeparator(.hidden)
+            liveRuleRow
+            if let pending = pendingRule {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("ページから読み取ったルール（保存する時にルール一覧へ登録します）").font(.caption).foregroundStyle(.secondary)
+                    GiriRuleDetailRows(rule: pending)
+                }
+                HStack(spacing: 16) {
+                    Button("直す") { creatingRule = pending }
+                    Button("使わない", role: .destructive) { pendingRule = nil }
+                    Spacer(minLength: 0)
+                }
+                .buttonStyle(.borderless).font(.subheadline)
+            } else if let rule = draft.ruleID.flatMap({ store.rule($0) }) {
+                GiriRuleDetailRows(rule: rule)
+                Button("このルールを直す", systemImage: "square.and.pencil") { editingRule = rule }
+                    .buttonStyle(.borderless).font(.subheadline).tint(accentActionColor)
+            } else {
+                Text("ルールを選ぶと、段階・勝ち抜け・審査方法などをまとめて入れられます。").font(.caption).foregroundStyle(.secondary)
+            }
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.ticket)
+    }
+
     private var liveRuleRow: some View {
         HStack(spacing: 8) {
             GiriEditorLabel("ルール")
             Spacer(minLength: 8)
             // 0.27：ネットの大会はネット大喜利の「大会」のルール、生・スプシ系は生大喜利・スプシ系のルール。
             GiriRuleMenuPicker(kind: draft.eventFormat.isOnline ? .online : .live, scope: .tournament, selectedID: draft.ruleID,
-                               onSelect: { applyLiveRule($0) },
+                               onSelect: { pendingRule = nil; applyLiveRule($0) },
                                onCreate: { creatingRule = giriRule(from: draft) })
         }
     }
@@ -521,6 +556,9 @@ struct GiriEventEditor: View {
         readingEventPage = true
         let known = giriParticipantKnownNames(store)
         let venues = store.venueDirectory.map(\.name)
+        // 0.29：会場の部屋（登録した部屋と、これまでに使った部屋）と住所も照合に使う。
+        let venueRooms = Dictionary(store.venueDirectory.map { ($0.name, store.rooms(forVenue: $0.name)) }, uniquingKeysWith: { first, _ in first })
+        let venueAddresses = Dictionary(store.venueDirectory.filter { !$0.mapAddress.isEmpty }.map { ($0.name, $0.mapAddress) }, uniquingKeysWith: { first, _ in first })
         var organizers = store.playerDirectory.map(\.name)
         organizers.append(contentsOf: store.groupDirectory.map(\.name))
         let current = participants
@@ -528,7 +566,8 @@ struct GiriEventEditor: View {
             do {
                 guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
                 let lines = try await GiriParticipantOCR.recognizeLines(data)
-                var page = giriEventPageDraft(lines: lines, known: known, venues: venues, organizers: organizers)
+                var page = giriEventPageDraft(lines: lines, known: known, venues: venues, organizers: organizers,
+                                              venueRooms: venueRooms, venueAddresses: venueAddresses)
                 page.participants = giriMarkingAlreadyAdded(giriResolvingAliases(page.participants, store: store),
                                                             existing: giriResolvedNames(current, store: store))
                 guard page.hasBasicInfo || !page.participants.isEmpty else { throw GiriParticipantReadError.noText }
@@ -558,11 +597,31 @@ struct GiriEventEditor: View {
         value.organizer = Self.merged(value.organizer, page.organizer, replace: replace)
         if let fee = page.fee, replace || value.entryFee == nil { value.entryFee = fee }
         // 0.28：会の種類は、新しく登録する時（まだ通常のまま）か置き換える時だけ入れる。
-        if let kind = page.meetingKind, replace || (event == nil && value.meetingType == .casual && !value.isProject && !value.isKumite && !value.isLiveShow) {
+        // 0.29：確認画面で選び直した種類（通常を含む）を入れる。
+        if replace || (event == nil && value.meetingType == .casual && !value.isProject && !value.isKumite && !value.isLiveShow) {
+            let kind = page.meetingKind ?? "casual"
             value.meetingType = kind == "tournament" ? .tournament : .casual
             value.isProject = kind == "project" && value.eventFormat.allowsProject
             value.isKumite = kind == "kumite" && value.eventFormat.allowsProject
             value.isLiveShow = kind == "show" && value.eventFormat == .live
+        }
+        // 0.29：タッグ・チーム戦と、説明やコメントに書いてあったチーム。
+        if value.meetingType == .tournament, let format = page.tournamentFormat, replace || value.tournamentFormat == .individual {
+            value.tournamentFormat = format
+            if format == .pair { value.teamSize = 2 }
+        }
+        if value.meetingType == .tournament && value.tournamentFormat != .individual && !page.teams.isEmpty && (replace || value.teams.allSatisfy { $0.members.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } }) {
+            value.teams = page.teams.map { team in
+                GiriTeam(name: team.name, members: team.members, isMine: team.members.contains { store.preferences.isSelf($0) })
+            }
+            if let mine = value.teams.first(where: \.isMine) { value.myTeamId = mine.id }
+        }
+        // 0.29：説明に書いてあったルールは、保存する時にルール一覧へ登録する。
+        if value.meetingType == .tournament, var rule = page.rule, replace || value.ruleID == nil {
+            // ネットの大会はネット大喜利の「大会」のルールにする。
+            if value.eventFormat.isOnline { rule.kind = .online }
+            pendingRule = rule
+            giriApplyRule(rule, to: &value)
         }
         let day = value.eventDate ?? calendar.startOfDay(for: Date())
         value.opensAt = Self.merged(value.opensAt, page.opens, on: day, replace: replace)
@@ -662,8 +721,6 @@ struct GiriEventEditor: View {
                         Text("トーナメント（1対1）").tag(true)
                     } label: { GiriEditorLabel("対戦形式") }.pickerStyle(.menu).tint(.primary)
                 }
-                // 0.24：生大喜利とスプシ系は大会のルールを共用する。0.27：ネットの大会も大会のルールを選べる。
-                liveRuleRow
             }
             if !isSite { participationRow }
             TextField(isSite ? "サイト名 *" : "会・大会名 *", text: $draft.title, axis: .vertical)
@@ -680,9 +737,12 @@ struct GiriEventEditor: View {
                     if draft.eventFormat != .onlineShort {
                         GiriVenueSuggestionField(text: $draft.venue)
                         // 施設の会議室などは、会場名と分けて部屋を入れる（会場一覧は施設でまとまる）。
-                        HStack(spacing: 12) {
+                        HStack(alignment: .top, spacing: 12) {
                             GiriEditorLabel("部屋")
-                            TextField("会議室名・部屋番号", text: $draft.venueRoom).multilineTextAlignment(.trailing)
+                            // 0.29：会場に登録した部屋・これまでに使った部屋を候補に出す。
+                            GiriSuggestionTextField(placeholder: "会議室名・部屋番号", text: $draft.venueRoom,
+                                                    suggestions: store.rooms(forVenue: draft.venue), textAlignment: .trailing,
+                                                    showsAllSuggestionsWhenEmpty: true)
                         }
                     }
                     // 参加費は生大喜利だけ（スプシ系・ネットは参加費なし）。
@@ -1285,6 +1345,11 @@ struct GiriEventEditor: View {
                     candidate.siteScheduleCustomized = true
                 }
                 try giriEditorValidate(candidate)
+                // 0.29：読み取ったルールは、保存する時にルール一覧へ登録してこの大会に選ぶ。
+                if let pending = pendingRule, candidate.meetingType == .tournament {
+                    try store.saveRule(pending)
+                    giriApplyRule(pending, to: &candidate)
+                }
                 try store.saveEvent(candidate)
             }
             playLiveStairSaveFeedback()

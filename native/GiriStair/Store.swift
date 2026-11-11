@@ -112,6 +112,29 @@ final class GiriStore: ObservableObject {
         owners.removeValue(forKey: "")
         return owners
     }
+    /// 0.29：Xの表示名・ID（照合キー）→ その人の名前。読み取った名前をその人にするのに使う。
+    var xAccountOwners: [String: String] {
+        var owners: [String: String] = [:]
+        for player in players {
+            for account in player.xAccounts {
+                for value in [account.displayName, account.cleanHandle, "@" + account.cleanHandle] {
+                    let key = playerSearchKey(value)
+                    if !key.isEmpty && key != "@" && key != playerSearchKey(player.name) && owners[key] == nil { owners[key] = player.name }
+                }
+            }
+        }
+        return owners
+    }
+    /// 0.29：会場の部屋（登録した部屋と、これまでの会で使った部屋）。登録した部屋を先に出す。
+    func rooms(forVenue name: String) -> [String] {
+        let key = playerSearchKey(name)
+        guard !key.isEmpty else { return [] }
+        var seen = Set<String>()
+        let registered = venues.first { playerSearchKey($0.name) == key }?.rooms ?? []
+        let used = events.filter { playerSearchKey($0.venue) == key }.map(\.venueRoom)
+        return (registered + used).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    }
     /// この人として数える名前の照合キー（本名義と、まとめて表示する別名義）。
     func nameKeys(for name: String) -> Set<String> {
         let key = playerSearchKey(name)
@@ -406,6 +429,13 @@ final class GiriStore: ObservableObject {
         player.region = player.region.trimmingCharacters(in: .whitespacesAndNewlines)
         player.prefecture = player.prefecture.trimmingCharacters(in: .whitespacesAndNewlines)
         player.twitterUrl = player.twitterUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 0.29：Xのアカウントは @ や URL を外したIDにし、空の行を外す。
+        player.xAccounts = player.xAccounts.map { account in
+            var value = account
+            value.handle = account.cleanHandle
+            value.displayName = account.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value
+        }.filter { !$0.handle.isEmpty || !$0.displayName.isEmpty }
         // 別名義は空・本名義と同じ名前・重複を外す。
         var seenAliases: Set<String> = [playerSearchKey(player.name)]
         player.aliases = player.aliases.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -631,6 +661,9 @@ final class GiriStore: ObservableObject {
         guard !venueDirectory.contains(where: { $0.id != candidate.id && playerSearchKey($0.name) == playerSearchKey(candidate.name) }) else { throw GiriDataError.invalid("同じ会場名が登録されています。") }
         var venue = candidate
         if venue.id.hasPrefix("history:") { venue.id = newId() }
+        // 0.29：部屋は空・重なりを外す。
+        var seenRooms = Set<String>()
+        venue.rooms = venue.rooms.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty && seenRooms.insert(playerSearchKey($0)).inserted }
         let saved = venue
         try mutate { next in
             Self.upsert(saved, into: &next.venues)

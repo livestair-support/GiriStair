@@ -2226,6 +2226,79 @@ struct DomainRegression {
             try check(giriSeasonTagPartners(site: site, seasonID: "other", events: cycles).isEmpty, "single-only seasons have no partners")
         }
 
+        // 0.29 rules from numbered stages, teams from comments and the meeting type on event pages.
+        do {
+            let ruleText = [
+                "【ルール】",
+                "①ウォーミングアップ（8人4ブロック 3分）",
+                "ここでも各組ごとに印象審査（3票振り分け）を行う。",
+                "②予選（8人2ブロック）",
+                "各組上位4名が本戦へ",
+                "③本戦（8人1ブロック）",
+                "④決勝（4人）",
+                "⑤ひとしきりの祝福と撤収",
+            ]
+            let numbered = giriNumberedRuleStages(ruleText)
+            try check(numbered.map(\.name) == ["ウォーミングアップ", "予選", "本戦", "決勝"], "numbered items become stages and closing items are skipped")
+            try check(numbered.map(\.stageKind) == [.other, .qualifier, .main, .final] && numbered[0].lineup == "8人4ブロック 3分"
+                      && numbered[0].judging == "印象審査（3票振り分け）" && numbered[1].advanceCount == 4 && numbered[1].advanceNote == "各組上位4",
+                      "stage kinds, formats, judging and per-group advancement are read from the lines under each item")
+            let read = giriRuleReadingText(ruleText.joined(separator: "\n"), into: GiriRule(kind: .live, scope: .tournament))
+            try check(read.rule.stages.count == 4 && read.rule.judging == "印象審査（3票振り分け）" && !read.found.isEmpty, "rule reading uses the numbered stages")
+            let knockout = giriRuleReadingText("第6回架空タイマントーナメント（タッグ）\n1回戦\n準決勝\n決勝", into: GiriRule(kind: .live, scope: .tournament)).rule
+            try check(knockout.knockout && knockout.tournamentFormat == .pair, "a one-on-one tag tournament is read as a knockout for pairs")
+
+            try check(giriInferredTournamentFormat(title: "第6回架空タイマントーナメント（タッグ）", lines: []) == .pair
+                      && giriInferredTournamentFormat(title: "架空チーム対抗戦", lines: []) == .team
+                      && giriInferredTournamentFormat(title: "架空杯", lines: ["個人で参加"]) == nil, "tag and team tournaments come from the title")
+            let teams = giriEventPageTeams(["チーム名：架空ズ", "メンバー：はるか・たろう", "【ねこ組】じろう＆さぶろう", "架空団（しろう・ごろう）",
+                                            "②予選（8人2ブロック 3名×16）", "日時：8/30(日)"], known: [])
+            try check(teams.map(\.name) == ["架空ズ", "ねこ組", "架空団"] && teams.map(\.members) == [["はるか", "たろう"], ["じろう", "さぶろう"], ["しろう", "ごろう"]],
+                      "team names and members are read from descriptions and comments, but counts are not names")
+
+            func line(_ text: String, _ y: Double, height: Double = 0.01) -> GiriOCRLine { GiriOCRLine(text: text, midX: 0.5, midY: y, height: height, minX: 0.05) }
+            let page = [line("2026年8月15日(土) 13:00", 0.05, height: 0.02), line("架空の鳩時計杯", 0.08, height: 0.02)]
+                + ruleText.enumerated().map { line($0.element, 0.12 + Double($0.offset) * 0.02) }
+            let draft = giriEventPageDraft(lines: page, known: [], venues: [], now: GiriDates.parse("2026-07-01T00:00:00Z") ?? Date())
+            try check(draft.meetingKind == "tournament" && draft.rule?.stages.count == 4 && draft.rule?.kind == .live, "an event page with a cup title and numbered rules gives the type and the rule")
+        }
+
+        // 0.29 stronger name/venue matching, venue rooms and X accounts.
+        do {
+            try check(giriMatchRegisteredName("はるか★大喜利垢", known: ["はるか"]) == "はるか" && giriMatchRegisteredName("🍣たろうさん", known: ["たろう"]) == "たろう",
+                      "a registered name inside decorations is matched")
+            try check(giriSplitVenueRoom("架空市 架空会館 第2会議室", venues: ["架空会館"]) == ("架空会館", "第2会議室"), "a registered venue in the middle is used")
+            try check(giriRegisteredVenue(in: ["第3回 架空杯", "場所：架空会館（2F）"], venues: ["架空会館", "架空"]) == "架空会館", "the longest registered venue on the page is used")
+            try check(giriRegisteredVenue(in: ["会場：架空ホール", "東京都架空区架空町1-2-3"], venues: ["別の名前の会館"],
+                                          addresses: ["別の名前の会館": "東京都架空区架空町1丁目2"]) == "別の名前の会館", "a venue written differently is matched by address")
+            try check(giriAddressKey("東京都架空区架空町1丁目2") == "架空区架空町" && giriAddressKey("東京都1") == nil, "address keys drop the prefecture and street numbers")
+            try check(giriRegisteredRoom(in: ["場所：架空会館 第２会議室"], rooms: ["第2会議室", "大会議室"]) == "第2会議室", "registered rooms are found on the page")
+
+            var venue = GiriVenue(name: "架空会館")
+            let plainVenue = try JSONSerialization.jsonObject(with: JSONEncoder().encode(venue)) as? [String: Any] ?? [:]
+            try check(plainVenue["rooms"] == nil, "venues without rooms keep the older JSON shape")
+            venue.rooms = ["第2会議室"]
+            try check(try JSONDecoder().decode(GiriVenue.self, from: JSONEncoder().encode(venue)).rooms == ["第2会議室"], "venue rooms roundtrip")
+
+            var player = GiriPlayer(name: "はるか")
+            let plainPlayer = try JSONSerialization.jsonObject(with: JSONEncoder().encode(player)) as? [String: Any] ?? [:]
+            try check(plainPlayer["xAccounts"] == nil, "players without X accounts keep the older JSON shape")
+            player.xAccounts = [GiriXAccount(handle: "https://x.com/haruka_ogiri?s=20", displayName: "はるか＠大喜利の鬼")]
+            try check(player.xAccounts[0].cleanHandle == "haruka_ogiri" && GiriXAccount(handle: "@@abc").cleanHandle == "abc", "X handles drop @ and URLs")
+            try check(try JSONDecoder().decode(GiriPlayer.self, from: JSONEncoder().encode(player)).xAccounts == player.xAccounts, "X accounts roundtrip")
+
+            let xDirectory = temp.appendingPathComponent("x-accounts", isDirectory: true)
+            let xStore = GiriStore(directory: xDirectory)
+            try xStore.savePlayer(player)
+            try check(xStore.xAccountOwners[playerSearchKey("はるか＠大喜利の鬼")] == "はるか" && xStore.xAccountOwners[playerSearchKey("haruka_ogiri")] == "はるか"
+                      && xStore.players.first?.xAccounts.first?.handle == "haruka_ogiri", "X names and IDs point to the player and handles are saved clean")
+            var roomVenue = GiriVenue(name: "架空会館"); roomVenue.rooms = ["第2会議室"]
+            try xStore.saveVenue(roomVenue)
+            var used = GiriEvent(title: "部屋の会"); used.eventFormat = .live; used.venue = "架空会館"; used.venueRoom = "和室"
+            try xStore.saveEvent(used)
+            try check(xStore.rooms(forVenue: "架空会館") == ["第2会議室", "和室"], "room suggestions list registered rooms first, then used ones")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }
