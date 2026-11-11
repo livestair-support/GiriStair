@@ -206,6 +206,13 @@ func giriParticipantKnownNames(_ store: GiriStore) -> [String] {
     names.append(contentsOf: players.sorted { (counts[playerSearchKey($0)] ?? 0) > (counts[playerSearchKey($1)] ?? 0) })
     // 別名義も照合し、読み取った後で本名義にする。
     for player in store.players { names.append(contentsOf: player.aliases) }
+    // 0.29：Xの表示名・IDでも照合し、読み取った後でその人の名前にする。
+    for player in store.players {
+        for account in player.xAccounts {
+            if !account.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { names.append(account.displayName) }
+            if !account.cleanHandle.isEmpty { names.append(account.cleanHandle) }
+        }
+    }
     return names
 }
 
@@ -213,11 +220,12 @@ func giriParticipantKnownNames(_ store: GiriStore) -> [String] {
 @MainActor
 func giriResolvingAliases(_ candidates: [GiriParticipantCandidate], store: GiriStore) -> [GiriParticipantCandidate] {
     let owners = store.mergedAliasOwners
+    let xOwners = store.xAccountOwners
     var seen = Set<String>()
     var output: [GiriParticipantCandidate] = []
     for candidate in candidates {
         var value = candidate
-        if let owner = owners[playerSearchKey(value.name)] {
+        if let owner = owners[playerSearchKey(value.name)] ?? xOwners[playerSearchKey(value.name)] {
             value.name = owner
             value.registered = owner
             value.truncated = false
@@ -232,7 +240,8 @@ func giriResolvingAliases(_ candidates: [GiriParticipantCandidate], store: GiriS
 @MainActor
 func giriResolvedNames(_ names: [String], store: GiriStore) -> [String] {
     let owners = store.mergedAliasOwners
-    return names.map { owners[playerSearchKey($0)] ?? $0 }
+    let xOwners = store.xAccountOwners
+    return names.map { owners[playerSearchKey($0)] ?? xOwners[playerSearchKey($0)] ?? $0 }
 }
 
 /// 読み取った参加者の確認（参加者・興味あり・不参加などの欄ごと）。参加者の一括追加とイベントページの読み取りで共通。

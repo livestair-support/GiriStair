@@ -886,6 +886,12 @@ struct GiriPlayerDetail: View {
             GiriProfileInfoRow(title: "地域", value: giriRegionText(region: player.region, prefecture: player.prefecture))
             Divider().overlay(appSeparatorColor)
             GiriProfileInfoRow(title: "別名義", value: aliases.joined(separator: "・"))
+            // 0.29：Xのアカウント（ID と表示名）。
+            ForEach(player.xAccounts) { account in
+                Divider().overlay(appSeparatorColor)
+                GiriProfileInfoRow(title: "X", value: [account.cleanHandle.isEmpty ? nil : "@" + account.cleanHandle,
+                                                       account.displayName.isEmpty ? nil : account.displayName].compactMap { $0 }.joined(separator: "　"))
+            }
             // 別名義（それぞれ表示）の時は、本名義へ。
             if let owner = store.aliasOwner(of: player.name), let main = store.playerByName(owner), main.id != player.id {
                 Divider().overlay(appSeparatorColor)
@@ -1200,6 +1206,26 @@ struct GiriPlayerEditor: View {
                         .listRowSeparator(.hidden)
                     GiriNamesField(title: "", names: aliasesBinding)
                 }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+                // 0.29：Xのアカウント（ID・表示名）。別名義とは別に持ち、読み取りの照合にも使う。
+                Section {
+                    AppCardSectionTitle(title: "Xアカウント", systemImage: "at", accentColor: AppSectionAccent.artist,
+                                        infoTitle: "Xアカウントについて",
+                                        infoMessage: "XのIDと表示名です。いくつでも入れられます。ツイプラなどの読み取りで、この名前やIDの人をこのプレイヤーにします。")
+                        .listRowSeparator(.hidden)
+                    ForEach($draft.xAccounts) { $account in
+                        HStack(alignment: .top, spacing: 8) {
+                            Button(role: .destructive) { draft.xAccounts.removeAll { $0.id == account.id } } label: { Image(systemName: "minus.circle") }
+                                .buttonStyle(.borderless).accessibilityLabel("このアカウントを外す")
+                            VStack(spacing: 6) {
+                                GiriProfileTextRow(title: "ID", placeholder: "@ID", text: $account.handle)
+                                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                GiriProfileTextRow(title: "X名", placeholder: "表示名", text: $account.displayName)
+                            }
+                        }
+                    }
+                    Button("Xアカウントを追加", systemImage: "plus.circle") { draft.xAccounts.append(GiriXAccount()) }
+                        .tint(accentActionColor)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
             }
             if isNew {
                 Section {
@@ -1500,6 +1526,7 @@ struct GiriVenueDetail: View {
                         GiriProfileInfoRow(title: "住所", value: venue.mapAddress, labelWidth: 80, verticalPadding: 8)
                     }
                 }
+                roomsCard(venue)
                 GiriDetailCard(title: "リンク", systemImage: "link", accentColor: AppSectionAccent.memo, kind: .venue,
                                trailing: { GiriCardEditButton(kind: .venue) { editing = .links } }) {
                     GiriProfileLinkRow(title: "地図のURL", displayText: "", url: giriWebURL(venue.mapUrl), iconName: "safari")
@@ -1598,6 +1625,38 @@ struct GiriVenueDetail: View {
 
     // MARK: 参加集計（VenueDetailView.venueArtistRankingSlide）
 
+    /// 0.29：この会場の部屋（登録した部屋と、会で使った部屋）。部屋ごとの会の一覧へ移れる。
+    @ViewBuilder private func roomsCard(_ venue: GiriVenue) -> some View {
+        let rooms = store.rooms(forVenue: venue.name)
+        let events = store.events.filter { matches($0, venue: venue) }
+        GiriDetailCard(title: "部屋", systemImage: "door.left.hand.open", accentColor: AppSectionAccent.venue, kind: .venue,
+                       trailing: { GiriCardEditButton(kind: .venue) { editing = .basic } }) {
+            VStack(spacing: 0) {
+                if rooms.isEmpty {
+                    Text("部屋はまだありません").font(.subheadline).foregroundStyle(.secondary).padding(.vertical, 8)
+                }
+                ForEach(Array(rooms.enumerated()), id: \.offset) { index, room in
+                    if index > 0 { Divider().overlay(appSeparatorColor) }
+                    let roomEvents = events.filter { playerSearchKey($0.venueRoom) == playerSearchKey(room) }
+                    NavigationLink {
+                        GiriVenueRoomEvents(venueName: venue.name, room: room, events: roomEvents)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "door.left.hand.open").foregroundStyle(AppSectionAccent.venue).frame(width: 24)
+                            Text(room).font(.body.weight(.semibold)).foregroundStyle(.primary)
+                            Spacer()
+                            Text("\(roomEvents.count)件").font(.subheadline).foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
     private func analyticsPage(_ venue: GiriVenue) -> some View {
         let now = Date()
         let selfKeys = store.preferences.selfKeys
@@ -1623,6 +1682,14 @@ struct GiriVenueDetail: View {
                         }
                         Divider().overlay(appSeparatorColor)
                         GiriProfileDateRow(title: "最近参加した日", event: latest)
+                    }
+                }
+                // 0.29：部屋ごとの参加回数（部屋を入れた会だけ）。
+                let roomItems = giriRankItems(period.map { $0.venueRoom.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.map { [$0] })
+                if !roomItems.isEmpty {
+                    GiriRankingCard(title: "部屋ごとの参加", systemImage: "door.left.hand.open", accentColor: AppSectionAccent.venue,
+                                    kind: .venue, unit: "回", items: roomItems) { item in
+                        GiriRankRowLabel(item: item) { EmptyView() }
                     }
                 }
                 GiriRankingCard(title: "よく一緒に参加したプレイヤー", systemImage: "person.2", accentColor: AppSectionAccent.song,
@@ -1715,6 +1782,13 @@ struct GiriVenueEditor: View {
                         }
                     }
                 }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+                // 0.29：この会場の部屋（会議室名・部屋番号）。登録の候補・読み取りの照合に使う。
+                Section {
+                    AppCardSectionTitle(title: "部屋", systemImage: "door.left.hand.open", accentColor: AppSectionAccent.venue,
+                                        infoTitle: "部屋について", infoMessage: "会議室名・部屋番号を入れておくと、会の登録で候補に出し、イベントページの読み取りでも照合します。")
+                        .listRowSeparator(.hidden)
+                    GiriNamesField(title: "", names: $draft.rooms)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.venue)
             }
             if shows(.links) {
                 Section {
@@ -2010,5 +2084,31 @@ struct GiriFuriganaBulkEditor: View {
             playLiveStairSaveFeedback()
             dismiss()
         }
+    }
+}
+
+
+/// 0.29：会場の部屋での会の一覧（新しい順）。
+struct GiriVenueRoomEvents: View {
+    let venueName: String
+    let room: String
+    let events: [GiriEvent]
+
+    var body: some View {
+        let sorted = events.sorted { (GiriEventPresentation.date($0) ?? $0.createdAt) > (GiriEventPresentation.date($1) ?? $1.createdAt) }
+        List {
+            if sorted.isEmpty {
+                CenteredEmptyMessage(systemImage: "door.left.hand.open", title: "この部屋の会はまだありません")
+                    .listRowBackground(Color.clear)
+            }
+            ForEach(sorted) { event in
+                NavigationLink { GiriEventDetail(eventID: event.id) } label: { GiriEventCard(event: event) }
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+        }
+        .appIndexListStyle()
+        .giriNavigationBarStyle()
+        .navigationTitle(venueName + " " + room).navigationBarTitleDisplayMode(.inline)
     }
 }

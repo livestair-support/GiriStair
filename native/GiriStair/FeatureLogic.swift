@@ -1090,6 +1090,13 @@ func giriOCRNameKey(_ value: String) -> String {
     })
 }
 
+/// 0.29：名前の文字（ひらがな・カタカナ・漢字）か。
+func giriIsNameLetter(_ character: Character) -> Bool {
+    character.unicodeScalars.contains { scalar in
+        (0x3041...0x30FF).contains(scalar.value) || (0x4E00...0x9FFF).contains(scalar.value) || (0x3400...0x4DBF).contains(scalar.value)
+    }
+}
+
 /// 2つの名前の近さ（0〜1）。文字の置き換え・抜け・増えを1文字ずつ数える。
 func giriNameSimilarity(_ first: String, _ second: String) -> Double {
     let a = Array(first), b = Array(second)
@@ -1120,6 +1127,15 @@ func giriMatchRegisteredName(_ text: String, truncated: Bool = false, known: [St
     // 0.26：名前の後ろに付けた「(〇〇)」「【〇〇】」などを外した名前が登録されていれば、その人にする。
     let base = giriNameWithoutTrailingNote(text)
     if base != text, let hit = index.first(where: { $0.1 == giriOCRNameKey(base) && !$0.1.isEmpty }) { return hit.0 }
+    // 0.29：登録した名前がそのまま入っている時（名前の前後に絵文字・記号・「大喜利垢」などを付けた人）は、その人にする。
+    // 1文字だけ多い（「はるかぜ」と「はるか」）時は別の人のことがあるので、余りが記号だけの時に限る。
+    if let hit = index.filter({ $0.1.count >= 2 && $0.1 != key && key.contains($0.1) }).max(by: { $0.1.count < $1.1.count }),
+       let range = key.range(of: hit.1) {
+        var leftover = key
+        leftover.removeSubrange(range)
+        let letters = leftover.filter(giriIsNameLetter)
+        if leftover.count >= 2 || letters.isEmpty { return hit.0 }
+    }
     for drop in 1...2 where key.count - drop >= 2 {
         let rest = String(key.dropFirst(drop))
         if let hit = index.first(where: { $0.1 == rest }) { return hit.0 }
@@ -1508,6 +1524,11 @@ func giriSplitVenueRoom(_ raw: String, venues: [String]) -> (venue: String, room
         let rest = String(text.dropFirst(min(text.count, registered.count))).trimmingCharacters(in: .whitespacesAndNewlines)
         if playerSearchKey(String(text.prefix(registered.count))) == playerSearchKey(registered) { return (registered, rest) }
     }
+    // 0.29：登録した会場の名前が途中にある時（前に施設の運営名などが付いた時）も、その会場にする。
+    if let inside = venues.filter({ playerSearchKey($0).count >= 2 && compact.contains(playerSearchKey($0)) }).max(by: { $0.count < $1.count }),
+       let range = text.range(of: inside) {
+        return (inside, String(text[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines))
+    }
     // 施設名の終わり（センター・公民館・会館など）の後ろを部屋にする。部屋は空白の後か、
     // 番号・「室」「階」などで始まる・終わる時だけ（「カフェ＆バー」を分けない）。
     let facility = #"^(.*(センター|公民館|会館|市民館|区民館|コミュニティ|プラザ|ホール|会議所|ビル|カフェ|スタジオ|劇場|図書館|学習館|交流館))(\s*)(\S.*)?$"#
@@ -1549,6 +1570,7 @@ private func giriIsEventPageNoise(_ text: String) -> Bool {
 /// イベントページの画面（ツイプラなど）から、会の名前・日付・時刻・会場・主催・参加費・参加者を読む。
 /// 特定のサイトの決まった位置ではなく、日付の近くの大きい文字・項目名・時刻の書き方から判断する。
 func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String], organizers: [String] = [],
+                        venueRooms: [String: [String]] = [:], venueAddresses: [String: String] = [:],
                         now: Date = Date(), calendar: Calendar = .current) -> GiriEventPageDraft {
     let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }
     var draft = GiriEventPageDraft()
@@ -1631,6 +1653,14 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     // 0.29：会の種類は、会の名前とページの上の方（タイトルのまわり）の書き方から推す。
     let head = info.prefix(10).map(\.text).joined(separator: " ")
     draft.meetingKind = giriInferredMeetingKind(title: draft.title + " " + head, text: info.map(\.text).joined(separator: "\n"))
+    // 0.29：会場は1つなので、登録した会場の名前（なければ住所）がページのどこかにあれば、それを使う。
+    if let venue = giriRegisteredVenue(in: info.map(\.text), venues: venues, addresses: venueAddresses) {
+        if playerSearchKey(venue) != playerSearchKey(draft.venue) {
+            draft.venue = venue
+            draft.venueRoom = ""
+        }
+        if let room = giriRegisteredRoom(in: info.map(\.text), rooms: venueRooms[venue] ?? []) { draft.venueRoom = room }
+    }
     let allText = sorted.map(\.text)
     draft.tournamentFormat = giriInferredTournamentFormat(title: draft.title + " " + head, lines: allText)
     if draft.tournamentFormat != nil && draft.meetingKind == nil { draft.meetingKind = "tournament" }
@@ -2811,6 +2841,9 @@ func giriMergedPlayer(_ target: GiriPlayer, with candidate: GiriPlayer, oldName:
     var seen: Set<String> = [playerSearchKey(merged.name), playerSearchKey(oldName)]
     merged.aliases = (target.aliases + candidate.aliases).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty && seen.insert(playerSearchKey($0)).inserted }
+    // 0.29：Xのアカウントも両方残す（同じIDは1つ）。
+    var handles = Set(target.xAccounts.map { playerSearchKey($0.cleanHandle + "|" + $0.displayName) })
+    merged.xAccounts = target.xAccounts + candidate.xAccounts.filter { handles.insert(playerSearchKey($0.cleanHandle + "|" + $0.displayName)).inserted }
     return merged
 }
 
@@ -3249,4 +3282,37 @@ private func giriFillStageDetails(_ stage: inout GiriRuleStage, from line: Strin
 /// 0.29：読み取った行を上から順に1つの文にする（同じ高さの行は左から）。
 func giriOCRText(_ lines: [GiriOCRLine]) -> String {
     lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }.map(\.text).joined(separator: "\n")
+}
+
+
+// MARK: - 0.29 登録した会場・部屋の照合
+
+/// 住所の照合に使う部分（都道府県を外し、番地の数字より前の「〇〇区〇〇町」まで）。短すぎる時は nil。
+func giriAddressKey(_ address: String) -> String? {
+    var value = playerSearchKey(giriHalfwidthDigits(address))
+    if let range = value.range(of: #"^(東京都|北海道|(京都|大阪)府|.{2,3}県)"#, options: .regularExpression) { value.removeSubrange(range) }
+    if let digit = value.firstIndex(where: { $0.isNumber }) { value = String(value[..<digit]) }
+    value = value.trimmingCharacters(in: CharacterSet(charactersIn: "丁目番地号-"))
+    return value.count >= 4 ? value : nil
+}
+
+/// ページの文に、登録した会場の名前（長い方を優先）か住所があれば、その会場。
+func giriRegisteredVenue(in lines: [String], venues: [String], addresses: [String: String] = [:]) -> String? {
+    let text = playerSearchKey(giriHalfwidthDigits(lines.joined(separator: " ")))
+    if let hit = venues.filter({ playerSearchKey($0).count >= 2 && text.contains(playerSearchKey($0)) }).max(by: { playerSearchKey($0).count < playerSearchKey($1).count }) {
+        return hit
+    }
+    // 少し違う名前で書いてある時は、住所で照合する（1つに決まる時だけ）。
+    let byAddress = addresses.compactMap { name, address -> String? in
+        guard let key = giriAddressKey(address), text.contains(key) else { return nil }
+        return name
+    }
+    return byAddress.count == 1 ? byAddress[0] : nil
+}
+
+/// ページの文に、その会場に登録した部屋（長い方を優先）があれば、その部屋。
+func giriRegisteredRoom(in lines: [String], rooms: [String]) -> String? {
+    let text = playerSearchKey(giriHalfwidthDigits(lines.joined(separator: " ")))
+    return rooms.filter { playerSearchKey(giriHalfwidthDigits($0)).count >= 2 && text.contains(playerSearchKey(giriHalfwidthDigits($0))) }
+        .max { $0.count < $1.count }
 }

@@ -556,6 +556,9 @@ struct GiriEventEditor: View {
         readingEventPage = true
         let known = giriParticipantKnownNames(store)
         let venues = store.venueDirectory.map(\.name)
+        // 0.29：会場の部屋（登録した部屋と、これまでに使った部屋）と住所も照合に使う。
+        let venueRooms = Dictionary(store.venueDirectory.map { ($0.name, store.rooms(forVenue: $0.name)) }, uniquingKeysWith: { first, _ in first })
+        let venueAddresses = Dictionary(store.venueDirectory.filter { !$0.mapAddress.isEmpty }.map { ($0.name, $0.mapAddress) }, uniquingKeysWith: { first, _ in first })
         var organizers = store.playerDirectory.map(\.name)
         organizers.append(contentsOf: store.groupDirectory.map(\.name))
         let current = participants
@@ -563,7 +566,8 @@ struct GiriEventEditor: View {
             do {
                 guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
                 let lines = try await GiriParticipantOCR.recognizeLines(data)
-                var page = giriEventPageDraft(lines: lines, known: known, venues: venues, organizers: organizers)
+                var page = giriEventPageDraft(lines: lines, known: known, venues: venues, organizers: organizers,
+                                              venueRooms: venueRooms, venueAddresses: venueAddresses)
                 page.participants = giriMarkingAlreadyAdded(giriResolvingAliases(page.participants, store: store),
                                                             existing: giriResolvedNames(current, store: store))
                 guard page.hasBasicInfo || !page.participants.isEmpty else { throw GiriParticipantReadError.noText }
@@ -733,9 +737,12 @@ struct GiriEventEditor: View {
                     if draft.eventFormat != .onlineShort {
                         GiriVenueSuggestionField(text: $draft.venue)
                         // 施設の会議室などは、会場名と分けて部屋を入れる（会場一覧は施設でまとまる）。
-                        HStack(spacing: 12) {
+                        HStack(alignment: .top, spacing: 12) {
                             GiriEditorLabel("部屋")
-                            TextField("会議室名・部屋番号", text: $draft.venueRoom).multilineTextAlignment(.trailing)
+                            // 0.29：会場に登録した部屋・これまでに使った部屋を候補に出す。
+                            GiriSuggestionTextField(placeholder: "会議室名・部屋番号", text: $draft.venueRoom,
+                                                    suggestions: store.rooms(forVenue: draft.venue), textAlignment: .trailing,
+                                                    showsAllSuggestionsWhenEmpty: true)
                         }
                     }
                     // 参加費は生大喜利だけ（スプシ系・ネットは参加費なし）。

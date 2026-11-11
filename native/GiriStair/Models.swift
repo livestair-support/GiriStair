@@ -983,11 +983,39 @@ struct GiriPlayer: Codable, Equatable, Identifiable {
     /// 0.12：別名義。mergesAliases が true なら、プレイヤー一覧・集計でこの人にまとめて表示する。
     var aliases: [String] = []
     var mergesAliases: Bool = true
+    /// 0.29：Xのアカウント（ID と表示名。いくつでも）。読み取りの照合にも使う。値がある時だけ書く。
+    var xAccounts: [GiriXAccount] = []
+}
+
+/// 0.29：Xのアカウント（@ID と表示名）。
+struct GiriXAccount: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    /// @ を付けないID。
+    var handle: String = ""
+    /// Xの表示名（ふざけた名前など、別名義とは別に持つ）。
+    var displayName: String = ""
+}
+
+extension GiriXAccount {
+    private enum CodingKeys: String, CodingKey { case id, handle, displayName }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        handle = try c.decodeIfPresent(String.self, forKey: .handle) ?? ""
+        displayName = try c.decodeIfPresent(String.self, forKey: .displayName) ?? ""
+    }
+    /// @ と URL を外したID。
+    var cleanHandle: String {
+        var value = handle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let range = value.range(of: #"(?i)^https?://(www\.)?(x|twitter)\.com/"#, options: .regularExpression) { value.removeSubrange(range) }
+        while value.hasPrefix("@") || value.hasPrefix("＠") { value.removeFirst() }
+        return value.components(separatedBy: CharacterSet(charactersIn: "/?")).first ?? value
+    }
 }
 
 extension GiriPlayer {
     private enum CodingKeys: String, CodingKey {
-        case id, name, furigana, region, iconDataBase64, twitterUrl, memo, prefecture, aliases, mergesAliases
+        case id, name, furigana, region, iconDataBase64, twitterUrl, memo, prefecture, aliases, mergesAliases, xAccounts
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1011,6 +1039,7 @@ extension GiriPlayer {
         aliases = try c.decodeIfPresent([String].self, forKey: .aliases) ?? []
 
         mergesAliases = try c.decodeIfPresent(Bool.self, forKey: .mergesAliases) ?? true
+        xAccounts = try c.decodeIfPresent([GiriXAccount].self, forKey: .xAccounts) ?? []
 
         try validate()
     }
@@ -1036,7 +1065,7 @@ extension GiriPlayer {
         try c.encode(aliases, forKey: .aliases)
 
         try c.encode(mergesAliases, forKey: .mergesAliases)
-
+        if !xAccounts.isEmpty { try c.encode(xAccounts, forKey: .xAccounts) }
     }
 }
 
@@ -1403,11 +1432,13 @@ struct GiriVenue: Codable, Equatable, Identifiable {
     var mapAddress: String = ""
     /// 0.14：フリガナ（並び・検索用、任意）。
     var furigana: String = ""
+    /// 0.29：会場の部屋（会議室名・部屋番号）。登録・読み取りの候補にする。値がある時だけ書く。
+    var rooms: [String] = []
 }
 
 extension GiriVenue {
     private enum CodingKeys: String, CodingKey {
-        case id, name, prefecture, mapUrl, memo, latitude, longitude, mapAddress, furigana
+        case id, name, prefecture, mapUrl, memo, latitude, longitude, mapAddress, furigana, rooms
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1428,6 +1459,7 @@ extension GiriVenue {
 
         mapAddress = try c.decodeIfPresent(String.self, forKey: .mapAddress) ?? ""
         furigana = try c.decodeIfPresent(String.self, forKey: .furigana) ?? ""
+        rooms = try c.decodeIfPresent([String].self, forKey: .rooms) ?? []
 
         try validate()
     }
@@ -1450,6 +1482,7 @@ extension GiriVenue {
 
         try c.encode(mapAddress, forKey: .mapAddress)
         if !furigana.isEmpty { try c.encode(furigana, forKey: .furigana) }
+        if !rooms.isEmpty { try c.encode(rooms, forKey: .rooms) }
     }
 }
 

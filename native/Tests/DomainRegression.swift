@@ -2263,6 +2263,42 @@ struct DomainRegression {
             try check(draft.meetingKind == "tournament" && draft.rule?.stages.count == 4 && draft.rule?.kind == .live, "an event page with a cup title and numbered rules gives the type and the rule")
         }
 
+        // 0.29 stronger name/venue matching, venue rooms and X accounts.
+        do {
+            try check(giriMatchRegisteredName("はるか★大喜利垢", known: ["はるか"]) == "はるか" && giriMatchRegisteredName("🍣たろうさん", known: ["たろう"]) == "たろう",
+                      "a registered name inside decorations is matched")
+            try check(giriSplitVenueRoom("架空市 架空会館 第2会議室", venues: ["架空会館"]) == ("架空会館", "第2会議室"), "a registered venue in the middle is used")
+            try check(giriRegisteredVenue(in: ["第3回 架空杯", "場所：架空会館（2F）"], venues: ["架空会館", "架空"]) == "架空会館", "the longest registered venue on the page is used")
+            try check(giriRegisteredVenue(in: ["会場：架空ホール", "東京都架空区架空町1-2-3"], venues: ["別の名前の会館"],
+                                          addresses: ["別の名前の会館": "東京都架空区架空町1丁目2"]) == "別の名前の会館", "a venue written differently is matched by address")
+            try check(giriAddressKey("東京都架空区架空町1丁目2") == "架空区架空町" && giriAddressKey("東京都1") == nil, "address keys drop the prefecture and street numbers")
+            try check(giriRegisteredRoom(in: ["場所：架空会館 第２会議室"], rooms: ["第2会議室", "大会議室"]) == "第2会議室", "registered rooms are found on the page")
+
+            var venue = GiriVenue(name: "架空会館")
+            let plainVenue = try JSONSerialization.jsonObject(with: JSONEncoder().encode(venue)) as? [String: Any] ?? [:]
+            try check(plainVenue["rooms"] == nil, "venues without rooms keep the older JSON shape")
+            venue.rooms = ["第2会議室"]
+            try check(try JSONDecoder().decode(GiriVenue.self, from: JSONEncoder().encode(venue)).rooms == ["第2会議室"], "venue rooms roundtrip")
+
+            var player = GiriPlayer(name: "はるか")
+            let plainPlayer = try JSONSerialization.jsonObject(with: JSONEncoder().encode(player)) as? [String: Any] ?? [:]
+            try check(plainPlayer["xAccounts"] == nil, "players without X accounts keep the older JSON shape")
+            player.xAccounts = [GiriXAccount(handle: "https://x.com/haruka_ogiri?s=20", displayName: "はるか＠大喜利の鬼")]
+            try check(player.xAccounts[0].cleanHandle == "haruka_ogiri" && GiriXAccount(handle: "@@abc").cleanHandle == "abc", "X handles drop @ and URLs")
+            try check(try JSONDecoder().decode(GiriPlayer.self, from: JSONEncoder().encode(player)).xAccounts == player.xAccounts, "X accounts roundtrip")
+
+            let xDirectory = temp.appendingPathComponent("x-accounts", isDirectory: true)
+            let xStore = GiriStore(directory: xDirectory)
+            try xStore.savePlayer(player)
+            try check(xStore.xAccountOwners[playerSearchKey("はるか＠大喜利の鬼")] == "はるか" && xStore.xAccountOwners[playerSearchKey("haruka_ogiri")] == "はるか"
+                      && xStore.players.first?.xAccounts.first?.handle == "haruka_ogiri", "X names and IDs point to the player and handles are saved clean")
+            var roomVenue = GiriVenue(name: "架空会館"); roomVenue.rooms = ["第2会議室"]
+            try xStore.saveVenue(roomVenue)
+            var used = GiriEvent(title: "部屋の会"); used.eventFormat = .live; used.venue = "架空会館"; used.venueRoom = "和室"
+            try xStore.saveEvent(used)
+            try check(xStore.rooms(forVenue: "架空会館") == ["第2会議室", "和室"], "room suggestions list registered rooms first, then used ones")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }
