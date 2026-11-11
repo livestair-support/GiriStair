@@ -2226,6 +2226,43 @@ struct DomainRegression {
             try check(giriSeasonTagPartners(site: site, seasonID: "other", events: cycles).isEmpty, "single-only seasons have no partners")
         }
 
+        // 0.29 rules from numbered stages, teams from comments and the meeting type on event pages.
+        do {
+            let ruleText = [
+                "【ルール】",
+                "①ウォーミングアップ（8人4ブロック 3分）",
+                "ここでも各組ごとに印象審査（3票振り分け）を行う。",
+                "②予選（8人2ブロック）",
+                "各組上位4名が本戦へ",
+                "③本戦（8人1ブロック）",
+                "④決勝（4人）",
+                "⑤ひとしきりの祝福と撤収",
+            ]
+            let numbered = giriNumberedRuleStages(ruleText)
+            try check(numbered.map(\.name) == ["ウォーミングアップ", "予選", "本戦", "決勝"], "numbered items become stages and closing items are skipped")
+            try check(numbered.map(\.stageKind) == [.other, .qualifier, .main, .final] && numbered[0].lineup == "8人4ブロック 3分"
+                      && numbered[0].judging == "印象審査（3票振り分け）" && numbered[1].advanceCount == 4 && numbered[1].advanceNote == "各組上位4",
+                      "stage kinds, formats, judging and per-group advancement are read from the lines under each item")
+            let read = giriRuleReadingText(ruleText.joined(separator: "\n"), into: GiriRule(kind: .live, scope: .tournament))
+            try check(read.rule.stages.count == 4 && read.rule.judging == "印象審査（3票振り分け）" && !read.found.isEmpty, "rule reading uses the numbered stages")
+            let knockout = giriRuleReadingText("第6回架空タイマントーナメント（タッグ）\n1回戦\n準決勝\n決勝", into: GiriRule(kind: .live, scope: .tournament)).rule
+            try check(knockout.knockout && knockout.tournamentFormat == .pair, "a one-on-one tag tournament is read as a knockout for pairs")
+
+            try check(giriInferredTournamentFormat(title: "第6回架空タイマントーナメント（タッグ）", lines: []) == .pair
+                      && giriInferredTournamentFormat(title: "架空チーム対抗戦", lines: []) == .team
+                      && giriInferredTournamentFormat(title: "架空杯", lines: ["個人で参加"]) == nil, "tag and team tournaments come from the title")
+            let teams = giriEventPageTeams(["チーム名：架空ズ", "メンバー：はるか・たろう", "【ねこ組】じろう＆さぶろう", "架空団（しろう・ごろう）",
+                                            "②予選（8人2ブロック 3名×16）", "日時：8/30(日)"], known: [])
+            try check(teams.map(\.name) == ["架空ズ", "ねこ組", "架空団"] && teams.map(\.members) == [["はるか", "たろう"], ["じろう", "さぶろう"], ["しろう", "ごろう"]],
+                      "team names and members are read from descriptions and comments, but counts are not names")
+
+            func line(_ text: String, _ y: Double, height: Double = 0.01) -> GiriOCRLine { GiriOCRLine(text: text, midX: 0.5, midY: y, height: height, minX: 0.05) }
+            let page = [line("2026年8月15日(土) 13:00", 0.05, height: 0.02), line("架空の鳩時計杯", 0.08, height: 0.02)]
+                + ruleText.enumerated().map { line($0.element, 0.12 + Double($0.offset) * 0.02) }
+            let draft = giriEventPageDraft(lines: page, known: [], venues: [], now: GiriDates.parse("2026-07-01T00:00:00Z") ?? Date())
+            try check(draft.meetingKind == "tournament" && draft.rule?.stages.count == 4 && draft.rule?.kind == .live, "an event page with a cup title and numbered rules gives the type and the rule")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

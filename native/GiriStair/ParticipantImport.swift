@@ -357,8 +357,17 @@ struct GiriEventPageReview: View {
                 AppCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live)
                     .listRowSeparator(.hidden)
                 valueRow("会の名前", draft.title)
-                // 0.28：ページの書き方から推した会の種類。
-                if let kind = draft.meetingKind { valueRow("会の種類", giriMeetingKindTitle(kind)) }
+                // 0.29：ページの書き方から推した会の種類・参加形式。ここで選び直せる。
+                Picker(selection: Binding(get: { draft.meetingKind ?? "casual" }, set: { draft.meetingKind = $0 == "casual" ? nil : $0 })) {
+                    ForEach(["casual", "tournament", "project", "kumite", "show"], id: \.self) { Text(giriMeetingKindTitle($0)).tag($0) }
+                } label: { reviewLabel("会の種類") }
+                .pickerStyle(.menu).tint(.primary)
+                if draft.meetingKind == "tournament" {
+                    Picker(selection: Binding(get: { draft.tournamentFormat ?? .individual }, set: { draft.tournamentFormat = $0 })) {
+                        ForEach(TournamentFormat.allCases) { Text($0.title).tag($0) }
+                    } label: { reviewLabel("参加形式") }
+                    .pickerStyle(.menu).tint(.primary)
+                }
                 valueRow("日付", draft.date.map { GiriDateText.day($0) } ?? "")
                 valueRow("開場", clockText(draft.opens))
                 valueRow("開始", clockText(draft.start))
@@ -369,6 +378,29 @@ struct GiriEventPageReview: View {
                 valueRow("参加費", draft.fee.map { "\($0)円" } ?? "")
             }.appSectionCardStyle(accentColor: AppSectionAccent.live)
             GiriParticipantCandidateSections(candidates: $draft.participants, knownNames: giriParticipantKnownNames(store), listedCount: draft.listedParticipantCount)
+            // 0.29：説明・コメントに書いてあったチーム（タッグ）。
+            if !draft.teams.isEmpty {
+                Section {
+                    AppCardSectionTitle(title: draft.tournamentFormat == .pair ? "タッグ" : "チーム", systemImage: "person.3", accentColor: AppSectionAccent.artist)
+                        .listRowSeparator(.hidden)
+                    ForEach(draft.teams) { team in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(team.name).font(.subheadline.weight(.semibold))
+                            Text(team.members.joined(separator: "・")).font(.caption).foregroundStyle(.secondary)
+                        }
+                        .swipeActions { Button("外す", role: .destructive) { draft.teams.removeAll { $0.id == team.id } } }
+                    }
+                }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+            }
+            // 0.29：説明に書いてあったルール（反映すると、保存する時にルール一覧へ登録する）。
+            if let rule = draft.rule {
+                Section {
+                    AppCardSectionTitle(title: "ルール", systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.ticket)
+                        .listRowSeparator(.hidden)
+                    GiriRuleDetailRows(rule: rule)
+                    Button("このルールは使わない", role: .destructive) { draft.rule = nil }.buttonStyle(.borderless).font(.subheadline)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+            }
             Section {
                 Toggle("入力済みの内容も置き換える", isOn: $replaceExisting).tint(AppSectionAccent.scan)
                 Text(replaceExisting ? "読み取った内容を優先して反映します。読み取れなかった項目は、今の入力が残ります。"
@@ -401,6 +433,10 @@ struct GiriEventPageReview: View {
                 .fontWeight(.bold)
             }
         }
+    }
+
+    private func reviewLabel(_ title: String) -> some View {
+        Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
     }
 
     /// LiveStair reviewValueRow：読み取れなかった項目は灰色で出す。
