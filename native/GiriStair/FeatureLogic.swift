@@ -2727,7 +2727,7 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
 
     if rule.effectiveScope == .regular {
         // 1シーズンの回数
-        let cyclePatterns = [#"全\s*([0-9]+)\s*回"#, #"([0-9]+)\s*回で\s*1\s*シーズン"#, #"1\s*シーズン\s*[:は]?\s*([0-9]+)\s*回"#]
+        let cyclePatterns = [#"全\s*([0-9]+)\s*回"#, #"([0-9]+)\s*回で\s*1\s*シーズン"#, #"1\s*シーズン\s*[:はに]?\s*([0-9]+)\s*回"#]
         if let count = lines.lazy.compactMap({ line in cyclePatterns.lazy.compactMap { firstInt($0, in: line) }.first }).first, (1...200).contains(count) {
             rule.regularCycleCount = count; found.append("全\(count)回")
         }
@@ -2739,11 +2739,31 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
             if rule.leagues != names { rule.setLeagues(names) }
             found.append("リーグ（" + names.joined(separator: "・") + "）")
         }
+        // 0.28：タッグのページ（「〜タッグが残留」「タッグを組んでいない」など）は、タッグ部門の決まりとして読む。
+        let isTagPage = lines.contains { line in
+            line.range(of: #"[0-9]+\s*タッグ"#, options: .regularExpression) != nil || line.contains("タッグを組") || line.contains("2人のH得票率")
+        }
+        if isTagPage && rule.tagDivision == nil {
+            rule.tagDivision = GiriRuleTagDivision(leagueDetails: rule.leagues.map { GiriRuleLeague(name: $0) })
+            found.append("タッグ部門")
+        }
         // 決まりを持っていないリーグ（0.26以前のルール）も直せるように、名前と同じ順にそろえる。
-        if rule.leagueDetails.map(\.name) != rule.leagues { rule.setLeagues(rule.leagues) }
-        func update(_ name: String, _ change: (inout GiriRuleLeague) -> Void) {
+        if rule.leagueDetails.map(\.name) != rule.leagues || (rule.tagDivision.map { $0.leagueDetails.map(\.name) != rule.leagues } ?? false) {
+            rule.setLeagues(rule.leagues)
+        }
+        /// シングルのリーグの決まりを直す（お題の選び方・日程など、シングルとタッグで同じもの）。
+        func updateSingle(_ name: String, _ change: (inout GiriRuleLeague) -> Void) {
             guard let index = rule.leagueDetails.firstIndex(where: { $0.name == name }) else { return }
             change(&rule.leagueDetails[index])
+        }
+        /// 順位の決まり（入れ替え・残留・規定数など）。タッグのページはタッグ部門に入れる。
+        func update(_ name: String, _ change: (inout GiriRuleLeague) -> Void) {
+            guard isTagPage else { updateSingle(name, change); return }
+            guard let index = rule.tagDivision?.leagueDetails.firstIndex(where: { $0.name == name }) else { return }
+            if var detail = rule.tagDivision?.leagueDetails[index] {
+                change(&detail)
+                rule.tagDivision?.leagueDetails[index] = detail
+            }
         }
         for line in lines {
             let special = line.contains("プレーオフ") || line.contains("エキシビション")
@@ -2766,11 +2786,19 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
             }
             // 「4題から1題」
             for groups in giriRegexGroups(#"([0-9]+)\s*部[^0-9]{0,12}?([0-9]+)\s*題から\s*1\s*題"#, in: line) {
-                if let choices = number(groups[2]) { update("\(groups[1])部") { $0.promptChoices = choices } }
+                if let choices = number(groups[2]) { updateSingle("\(groups[1])部") { $0.promptChoices = choices } }
+            }
+            // 0.28：「1部は1題につき2投稿」
+            for groups in giriRegexGroups(#"([0-9]+)\s*部[はでの]?\s*1\s*題につき\s*([0-9]+)\s*(?:投稿|回答)"#, in: line) {
+                if let answers = number(groups[2]) { updateSingle("\(groups[1])部") { $0.answersPerPrompt = answers } }
+            }
+            // 0.28：「1部は上から8ボケ、2部は上から4ボケ」
+            for groups in giriRegexGroups(#"([0-9]+)\s*部[はでの]?\s*上から\s*の?\s*([0-9]+)\s*(?:ボケ|回答)"#, in: line) {
+                if let top = number(groups[2]) { update("\(groups[1])部") { $0.topAnswerCount = top } }
             }
             // 入れ替え（「1部下位15名と2部上位15名」）
             if !special && (line.contains("入れ替え") || line.contains("入替") || line.contains("昇格") || line.contains("降格")) {
-                for groups in giriRegexGroups(#"([0-9]+)\s*部\s*[のはで]?\s*(上位|下位)\s*([0-9]+)\s*[名人]"#, in: line) {
+                for groups in giriRegexGroups(#"([0-9]+)\s*部\s*[のはで]?\s*(上位|下位)\s*([0-9]+)\s*(?:名|人|タッグ|組)"#, in: line) {
                     guard let count = number(groups[3]) else { continue }
                     update("\(groups[1])部") { league in
                         if groups[2] == "上位" { league.promotionCount = count } else { league.relegationCount = count }
@@ -2778,12 +2806,26 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
                 }
                 found.append("入れ替え")
             }
-            if line.contains("最下位") && (line.contains("対象外") || line.contains("規定")) {
-                for name in leagueNames(in: line) { update(name) { $0.unqualifiedRanksLast = true } }
+            if line.contains("最下位") && (line.contains("対象外") || line.contains("規定") || line.contains("満たない") || line.contains("組んでいない")) {
+                for name in leagueNames(in: line).prefix(1) { update(name) { $0.unqualifiedRanksLast = true } }
+            } else if line.contains("集計対象外") && (line.contains("満たない") || line.contains("組んでいない")) {
+                for name in leagueNames(in: line).prefix(1) { update(name) { $0.unqualifiedExcluded = true } }
             }
-            if line.contains("同率") || line.contains("同点") { rule.tieBreak = line; found.append("同率の扱い") }
+            if isTagPage {
+                if line.contains("合計") && line.contains("得票率") && line.contains("人") { rule.tagDivision?.teamScoring = "sum"; found.append("タッグの成績") }
+                if line.contains("満たない") && line.range(of: #"0\s*と?し?て?扱"#, options: .regularExpression) != nil { rule.tagDivision?.memberShortfallZero = true }
+                if line.contains("同率") { rule.tagDivision?.tieBreak = line }
+                if line.contains("タッグの結成") || line.contains("解消") {
+                    let note = rule.tagDivision?.formationNote ?? ""
+                    rule.tagDivision?.formationNote = note.isEmpty ? line : note + line
+                }
+                if line.contains("プレーオフ"), let entrants = firstInt(#"上位\s*([0-9]+)\s*(?:タッグ|組)"#, in: line) {
+                    rule.tagDivision?.playoffEntrants = entrants
+                }
+            }
+            if !isTagPage && (line.contains("同率") || line.contains("同点")) { rule.tieBreak = line; found.append("同率の扱い") }
             // プレーオフ・エキシビション
-            for (word, kind) in [("プレーオフ", SitePeriodKind.playoff), ("エキシビション", SitePeriodKind.exhibition)] where line.contains(word) {
+            for (word, kind) in [("プレーオフ", SitePeriodKind.playoff), ("エキシビション", SitePeriodKind.exhibition)] where line.contains(word) && !(isTagPage && kind == .playoff) {
                 var plan = rule.specialPlans.first { $0.kind == kind } ?? GiriRuleSpecialPlan(kind: kind, title: word, submissionDays: rule.submissionDays, votingDays: rule.votingDays)
                 if let entrants = firstInt(#"上位\s*([0-9]+)\s*[名人]"#, in: line) { plan.entrantCount = entrants }
                 if let league = leagueNames(in: line).first { plan.entrantLeague = league }
@@ -2791,6 +2833,44 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
                 if line.contains("含めない") || line.contains("含まない") || line.contains("含みません") { plan.countsInSeason = false }
                 if let index = rule.specialPlans.firstIndex(where: { $0.kind == kind }) { rule.specialPlans[index] = plan } else { rule.specialPlans.append(plan); found.append(word) }
             }
+        }
+        // 0.28：リーグの見出し（「1部 NIGHT」など）の下に書いてある、そのリーグの決まりと日程を読む。
+        var current: String? = nil
+        for line in lines {
+            let names = leagueNames(in: line)
+            let compact = line.replacingOccurrences(of: " ", with: "")
+            if let first = names.first, names.count == 1, compact.hasPrefix(first) {
+                // 「1部 NIGHT」「1部は、…」のように、行の頭のリーグを、続く行のリーグにする。
+                current = first
+                let rest = compact.dropFirst(first.count).trimmingCharacters(in: .whitespaces)
+                if !isTagPage, rest.range(of: #"^[A-Za-z]{2,12}"#, options: .regularExpression) != nil,
+                   let word = giriRegexGroups(#"^([A-Za-z]{2,12})"#, in: rest).first?[1] {
+                    updateSingle(first) { $0.subtitle = word.uppercased() }
+                }
+                continue
+            }
+            // 見出しのない段落（プレーオフ・エントリーについて・その他）に入ったら、リーグの続きとして読まない。
+            if line.contains("プレーオフ") || line.contains("について") || line.contains("その他") || line.contains("エキシビション") { current = nil; continue }
+            guard names.isEmpty, let league = current else { continue }
+            if let top = firstInt(#"上から\s*の?\s*([0-9]+)\s*(?:ボケ|回答)"#, in: line) { update(league) { $0.topAnswerCount = top } }
+            if let stay = firstInt(#"上位\s*([0-9]+)\s*(?:名|人|タッグ|組)\s*が?\s*残留"#, in: line) { update(league) { $0.stayCount = stay } }
+            if let up = firstInt(#"上位\s*([0-9]+)\s*(?:名|人|タッグ|組)\s*が?\s*昇格"#, in: line) { update(league) { $0.promotionCount = up } }
+            if let down = firstInt(#"下位\s*([0-9]+)\s*(?:名|人|タッグ|組)\s*が?\s*降格"#, in: line) { update(league) { $0.relegationCount = down } }
+            if let choices = firstInt(#"([0-9]+)\s*題から\s*1\s*題"#, in: line) { updateSingle(league) { $0.promptChoices = choices } }
+            if let days = firstInt(#"エントリー\s*([0-9]+)\s*日"#, in: line) { updateSingle(league) { $0.entryDays = days }; found.append("エントリー") }
+            if let days = firstInt(#"^\s*投稿\s*([0-9]+)\s*日"#, in: line) { updateSingle(league) { $0.submissionDays = days } }
+            if let days = firstInt(#"^\s*投票\s*([0-9]+)\s*日"#, in: line) { updateSingle(league) { $0.votingDays = days } }
+        }
+        // リーグごとの日数がルール全体と同じなら、リーグには持たない。
+        for index in rule.leagueDetails.indices {
+            if rule.leagueDetails[index].submissionDays == rule.submissionDays { rule.leagueDetails[index].submissionDays = nil }
+            if rule.leagueDetails[index].votingDays == rule.votingDays { rule.leagueDetails[index].votingDays = nil }
+        }
+        if rule.leagueDetails.contains(where: { $0.topAnswerCount != nil }) || (rule.tagDivision?.leagueDetails.contains { $0.topAnswerCount != nil } ?? false) {
+            found.append("上位の回答の平均")
+        }
+        if lines.contains(where: { $0.contains("エントリー") && ($0.contains("先着") || $0.contains("定員")) }) && rule.entryNote.isEmpty {
+            rule.entryNote = lines.filter { $0.contains("エントリー") && ($0.contains("先着") || $0.contains("定員") || $0.contains("取り下げ")) }.joined()
         }
     } else {
         // 大会の段階（出てきた順。「1〜4回戦」は1回戦から4回戦に分ける）

@@ -848,6 +848,17 @@ struct GiriSiteCycleSettingsForm: View {
                     if !site.affiliation.isEmpty && !settings.wrappedValue.leagues.contains(site.affiliation) { Text(site.affiliation).tag(site.affiliation) }
                 } label: { GiriEditorLabel("今のリーグ") }
                 .pickerStyle(.menu).tint(.primary)
+                // 0.28：ルールにタッグ部門がある時は、シングル／タッグと相手を入れる。
+                if site.currentRuleID.flatMap({ store.rule($0) })?.tagDivision != nil || site.division == "tag" {
+                    Picker(selection: $site.division) {
+                        Text("シングル").tag("")
+                        Text("タッグ").tag("tag")
+                    } label: { GiriEditorLabel("部門") }
+                    .pickerStyle(.menu).tint(.primary)
+                    if site.division == "tag" {
+                        GiriPlayerSuggestionField(title: "タッグの相手", text: $site.tagPartner, showsLabel: true, textAlignment: .trailing)
+                    }
+                }
                 if seasons {
                     Picker(selection: settings.leagueChangesPerSeason) {
                         Text("毎回").tag(false)

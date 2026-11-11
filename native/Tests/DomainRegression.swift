@@ -2005,6 +2005,119 @@ struct DomainRegression {
             try check(giriRuleTemplates.contains { $0.id == "template:two-league-promotion" && $0.name == "大喜利天文台(S28～S29)" }, "the two-league template carries the requested name")
         }
 
+        // 0.28 seasons with single and tag divisions, per-league schedules and entry periods.
+        do {
+            guard let s30 = giriRuleTemplates.first(where: { $0.id == "template:two-league-tag-s30" }) else { throw GiriDataError.invalid("Missing S30 template") }
+            let upper = s30.leagueDetail("1部"), lower = s30.leagueDetail("2部")
+            try check(s30.name == "大喜利天文台(S30～)" && upper.topAnswerCount == 8 && lower.topAnswerCount == 4 && upper.stayCount == 35
+                      && upper.unqualifiedRanksLast && lower.unqualifiedExcluded && lower.entryDays == 1 && lower.submissionDays == 6 && upper.answersPerPrompt == 2,
+                      "the S30 template keeps top-N averages, stays, shortfall handling and per-league schedules")
+            let tagUpper = s30.leagueDetail("1部", tag: true), tagLower = s30.leagueDetail("2部", tag: true)
+            try check(tagUpper.relegationCount == 8 && tagUpper.stayCount == 17 && tagLower.promotionCount == 8 && s30.tagDivision?.playoffEntrants == 4
+                      && s30.tagDivision?.memberShortfallZero == true && s30.tagDivision?.teamScoring == "sum", "the tag division has its own exchange counts and playoff size")
+            try check(try JSONDecoder().decode(GiriRule.self, from: JSONEncoder().encode(s30)) == s30, "rules with a tag division roundtrip")
+            let plainS28 = try JSONSerialization.jsonObject(with: JSONEncoder().encode(GiriRule(name: "タッグなし", kind: .online))) as? [String: Any] ?? [:]
+            try check(plainS28["tagDivision"] == nil && plainS28["entryDays"] == nil && plainS28["entryNote"] == nil, "rules without tags or entry keep the older JSON shape")
+
+            var site = OnlineSite(name: "架空リーグ")
+            let plainSite = try JSONSerialization.jsonObject(with: JSONEncoder().encode(site)) as? [String: Any] ?? [:]
+            try check(plainSite["division"] == nil && plainSite["tagPartner"] == nil, "single-division sites keep the older JSON shape")
+            site.division = "tag"; site.tagPartner = "はるか"
+            let decodedSite = try JSONDecoder().decode(OnlineSite.self, from: JSONEncoder().encode(site))
+            try check(decodedSite.division == "tag" && decodedSite.tagPartner == "はるか", "the tag division and partner roundtrip")
+            site.affiliation = "2部"
+            giriApplyRule(s30, to: &site)
+            try check(site.submissionDays == 6 && site.votingDays == 4 && site.cycleSettings?.intervalDays == 7,
+                      "a league's own posting days are used for that league and the entry day keeps the weekly cadence")
+            site.affiliation = "1部"
+            giriApplyRule(s30, to: &site)
+            try check(site.submissionDays == 7, "the first league uses the rule's posting days")
+
+            var cup = GiriEvent(title: "架空グランプリ"); cup.eventFormat = .live; cup.meetingType = .tournament
+            let start = Date(timeIntervalSince1970: 1_800_000_000); cup.startsAt = start
+            var entryRule = GiriRule(name: "エントリーあり", kind: .live, scope: .tournament); entryRule.entryDays = 7; entryRule.capacity = 32
+            giriApplyRule(entryRule, to: &cup)
+            try check(cup.entryEnd == start && cup.entryStart == Calendar.current.date(byAdding: .day, value: -7, to: start), "a tournament rule's entry period is placed before the start")
+
+            let singlePage = """
+            ルール
+            昇格・降格
+            1シーズンの成績で、1部の下位15名と2部の上位15名が入れ替わります。
+            H得票率
+            シーズン中投稿したボケのうち、得票率が高いもの（1部は上から8ボケ、2部は上から4ボケ）を平均した値です。
+            1部 NIGHT
+            成績順に上からの8ボケの得票率を平均
+            上位35名が残留
+            下位15名が降格
+            2部 DAY
+            成績順に上からの4ボケの得票率を平均
+            上位15名が昇格
+            それ以外は残留
+            1部は、投稿数が8ボケに満たない場合は最下位扱いとなります。
+            2部は、投稿数が4ボケに満たない場合は集計対象外となります。
+            同率の場合は、投稿数が多い人を上位とします。
+            シーズン中のランキングは、1部は結果お題のうち1/2以上の投稿数がある方・2部は結果お題のうち1/4以上の投稿数がある方を対象に集計されます。
+            エントリー・投稿・投票
+            自分が投稿したお題に投票すると、投票ボーナス3点が加算されます。1シーズンに8回お題が出題されます。
+            1部は1題につき2投稿、2部は1題につき1投稿可能です。
+            1部 NIGHT
+            2題から1題
+            投稿7日間（水曜23:00〜翌水曜23:00）
+            投票4日間（水曜23:00〜日曜23:00）
+            2部 DAY
+            4題から1題
+            エントリー1日間（水曜23:00〜木曜23:00）
+            投稿6日間（木曜23:00〜水曜23:00）
+            投票4日間（水曜23:00〜日曜23:00）
+            エントリーについて
+            エントリーは先着順です。エントリーは取り下げられません。
+            プレーオフ
+            各シーズンの予選終了後、1部の成績上位者で優勝を決定するプレーオフを行います。
+            """
+            let single = giriRuleReadingText(singlePage, into: GiriRule(kind: .online)).rule
+            let one = single.leagueDetail("1部"), two = single.leagueDetail("2部")
+            try check(single.leagues == ["1部", "2部"] && single.regularCycleCount == 8 && single.submissionDays == 7 && single.votingDays == 4 && single.voteBonusPoints == 3,
+                      "the single page fills periods, cycles and the voting bonus")
+            try check(one.topAnswerCount == 8 && two.topAnswerCount == 4 && one.stayCount == 35 && one.relegationCount == 15 && two.promotionCount == 15,
+                      "league headings carry the top-N average and stay/exchange counts")
+            try check(one.unqualifiedRanksLast && two.unqualifiedExcluded && one.requiredFraction == "1/2" && two.requiredFraction == "1/4",
+                      "shortfall handling and ranking requirements are read per league")
+            try check(one.subtitle == "NIGHT" && two.subtitle == "DAY" && one.promptChoices == 2 && two.promptChoices == 4 && one.answersPerPrompt == 2 && two.answersPerPrompt == 1,
+                      "league names, prompt choices and answers per prompt are read")
+            try check(two.entryDays == 1 && two.submissionDays == 6 && one.submissionDays == nil && two.votingDays == nil && single.entryNote.contains("先着"),
+                      "per-league entry and posting days are read and equal days stay on the rule")
+            try check(single.tagDivision == nil, "a single page does not create a tag division")
+
+            let tagPage = """
+            昇格・降格
+            1シーズンの成績で、1部の下位8タッグと2部の上位8タッグが入れ替わります。
+            1部 NIGHT
+            成績順に上からの8ボケの得票率を平均
+            2人のH得票率を合計
+            上位17タッグが残留
+            下位8タッグが降格
+            2部 DAY
+            成績順に上からの4ボケの得票率を平均
+            2人のH得票率を合計
+            上位8タッグが昇格
+            1部は、タッグを組んでいない人は最下位扱いとなります。
+            2部は、タッグを組んでいない人は集計対象外となります。
+            同率の場合は、投稿数が多いタッグを上位とします。
+            投稿数が満たない人は、H得票率0として扱われます。
+            タッグの結成は、シーズン中いつでも可能です。
+            プレーオフ
+            各シーズンの予選終了後、1部の成績上位4タッグで優勝を決定するプレーオフを行います。
+            """
+            let tagged = giriRuleReadingText(tagPage, into: single).rule
+            let tagOne = tagged.leagueDetail("1部", tag: true), tagTwo = tagged.leagueDetail("2部", tag: true)
+            try check(tagged.tagDivision != nil && tagOne.relegationCount == 8 && tagOne.stayCount == 17 && tagTwo.promotionCount == 8 && tagOne.topAnswerCount == 8,
+                      "the tag page fills the tag division's counts")
+            try check(tagOne.unqualifiedRanksLast && tagTwo.unqualifiedExcluded && tagged.tagDivision?.memberShortfallZero == true
+                      && tagged.tagDivision?.playoffEntrants == 4 && tagged.tagDivision?.tieBreak.contains("タッグ") == true && !(tagged.tagDivision?.formationNote.isEmpty ?? true),
+                      "unpaired players, zero for short members, tie breaks and the playoff size are read")
+            try check(tagged.leagueDetail("1部").stayCount == 35 && tagged.leagueDetail("1部").relegationCount == 15, "reading the tag page keeps the single division as it was")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

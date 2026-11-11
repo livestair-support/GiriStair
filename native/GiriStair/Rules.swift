@@ -148,7 +148,9 @@ struct GiriRuleEditor: View {
     init(rule: GiriRule, isNew: Bool = false, onSaved: ((GiriRule) -> Void)? = nil) {
         // リーグの決まりは名前と同じ順で持つ（テンプレートなど名前だけのリーグも直せるようにする）。
         var value = rule
-        if value.leagueDetails.map(\.name) != value.leagues { value.setLeagues(value.leagues) }
+        if value.leagueDetails.map(\.name) != value.leagues || (value.tagDivision.map { $0.leagueDetails.map(\.name) != value.leagues } ?? false) {
+            value.setLeagues(value.leagues)
+        }
         _draft = State(initialValue: value)
         _original = State(initialValue: value)
         self.isNew = isNew
@@ -163,12 +165,15 @@ struct GiriRuleEditor: View {
             basicSection
             if isTournament {
                 tournamentSection
+                entrySection
                 if draft.kind == .online { scheduleSection }
                 stageSection
                 scoringSection
             } else {
                 scheduleSection
                 leagueSection
+                // 0.28：タッグ部門（リーグのあるサイト）。
+                if !draft.leagueDetails.isEmpty || draft.tagDivision != nil { tagSection }
                 // 0.27：成績の出し方は、リーグ・シーズンのある通常だけ（1回答で終わるサイトには平均がない）。
                 if draft.usesScoring { scoringSection }
                 planSection
@@ -301,45 +306,84 @@ struct GiriRuleEditor: View {
     }
 
     /// 0.27：リーグごとに、規定数・お題の選び方・昇格／降格の人数を入れる。
+    /// 0.28：上から何回答の平均・残留の人数・足りない時の扱い・リーグごとの日程とエントリーも入れる。
     private var leagueSection: some View {
         Section {
             AppCardSectionTitle(title: "リーグ", systemImage: "list.number", accentColor: AppSectionAccent.memo,
-                                infoTitle: "リーグについて", infoMessage: "上位から順に入れます。リーグごとに規定数や入れ替えの人数を入れられます。リーグがないサイトは空のままにします。")
+                                infoTitle: "リーグについて", infoMessage: "上位から順に入れます。リーグごとに成績の出し方・規定数・入れ替えの人数・日程を入れられます。リーグがないサイトは空のままにします。")
                 .listRowSeparator(.hidden)
             ForEach(Array(draft.leagueDetails.indices), id: \.self) { index in
-                leagueRow(index)
+                leagueRow(index, tag: false)
             }
             Button("リーグを追加", systemImage: "plus.circle") {
                 draft.leagueDetails.append(GiriRuleLeague(name: "\(draft.leagueDetails.count + 1)部"))
                 draft.leagues = draft.leagueDetails.map(\.name)
+                draft.tagDivision?.leagueDetails.append(GiriRuleLeague(name: draft.leagues.last ?? ""))
             }
             .buttonStyle(.borderless).tint(accentActionColor)
+            if !draft.leagueDetails.isEmpty {
+                HStack(spacing: 12) {
+                    GiriEditorLabel("エントリーの決まり")
+                    TextField("例：先着順・定員まで", text: $draft.entryNote, axis: .vertical).multilineTextAlignment(.trailing).lineLimit(1...4)
+                }
+            }
         }
         .appSectionCardStyle(accentColor: AppSectionAccent.memo)
     }
 
-    private func leagueRow(_ index: Int) -> some View {
-        let league = Binding(get: { draft.leagueDetails.indices.contains(index) ? draft.leagueDetails[index] : GiriRuleLeague() },
-                             set: { value in
-                                 guard draft.leagueDetails.indices.contains(index) else { return }
-                                 draft.leagueDetails[index] = value
-                                 draft.leagues = draft.leagueDetails.map(\.name)
-                             })
+    /// シングル（tag == false）かタッグのリーグの決まりへの入力。タッグのリーグ名はシングルと同じにする。
+    private func leagueBinding(_ index: Int, tag: Bool) -> Binding<GiriRuleLeague> {
+        Binding(get: {
+            let list = tag ? (draft.tagDivision?.leagueDetails ?? []) : draft.leagueDetails
+            return list.indices.contains(index) ? list[index] : GiriRuleLeague(name: draft.leagues.indices.contains(index) ? draft.leagues[index] : "")
+        }, set: { value in
+            if tag {
+                guard draft.tagDivision != nil else { return }
+                var list = draft.tagDivision?.leagueDetails ?? []
+                while list.count <= index { list.append(GiriRuleLeague(name: draft.leagues.indices.contains(list.count) ? draft.leagues[list.count] : "")) }
+                list[index] = value
+                draft.tagDivision?.leagueDetails = list
+            } else {
+                guard draft.leagueDetails.indices.contains(index) else { return }
+                draft.leagueDetails[index] = value
+                draft.leagues = draft.leagueDetails.map(\.name)
+                // タッグのリーグ名もそろえる。
+                if let count = draft.tagDivision?.leagueDetails.count, index < count { draft.tagDivision?.leagueDetails[index].name = value.name }
+            }
+        })
+    }
+
+    private func leagueRow(_ index: Int, tag: Bool) -> some View {
+        let league = leagueBinding(index, tag: tag)
+        let unit = tag ? "組" : "人"
         let requiredMode = Binding(get: { league.wrappedValue.requiredCount != nil ? "count" : league.wrappedValue.requiredFraction != nil ? "fraction" : "" },
                                    set: { mode in
                                        league.wrappedValue.requiredCount = mode == "count" ? (league.wrappedValue.requiredCount ?? 4) : nil
                                        league.wrappedValue.requiredFraction = mode == "fraction" ? (league.wrappedValue.requiredFraction ?? "1/2") : nil
                                    })
+        let shortfall = Binding(get: { league.wrappedValue.unqualifiedRanksLast ? "last" : league.wrappedValue.unqualifiedExcluded ? "excluded" : "" },
+                                set: { mode in
+                                    league.wrappedValue.unqualifiedRanksLast = mode == "last"
+                                    league.wrappedValue.unqualifiedExcluded = mode == "excluded"
+                                })
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text("\(index + 1)").font(.caption).foregroundStyle(.secondary).frame(width: 18)
-                TextField("上位からリーグ名", text: league.name).font(.subheadline.weight(.semibold))
-                Button(role: .destructive) {
-                    draft.leagueDetails.remove(at: index)
-                    draft.leagues = draft.leagueDetails.map(\.name)
-                } label: { Image(systemName: "minus.circle") }
-                .buttonStyle(.borderless)
+                if tag {
+                    Text(league.wrappedValue.name.isEmpty ? "リーグ\(index + 1)" : league.wrappedValue.name).font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 8)
+                } else {
+                    TextField("上位からリーグ名", text: league.name).font(.subheadline.weight(.semibold))
+                    TextField("呼び名（任意）", text: league.subtitle).font(.caption).multilineTextAlignment(.trailing).frame(maxWidth: 110)
+                    Button(role: .destructive) {
+                        draft.leagueDetails.remove(at: index)
+                        draft.leagues = draft.leagueDetails.map(\.name)
+                        if let count = draft.tagDivision?.leagueDetails.count, index < count { draft.tagDivision?.leagueDetails.remove(at: index) }
+                    } label: { Image(systemName: "minus.circle") }
+                    .buttonStyle(.borderless)
+                }
             }
+            GiriOptionalStepper(title: "成績　上から", unit: "回答の平均", value: league.topAnswerCount, range: 1...100, initial: 8)
             Picker(selection: requiredMode) {
                 Text("なし").tag("")
                 Text("回数").tag("count")
@@ -355,14 +399,88 @@ struct GiriRuleEditor: View {
                 } label: { GiriEditorLabel("割合") }
                 .pickerStyle(.menu).tint(Color.primary)
             }
-            GiriOptionalStepper(title: "お題", unit: "題から1題", value: league.promptChoices, range: 2...20, initial: 2)
-            if index > 0 { GiriOptionalStepper(title: "上位", unit: "人が昇格", value: league.promotionCount, range: 1...200, initial: 10) }
-            if index + 1 < draft.leagueDetails.count { GiriOptionalStepper(title: "下位", unit: "人が降格", value: league.relegationCount, range: 1...200, initial: 10) }
-            Toggle(isOn: league.unqualifiedRanksLast) { GiriEditorLabel("規定数に届かない人は最下位") }
-                .tint(AppSectionAccent.memo)
+            Picker(selection: shortfall) {
+                Text("決めない").tag("")
+                Text("最下位扱い").tag("last")
+                Text("集計対象外").tag("excluded")
+            } label: { GiriEditorLabel(tag ? "組んでいない・足りない時" : "回答が足りない時") }
+            .pickerStyle(.menu).tint(Color.primary)
+            if index > 0 { GiriOptionalStepper(title: "上位", unit: unit + "が昇格", value: league.promotionCount, range: 1...200, initial: 10) }
+            GiriOptionalStepper(title: "上位", unit: unit + "が残留", value: league.stayCount, range: 1...500, initial: 30)
+            if index + 1 < max(draft.leagueDetails.count, draft.leagues.count) { GiriOptionalStepper(title: "下位", unit: unit + "が降格", value: league.relegationCount, range: 1...200, initial: 10) }
+            if !tag {
+                GiriOptionalStepper(title: "お題", unit: "題から1題", value: league.promptChoices, range: 2...20, initial: 2)
+                GiriOptionalStepper(title: "1題につき", unit: "回答", value: league.answersPerPrompt, range: 1...20, initial: 1)
+                GiriOptionalStepper(title: "エントリー", unit: "日", value: league.entryDays, range: 1...60, initial: 1)
+                GiriOptionalStepper(title: "投稿", unit: "日（空ならルールの日数）", value: league.submissionDays, range: 1...365, initial: 7)
+                GiriOptionalStepper(title: "投票", unit: "日（空ならルールの日数）", value: league.votingDays, range: 1...365, initial: 4)
+            }
         }
         .font(.subheadline)
         .padding(.vertical, 4)
+    }
+
+    /// 0.28：通常のサイトの「タッグ」部門（2人で組み、2人の成績を合わせて別に順位を付ける）。
+    private var tagSection: some View {
+        Section {
+            AppCardSectionTitle(title: "タッグ部門", systemImage: "person.2", accentColor: AppSectionAccent.favorite,
+                                infoTitle: "タッグ部門", infoMessage: "シングルとは別に、2人で組んで順位を付けるサイトで使います。リーグの名前はシングルと同じで、入れ替えの組数などはここで入れます。")
+                .listRowSeparator(.hidden)
+            Toggle(isOn: Binding(get: { draft.tagDivision != nil }, set: { on in
+                draft.tagDivision = on ? GiriRuleTagDivision(leagueDetails: draft.leagues.map { GiriRuleLeague(name: $0) }) : nil
+            })) { GiriEditorLabel("タッグ部門がある") }
+            .tint(AppSectionAccent.favorite)
+            if draft.tagDivision != nil {
+                Stepper(value: tagBinding(\.memberCount, 2), in: 2...6) {
+                    HStack { GiriEditorLabel("1組の人数"); Spacer(minLength: 8); Text("\(draft.tagDivision?.memberCount ?? 2)人").font(.subheadline) }
+                }
+                Picker(selection: tagBinding(\.teamScoring, "sum")) {
+                    ForEach(GiriRuleTagDivision.scorings, id: \.value) { Text($0.title).tag($0.value) }
+                } label: { GiriEditorLabel("組の成績") }
+                .pickerStyle(.menu).tint(Color.primary)
+                Toggle(isOn: tagBinding(\.memberShortfallZero, false)) { GiriEditorLabel("回答が足りない人の値は0") }
+                    .tint(AppSectionAccent.favorite)
+                HStack(spacing: 12) {
+                    GiriEditorLabel("同率の時")
+                    TextField("例：投稿数が多い組を上位", text: tagBinding(\.tieBreak, "")).multilineTextAlignment(.trailing)
+                }
+                GiriOptionalStepper(title: "プレーオフ　上位", unit: "組", value: tagBinding(\.playoffEntrants, nil), range: 1...50, initial: 4)
+                TextField("組む・解消するの決まり（任意）", text: tagBinding(\.formationNote, ""), axis: .vertical).lineLimit(1...5)
+                ForEach(Array(draft.leagues.indices), id: \.self) { index in
+                    leagueRow(index, tag: true)
+                }
+            }
+        }
+        .appSectionCardStyle(accentColor: AppSectionAccent.favorite)
+    }
+
+    private func tagBinding<Value>(_ keyPath: WritableKeyPath<GiriRuleTagDivision, Value>, _ fallback: Value) -> Binding<Value> {
+        Binding(get: { draft.tagDivision?[keyPath: keyPath] ?? fallback },
+                set: { value in draft.tagDivision?[keyPath: keyPath] = value })
+    }
+
+    /// 0.28：エントリー（申し込み）の期間・定員。大会で使う（通常のサイトはリーグごとに入れる）。
+    private var entrySection: some View {
+        Section {
+            AppCardSectionTitle(title: "エントリー", systemImage: "person.badge.plus", accentColor: AppSectionAccent.scan,
+                                infoTitle: "エントリー", infoMessage: "申し込みの期間がある大会で使います。大会にこのルールを選ぶと、エントリーの期間を最初の投稿開始（生大喜利は開始）の前に入れます。")
+                .listRowSeparator(.hidden)
+            Toggle(isOn: Binding(get: { draft.entryDays != nil }, set: { draft.entryDays = $0 ? (draft.entryDays ?? 7) : nil })) {
+                GiriEditorLabel("エントリーの期間がある")
+            }
+            .tint(AppSectionAccent.scan)
+            if let days = draft.entryDays {
+                Stepper(value: Binding(get: { days }, set: { draft.entryDays = $0 }), in: 1...365) {
+                    HStack { GiriEditorLabel("期間"); Spacer(minLength: 8); Text("\(days)日").font(.subheadline) }
+                }
+                GiriOptionalStepper(title: "定員", unit: "人", value: $draft.capacity, range: 1...10000, initial: 32)
+                HStack(spacing: 12) {
+                    GiriEditorLabel("決まり")
+                    TextField("例：先着順・取り下げ不可", text: $draft.entryNote, axis: .vertical).multilineTextAlignment(.trailing).lineLimit(1...4)
+                }
+            }
+        }
+        .appSectionCardStyle(accentColor: AppSectionAccent.scan)
     }
 
     private var planSection: some View {
@@ -411,6 +529,7 @@ struct GiriRuleEditor: View {
                 ForEach(GiriRuleScoring.allCases) { Text($0.title).tag($0.rawValue) }
             } label: { GiriEditorLabel("順位の決め方") }
             .pickerStyle(.menu).tint(Color.primary)
+            GiriOptionalStepper(title: "1人", unit: "回答まで", value: plan.answersPerEntrant, range: 1...20, initial: 2)
             Toggle(isOn: plan.countsInSeason) { GiriEditorLabel("シーズンの成績に含める") }
                 .tint(AppSectionAccent.favorite)
         }
@@ -614,6 +733,14 @@ struct GiriRuleEditor: View {
         for index in details.indices { details[index].name = details[index].name.trimmingCharacters(in: .whitespacesAndNewlines) }
         value.leagueDetails = details.filter { !$0.name.isEmpty }
         value.leagues = value.leagueDetails.map(\.name)
+        if let tag = value.tagDivision {
+            // 0.28：タッグのリーグの決まりも、シングルのリーグ名の順にそろえる。
+            value.tagDivision?.leagueDetails = value.leagues.map { tag.leagueDetail($0) }
+            value.tagDivision?.tieBreak = tag.tieBreak.trimmingCharacters(in: .whitespacesAndNewlines)
+            value.tagDivision?.formationNote = tag.formationNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        value.entryNote = value.entryNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.entryDays == nil && value.effectiveScope == .tournament { value.capacity = nil }
         value.tieBreak = value.tieBreak.trimmingCharacters(in: .whitespacesAndNewlines)
         for index in value.stages.indices { value.stages[index].advanceNote = value.stages[index].advanceNote.trimmingCharacters(in: .whitespacesAndNewlines) }
         if value.kind == .live { value.scope = .tournament }

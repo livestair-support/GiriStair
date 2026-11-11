@@ -316,23 +316,45 @@ struct GiriSiteDetail: View {
     @ViewBuilder private func seasonTotalsRows(site: OnlineSite, seasonID: String?, seasonName: String) -> some View {
         // 0.23：シーズンのルールが「規定回答数の上位の平均」なら、上位の規定回答数分だけで平均する。
         let rule = site.ruleID(forSeason: seasonID).flatMap { store.rule($0) }
-        let required = rule?.scoring == .topRequired ? rule?.requiredAnswerCount : nil
+        // 0.28：リーグごとに「上から○回答の平均」が決まっている時は、その数で平均する（タッグもリーグの数を使う）。
+        let league = seasonLeague(site: site, seasonID: seasonID)
+        let isTag = site.division == "tag" && rule?.tagDivision != nil
+        let leagueTop = league.flatMap { rule?.leagueDetail($0, tag: isTag).topAnswerCount }
+        let required = leagueTop ?? (rule?.scoring == .topRequired ? rule?.requiredAnswerCount : nil)
         let totals = giriSeasonTotals(siteID: site.id, seasonID: seasonID, seasonName: seasonName, events: store.events, notes: store.notes,
                                       requiredAnswerCount: required)
         if let rule { seasonTotalRow("ルール", rule.displayName) }
+        if isTag, let tag = rule?.tagDivision {
+            seasonTotalRow(tag.name, site.tagPartner.isEmpty ? "相手未設定" : "相手：" + site.tagPartner)
+        }
         seasonTotalRow("提出した回答", "\(totals.submittedAnswerCount)回答")
         seasonTotalRow("点数の記録済み", "\(totals.scoredAnswerCount)回答")
         if let required {
             seasonTotalRow("規定回答数", totals.rateSampleCount >= required ? "\(required)回答（達成）" : "\(required)回答（あと\(required - totals.rateSampleCount)）")
         }
+        // 0.28：上から○回答に届かない時の扱い（最下位・集計対象外）。
+        if let league, let rule, let top = leagueTop, totals.rateSampleCount < top {
+            let detail = rule.leagueDetail(league, tag: isTag)
+            if detail.unqualifiedRanksLast || detail.unqualifiedExcluded {
+                Text("\(top)回答に届かない時は" + (detail.unqualifiedRanksLast ? "最下位扱い" : "集計対象外") + "になります。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
         // 0.27：リーグの規定数（○回以上・結果お題数の1/2以上など）に届いているか。
-        if let rule, let league = seasonLeague(site: site, seasonID: seasonID),
-           let needed = rule.leagueDetail(league).requiredAnswers(cycleCount: rule.regularCycleCount) {
+        if let rule, let league,
+           let needed = rule.leagueDetail(league, tag: isTag).requiredAnswers(cycleCount: rule.regularCycleCount) {
             seasonTotalRow("規定数（\(league)）", totals.answeredCycleCount >= needed ? "\(needed)回（達成）" : "\(needed)回（あと\(needed - totals.answeredCycleCount)）")
         }
         // 0.27：回ごとに勝ち抜けを決めるルールは、平均を出さない。
         if rule?.scoring != .perRound {
             seasonTotalRow(required == nil ? "平均（1人あたり）" : "上位\(required ?? 0)回答の平均（1人あたり）", totals.averagePointsPerVoter.map(giriScoreText) ?? "未記録")
+            if leagueTop != nil {
+                seasonTotalRow("H得票率（上位\(required ?? 0)回答）", totals.averageVoteRate.map { String(format: "%.1f%%", $0) } ?? "未記録")
+            }
+            if isTag, let tag = rule?.tagDivision {
+                Text("タッグの成績は、" + tag.scoringTitle + "した値です（相手の値は入っていません）。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         if totals.droppedLowerSamples {
             Text("得票率の低い\(totals.rateSampleCount - (required ?? 0))回答は平均に入れていません。")
@@ -377,6 +399,10 @@ struct GiriSiteDetail: View {
                 if site.hasAffiliations {
                     Divider().overlay(appSeparatorColor)
                     GiriProfileInfoRow(title: "現在のリーグ", value: siteLeague(site), labelWidth: 80, verticalPadding: 8)
+                }
+                if site.division == "tag" {
+                    Divider().overlay(appSeparatorColor)
+                    GiriProfileInfoRow(title: "部門", value: site.tagPartner.isEmpty ? "タッグ" : "タッグ（" + site.tagPartner + "）", labelWidth: 80, verticalPadding: 8)
                 }
                 if let settings = site.cycleSettings {
                     Divider().overlay(appSeparatorColor)

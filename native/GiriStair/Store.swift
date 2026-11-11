@@ -554,6 +554,10 @@ final class GiriStore: ObservableObject {
     private static func renamePlayer(from old: String, to name: String, in next: inout GiriDocument) {
         let key = playerSearchKey(old)
         func rename(_ value: String) -> String { playerSearchKey(value) == key ? name : value }
+        // 0.28：サイトのタッグの相手。
+        for index in next.onlineSites.indices where !next.onlineSites[index].tagPartner.isEmpty {
+            next.onlineSites[index].tagPartner = rename(next.onlineSites[index].tagPartner)
+        }
         for index in next.events.indices {
             // 団体の主催者名はプレイヤーの名前変更で変えない。
             if !next.events[index].organizerIsGroup { next.events[index].organizer = rename(next.events[index].organizer) }

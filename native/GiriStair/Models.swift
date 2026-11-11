@@ -1197,11 +1197,14 @@ struct OnlineSite: Codable, Equatable, Identifiable {
     var isPaused: Bool = false
     /// 0.23：シーズンごとに選んだルール（シーズンのID、シーズンがないサイトは "site" → ルールのID）。
     var seasonRuleIDs: [String: String] = [:]
+    /// 0.28：参加している部門（"" はシングル・"tag" はタッグ）とタッグの相手。値がある時だけ書く。
+    var division: String = ""
+    var tagPartner: String = ""
 }
 
 extension OnlineSite {
     private enum CodingKeys: String, CodingKey {
-        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline, ruleHistory, isPaused, seasonRuleIDs
+        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline, ruleHistory, isPaused, seasonRuleIDs, division, tagPartner
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1238,6 +1241,8 @@ extension OnlineSite {
         ruleHistory = try c.decodeIfPresent([SiteRuleRevision].self, forKey: .ruleHistory) ?? []
         isPaused = try c.decodeIfPresent(Bool.self, forKey: .isPaused) ?? false
         seasonRuleIDs = try c.decodeIfPresent([String: String].self, forKey: .seasonRuleIDs) ?? [:]
+        division = try c.decodeIfPresent(String.self, forKey: .division) ?? ""
+        tagPartner = try c.decodeIfPresent(String.self, forKey: .tagPartner) ?? ""
 
         try validate()
     }
@@ -1276,6 +1281,8 @@ extension OnlineSite {
         try c.encode(ruleHistory, forKey: .ruleHistory)
         try c.encode(isPaused, forKey: .isPaused)
         if !seasonRuleIDs.isEmpty { try c.encode(seasonRuleIDs, forKey: .seasonRuleIDs) }
+        if !division.isEmpty { try c.encode(division, forKey: .division) }
+        if !tagPartner.isEmpty { try c.encode(tagPartner, forKey: .tagPartner) }
 
     }
 }
