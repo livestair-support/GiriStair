@@ -885,13 +885,19 @@ struct GiriRuleStage: Codable, Equatable, Identifiable {
     var advanceFraction: String? = nil
     /// 0.27：ほかの勝ち抜けの条件（得点・ボーダーなど）のメモ。
     var advanceNote: String = ""
+    /// 0.28：この段階でのメンバーの変更（"add"：増やせる・"swap"：入れ替えられる。空は変えない）と人数。
+    var memberChange: String = ""
+    var memberChangeCount: Int? = nil
 }
+
+/// 0.28：段階でのメンバーの変更の選び方。
+let giriRuleMemberChanges: [(value: String, title: String)] = [("add", "メンバーを増やせる"), ("swap", "メンバーを入れ替えられる")]
 
 /// 0.27：段階ごとの形式（準決勝だけタイマン、など）。
 let giriRuleStageLineups = ["横並び", "タイマン（1対1）", "グループ対戦", "リーグ（総当たり）", "お題ごとに勝ち抜け"]
 
 extension GiriRuleStage {
-    private enum CodingKeys: String, CodingKey { case id, name, kind, lineup, judging, promptCount, advanceCount, advanceFraction, advanceNote }
+    private enum CodingKeys: String, CodingKey { case id, name, kind, lineup, judging, promptCount, advanceCount, advanceFraction, advanceNote, memberChange, memberChangeCount }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
@@ -903,6 +909,8 @@ extension GiriRuleStage {
         advanceCount = try c.decodeIfPresent(Int.self, forKey: .advanceCount)
         advanceFraction = try c.decodeIfPresent(String.self, forKey: .advanceFraction)
         advanceNote = try c.decodeIfPresent(String.self, forKey: .advanceNote) ?? ""
+        memberChange = try c.decodeIfPresent(String.self, forKey: .memberChange) ?? ""
+        memberChangeCount = try c.decodeIfPresent(Int.self, forKey: .memberChangeCount)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -915,6 +923,13 @@ extension GiriRuleStage {
         try c.encodeIfPresent(advanceCount, forKey: .advanceCount)
         try c.encodeIfPresent(advanceFraction, forKey: .advanceFraction)
         if !advanceNote.isEmpty { try c.encode(advanceNote, forKey: .advanceNote) }
+        if !memberChange.isEmpty { try c.encode(memberChange, forKey: .memberChange) }
+        try c.encodeIfPresent(memberChangeCount, forKey: .memberChangeCount)
+    }
+    /// 0.28：メンバーの変更の短い説明（「2人まで増やせる」など）。
+    var memberChangeText: String? {
+        guard let title = giriRuleMemberChanges.first(where: { $0.value == memberChange })?.title else { return nil }
+        return memberChangeCount.map { "\($0)人まで" + title.replacingOccurrences(of: "メンバーを", with: "") } ?? title
     }
     var stageKind: StageKind? { kind.flatMap(StageKind.init(rawValue:)) }
     /// 0.27：勝ち抜けの条件（上位8人・上位半数など）。
@@ -957,6 +972,8 @@ struct GiriRule: Codable, Equatable, Identifiable {
     var entryNote: String = ""
     /// 0.28：通常のサイトの「タッグ」部門（なければ nil）。
     var tagDivision: GiriRuleTagDivision? = nil
+    /// 0.28：大会の途中でメンバーが変わる（段階ごとに増やせる・入れ替えられる）。
+    var hasMemberChanges: Bool = false
     var specialPlans: [GiriRuleSpecialPlan] = []
     // 生大喜利
     var tournamentFormat: TournamentFormat = .individual
@@ -1019,7 +1036,7 @@ struct GiriRule: Codable, Equatable, Identifiable {
 extension GiriRule {
     private enum CodingKeys: String, CodingKey {
         case id, name, kind, scope, memo, scoring, requiredAnswerCount, submissionDays, votingDays, nextPrompt, intervalDays, regularCycleCount, advanceCount, leagues, specialPlans, tournamentFormat, knockout, judging, stages, updatedAt
-        case leagueDetails, advanceFraction, tieBreak, voteBonusPoints, teamAnswerStyle, entryDays, capacity, entryNote, tagDivision
+        case leagueDetails, advanceFraction, tieBreak, voteBonusPoints, teamAnswerStyle, entryDays, capacity, entryNote, tagDivision, hasMemberChanges
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1050,6 +1067,7 @@ extension GiriRule {
         capacity = try c.decodeIfPresent(Int.self, forKey: .capacity)
         entryNote = try c.decodeIfPresent(String.self, forKey: .entryNote) ?? ""
         tagDivision = try c.decodeIfPresent(GiriRuleTagDivision.self, forKey: .tagDivision)
+        hasMemberChanges = try c.decodeIfPresent(Bool.self, forKey: .hasMemberChanges) ?? false
         specialPlans = try c.decodeIfPresent([GiriRuleSpecialPlan].self, forKey: .specialPlans) ?? []
         tournamentFormat = (try? c.decodeIfPresent(TournamentFormat.self, forKey: .tournamentFormat)) ?? .individual
         knockout = try c.decodeIfPresent(Bool.self, forKey: .knockout) ?? false
@@ -1085,6 +1103,7 @@ extension GiriRule {
         try c.encodeIfPresent(capacity, forKey: .capacity)
         if !entryNote.isEmpty { try c.encode(entryNote, forKey: .entryNote) }
         try c.encodeIfPresent(tagDivision, forKey: .tagDivision)
+        if hasMemberChanges { try c.encode(true, forKey: .hasMemberChanges) }
         try c.encode(specialPlans, forKey: .specialPlans)
         try c.encode(tournamentFormat, forKey: .tournamentFormat)
         try c.encode(knockout, forKey: .knockout)
@@ -1230,6 +1249,8 @@ func giriApplyRule(_ rule: GiriRule, to event: inout GiriEvent) {
     guard giriRuleFits(rule, event: event) else { return }
     event.ruleID = rule.id
     event.tournamentFormat = rule.tournamentFormat
+    // 0.28：チーム戦で途中でメンバーが変わるルール。
+    if rule.hasMemberChanges && rule.tournamentFormat != .individual { event.hasMemberChanges = true }
     // 0.28：エントリーの期間があるルールは、まだ入れていない時だけ、最初の投稿開始（なければ開始）の前に入れる。
     if let days = rule.entryDays, event.entryStart == nil && event.entryEnd == nil,
        let start = event.effectiveRounds.compactMap(\.submissionStart).min() ?? event.startsAt {
@@ -1258,7 +1279,7 @@ func giriRuleStageResults(_ rule: GiriRule) -> [ResultStage] {
         stage.promptCount = item.promptCount
         stage.advanceCount = item.advanceCount
         // 0.27：割合や得点で決める勝ち抜けは、段階のメモに残す（人数は結果の参加者数で変わるため）。
-        let notes = [item.advanceCount == nil ? item.advanceText.map { $0 + "が勝ち抜け" } : nil, item.advanceNote.isEmpty ? nil : item.advanceNote].compactMap { $0 }
+        let notes = [item.advanceCount == nil ? item.advanceText.map { $0 + "が勝ち抜け" } : nil, item.advanceNote.isEmpty ? nil : item.advanceNote, item.memberChangeText].compactMap { $0 }
         if !notes.isEmpty { stage.memo = notes.joined(separator: "。") }
         return stage
     }

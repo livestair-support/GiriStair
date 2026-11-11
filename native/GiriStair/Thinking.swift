@@ -1457,7 +1457,7 @@ struct GiriThoughtEditor: View {
     private var event: GiriEvent? { store.events.first { $0.id == draft.eventId } }
     private var isLong: Bool { selectedFormat == .onlineLong }
     /// 0.28：チーム戦の大会のメンバー（自分を除く）。
-    private var teammates: [String] { event?.teammates(isSelf: store.preferences.isSelf) ?? [] }
+    private var teammates: [String] { event?.teammates(isSelf: store.preferences.isSelf, stageID: draft.resultStageId ?? draft.roundId) ?? [] }
 
     /// 0.16：新しいお題を保存したあと、どちらのモードで回答を入れるかを選ぶ。
     /// 0.17：「このお題に参加」はお題の側で決める（nil は触っていない）。
@@ -2060,11 +2060,13 @@ struct GiriAnswerResultFields: View {
                 }
                 if !teammates.isEmpty {
                     // 0.28：チームで出した回答の原案（成績は原案の人に数える）。
+                    // 空は「チーム」（チームで生んだ回答。誰の成績にも数えない）。
                     Picker(selection: recordBinding(record.id).drafter) {
-                        Text("自分").tag("")
+                        Text("チーム（原案なし）").tag("")
+                        Text("自分").tag(giriSelfDrafter)
                         ForEach(teammates, id: \.self) { Text($0).tag($0) }
                         let drafter = record.drafter
-                        if !drafter.isEmpty && !teammates.contains(drafter) { Text(drafter).tag(drafter) }
+                        if !drafter.isEmpty && drafter != giriSelfDrafter && !teammates.contains(drafter) { Text(drafter).tag(drafter) }
                     } label: { GiriEditorLabel("原案") }
                     .pickerStyle(.menu).tint(.primary)
                 }

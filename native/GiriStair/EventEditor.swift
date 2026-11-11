@@ -646,6 +646,15 @@ struct GiriEventEditor: View {
                                           tintColor: AppSectionAccent.live)
                         }
                     }.tint(AppSectionAccent.live)
+                    // 0.28：予選の途中でメンバーが増える・欠員が出る大会は、段階ごとにメンバーを入れる。
+                    Toggle(isOn: $draft.hasMemberChanges) {
+                        HStack(spacing: 4) {
+                            GiriEditorLabel("途中でメンバーが変わる")
+                            AppInfoButton(title: "メンバーの変更",
+                                          message: "途中でメンバーを増やせる大会や、欠員が出た時にオンにします。結果の入力で段階ごとに出たメンバーを入れられます。",
+                                          tintColor: AppSectionAccent.live)
+                        }
+                    }.tint(AppSectionAccent.live)
                 }
                 if isLive {
                     Picker(selection: $draft.knockout) {
@@ -1245,6 +1254,7 @@ struct GiriEventEditor: View {
                 // 企画は生大喜利・スプシ系の通常の会だけ。
                 if !candidate.eventFormat.allowsProject || candidate.meetingType != .casual { candidate.isProject = false; candidate.isKumite = false }
                 if candidate.eventFormat != .live || candidate.meetingType != .casual || candidate.isProject || candidate.isKumite { candidate.isLiveShow = false }
+                if !candidate.isTeamTournament { candidate.hasMemberChanges = false }
                 candidate.kumiteMains = candidate.isKumite ? cleanedNames(candidate.kumiteMains) : candidate.kumiteMains
                 // 0.27：対戦の形式は、通常会・企画（組手を除く）の時だけ残す。
                 if candidate.meetingType != .casual || candidate.isKumiteEvent || !candidate.eventFormat.hasLiveTiming { candidate.battleKind = nil }

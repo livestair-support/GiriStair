@@ -131,10 +131,13 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
     var answerer: String = ""
     /// 0.13：回答案に付けた印（◎・〇・△・× や点数）。空は印なし。
     var mark: String = ""
-    /// 0.28：チームで出した回答の原案の人（空は自分）。成績は原案の人に数える。
+    /// 0.28：チームで出した回答の原案の人。成績は原案の人に数える。
+    /// 自分は giriSelfDrafter。チーム戦の回答（isTeamAnswer）で空なら、チームで生んだ回答として誰にも数えない。
     var drafter: String = ""
     /// 0.28：チーム戦のメンバーの回答（他人の回答のうち、同じチームの人が出したもの）。
     var isTeammate: Bool = false
+    /// 0.28：チーム戦の大会で出した回答（原案が空ならチームの回答として誰の成績にもしない）。
+    var isTeamAnswer: Bool = false
 
     init(id: String = UUID().uuidString, text: String = "", isSubmitted: Bool = false, placement: Int? = nil, points: Double? = nil, voterCount: Int? = nil, maxPointsPerVoter: Int = 1, memo: String = "", answerer: String = "", mark: String = "") {
         self.id = id; self.text = text; self.isSubmitted = isSubmitted
@@ -142,7 +145,7 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
         self.maxPointsPerVoter = maxPointsPerVoter; self.memo = memo; self.answerer = answerer; self.mark = mark
     }
 
-    private enum CodingKeys: String, CodingKey { case id, text, isSubmitted, placement, points, voterCount, maxPointsPerVoter, memo, answerer, mark, drafter, isTeammate }
+    private enum CodingKeys: String, CodingKey { case id, text, isSubmitted, placement, points, voterCount, maxPointsPerVoter, memo, answerer, mark, drafter, isTeammate, isTeamAnswer }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
@@ -157,6 +160,7 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
         mark = try c.decodeIfPresent(String.self, forKey: .mark) ?? ""
         drafter = try c.decodeIfPresent(String.self, forKey: .drafter) ?? ""
         isTeammate = try c.decodeIfPresent(Bool.self, forKey: .isTeammate) ?? false
+        isTeamAnswer = try c.decodeIfPresent(Bool.self, forKey: .isTeamAnswer) ?? false
         try validate()
     }
     func encode(to encoder: Encoder) throws {
@@ -174,11 +178,22 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
         // 0.28：原案・チームメンバーの印は、ある時だけ書く。
         if !drafter.isEmpty { try c.encode(drafter, forKey: .drafter) }
         if isTeammate { try c.encode(true, forKey: .isTeammate) }
+        if isTeamAnswer { try c.encode(true, forKey: .isTeamAnswer) }
     }
-    /// 0.28：自分の成績に数える回答（自分の回答で、原案が自分のもの）。
-    var countsForSelf: Bool { isOwn && drafter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    /// 0.28：成績を数える人の名前（自分の回答で原案が自分なら空）。
-    var creditedName: String { isOwn ? drafter.trimmingCharacters(in: .whitespacesAndNewlines) : answerer.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedDrafter: String { drafter.trimmingCharacters(in: .whitespacesAndNewlines) }
+    /// 0.28：自分の成績に数える回答。チーム戦の回答は、原案に自分を選んだ時だけ。
+    var countsForSelf: Bool {
+        guard isOwn else { return false }
+        if trimmedDrafter == giriSelfDrafter { return true }
+        return trimmedDrafter.isEmpty && !isTeamAnswer
+    }
+    /// 0.28：チームで生んだ回答（チーム戦で原案を選んでいない）。誰の成績にも数えない。
+    var isTeamBorn: Bool { isOwn && isTeamAnswer && trimmedDrafter.isEmpty }
+    /// 0.28：成績を数える人の名前（自分は空。チームで生んだ回答も空）。
+    var creditedName: String {
+        if !isOwn { return answerer.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return trimmedDrafter == giriSelfDrafter ? "" : trimmedDrafter
+    }
     var isOwn: Bool { answerer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     /// 1人あたりの点（得点÷投票人数）。
     var pointsPerVoter: Double? {
@@ -221,7 +236,7 @@ extension ThoughtNote {
     var submittedAnswers: [AnswerRecord] { ownAnswerRecords.filter(\.isSubmitted) }
     /// 作題者・回答者として出てくる名前（プレイヤー一覧・名前の変更に使う）。
     var referencedPeople: [String] {
-        var names = (effectiveAnswerRecords.map(\.answerer) + effectiveAnswerRecords.map(\.drafter)).filter { !$0.isEmpty && $0 != "回答者不明" }
+        var names = (effectiveAnswerRecords.map(\.answerer) + effectiveAnswerRecords.map(\.drafter)).filter { !$0.isEmpty && $0 != "回答者不明" && $0 != giriSelfDrafter }
         if !promptAuthor.isEmpty { names.append(promptAuthor) }
         return names
     }
@@ -2965,5 +2980,70 @@ extension GiriEvent {
 
 extension AnswerRecord {
     /// 0.28：チーム戦の回答として、その人の成績に数える回答か（メンバーの回答か、その人が原案のチーム回答）。
-    var isTeamCredit: Bool { isTeammate || (isOwn && !drafter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+    var isTeamCredit: Bool { isTeammate || (isOwn && !creditedName.isEmpty) }
+}
+
+/// 0.28：原案が自分の時の値（自分の名前を変えても変わらないように、名前ではなく印で持つ）。
+let giriSelfDrafter = "@self"
+
+extension GiriEvent {
+    /// 0.28：その段階に出たチームのメンバー（自分を除く）。途中でメンバーが変わる大会は段階ごとのメンバー、
+    /// 欠員になったメンバーは除く。段階が分からない時はチームのメンバー。
+    func teammates(isSelf: (String) -> Bool, stageID: String?) -> [String] {
+        let base = teammates(isSelf: isSelf)
+        let stages = tournamentResult?.stages ?? []
+        guard hasMemberChanges, let stageID,
+              var stage = stages.first(where: { $0.id == stageID || ($0.roundId != nil && $0.roundId == stageID) }) else { return base }
+        // 回（お題）の記録は、メンバーを入れた段階全体の記録に合わせる。
+        if stage.members.isEmpty && stage.absentMembers.isEmpty, stage.roundId != nil,
+           let wide = stages.first(where: { $0.roundId == nil && $0.stageId != nil && $0.stageId == stage.stageId }) { stage = wide }
+        let absent = Set(stage.absentMembers.map(playerSearchKey))
+        var seen = Set<String>()
+        let names = (stage.members.isEmpty ? base : stage.members)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !isSelf($0) && !absent.contains(playerSearchKey($0)) && seen.insert(playerSearchKey($0)).inserted }
+        return names
+    }
+    /// 0.28：チーム戦の大会か（回答をチームの回答として扱う）。
+    var isTeamTournament: Bool { meetingType == .tournament && tournamentFormat != .individual }
+}
+
+/// 0.28：チーム戦の大会のお題の回答に「チーム戦の回答」の印を付ける（保存する時）。
+func giriMarkingTeamAnswers(_ note: ThoughtNote, event: GiriEvent?) -> ThoughtNote {
+    guard let event, event.isTeamTournament else { return note }
+    var copy = note
+    let records = note.effectiveAnswerRecords
+    guard records.contains(where: { $0.isOwn && !$0.isTeamAnswer }) else { return note }
+    copy.answerRecords = records.map { record in
+        var value = record
+        if value.isOwn { value.isTeamAnswer = true }
+        return value
+    }
+    copy.usesAnswerRecords = true
+    return copy
+}
+
+/// 0.28：サイトのシーズンに組んだタッグの相手（回ごとの相手。多い順。回に相手がなければサイトの相手）。
+func giriSeasonTagPartners(site: OnlineSite, seasonID: String?, events: [GiriEvent]) -> [(name: String, cycles: Int)] {
+    var counts: [String: (name: String, cycles: Int)] = [:]
+    var order: [String] = []
+    for event in events where event.onlineSiteId == site.id && event.isActualParticipant && event.siteSeasonID == seasonID {
+        let name = event.tagPartner.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { continue }
+        let key = playerSearchKey(name)
+        if counts[key] == nil { order.append(key); counts[key] = (name, 0) }
+        counts[key]?.cycles += 1
+    }
+    let partners = order.compactMap { counts[$0] }.sorted { $0.cycles > $1.cycles }
+    if partners.isEmpty, site.division == "tag", !site.tagPartner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return [(site.tagPartner.trimmingCharacters(in: .whitespacesAndNewlines), 0)]
+    }
+    return partners
+}
+
+/// 0.28：次の回にタッグで出る時の相手の候補（このサイトで最後に組んだ相手。なければサイトの相手）。
+func giriLastTagPartner(site: OnlineSite, events: [GiriEvent]) -> String {
+    let latest = events.filter { $0.onlineSiteId == site.id && !$0.tagPartner.isEmpty }
+        .max { ($0.effectiveRounds.compactMap(\.submissionStart).min() ?? $0.createdAt) < ($1.effectiveRounds.compactMap(\.submissionStart).min() ?? $1.createdAt) }
+    return latest?.tagPartner ?? site.tagPartner
 }

@@ -2173,6 +2173,59 @@ struct DomainRegression {
             try check(oldPrefs.entryEndNotify, "older preferences turn the entry deadline notice on")
         }
 
+        // 0.28 team-born answers, per-stage members and per-cycle tag partners.
+        do {
+            let me: (String) -> Bool = { $0 == "わたし" }
+            var teamBorn = AnswerRecord(text: "チームの回答", isSubmitted: true, points: 40, voterCount: 100); teamBorn.isTeamAnswer = true
+            try check(teamBorn.isTeamBorn && !teamBorn.countsForSelf && teamBorn.creditedName.isEmpty && !teamBorn.isTeamCredit,
+                      "a team answer without a drafter belongs to nobody")
+            var selfDrafted = teamBorn; selfDrafted.drafter = giriSelfDrafter
+            try check(selfDrafted.countsForSelf && selfDrafted.creditedName.isEmpty && !selfDrafted.isTeamCredit, "choosing myself as the drafter counts it for me")
+
+            var teamCup = GiriEvent(title: "架空チーム杯"); teamCup.meetingType = .tournament; teamCup.tournamentFormat = .team; teamCup.eventFormat = .onlineLong
+            teamCup.teams = [GiriTeam(name: "自分のチーム", members: ["わたし", "はるか", "たろう"], isMine: true)]
+            var note = ThoughtNote(title: "お題", kind: .answers); note.eventId = teamCup.id; note.usesAnswerRecords = true
+            note.answerRecords = [AnswerRecord(text: "出した回答", isSubmitted: true)]
+            try check(giriMarkingTeamAnswers(note, event: teamCup).answerRecords.allSatisfy(\.isTeamAnswer), "answers in team tournaments are marked as team answers")
+            var soloCup = teamCup; soloCup.tournamentFormat = .individual
+            try check(giriMarkingTeamAnswers(note, event: soloCup).answerRecords.allSatisfy { !$0.isTeamAnswer }, "individual tournaments keep answers as mine")
+
+            var wide = ResultStage(); wide.name = "予選"; wide.stageId = "stage-a"
+            wide.members = ["わたし", "はるか", "たろう", "じろう"]; wide.absentMembers = ["たろう"]
+            var round = ResultStage(); round.roundId = "round-a"; round.stageId = "stage-a"
+            teamCup.tournamentResult = TournamentResult(stages: [wide, round])
+            try check(teamCup.teammates(isSelf: me, stageID: wide.id) == ["はるか", "たろう"], "without member changes the team stays the same")
+            teamCup.hasMemberChanges = true
+            try check(teamCup.teammates(isSelf: me, stageID: wide.id) == ["はるか", "じろう"] && teamCup.teammates(isSelf: me, stageID: "round-a") == ["はるか", "じろう"],
+                      "member changes add and drop members for the stage and its rounds")
+            let stageJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ResultStage())) as? [String: Any] ?? [:]
+            try check(stageJSON["members"] == nil && stageJSON["absentMembers"] == nil, "stages without member changes keep the older JSON shape")
+            try check(try JSONDecoder().decode(ResultStage.self, from: JSONEncoder().encode(wide)).absentMembers == ["たろう"], "stage members roundtrip")
+
+            var ruleStage = GiriRuleStage(name: "予選2試合目"); ruleStage.memberChange = "add"; ruleStage.memberChangeCount = 1
+            try check(ruleStage.memberChangeText == "1人まで増やせる", "a stage can allow adding a member")
+            var memberRule = GiriRule(name: "途中で増える", kind: .online, scope: .tournament, tournamentFormat: .team, stages: [ruleStage])
+            memberRule.hasMemberChanges = true
+            var ruled = GiriEvent(title: "架空の大会"); ruled.eventFormat = .onlineLong; ruled.meetingType = .tournament
+            giriApplyRule(memberRule, to: &ruled)
+            try check(ruled.hasMemberChanges && ruled.tournamentFormat == .team && giriRuleStageResults(memberRule).first?.memo.contains("1人まで増やせる") == true,
+                      "a rule with member changes turns them on for the tournament and notes each stage")
+            let plainEvent = try JSONSerialization.jsonObject(with: JSONEncoder().encode(GiriEvent(title: "会"))) as? [String: Any] ?? [:]
+            try check(plainEvent["tagPartner"] == nil && plainEvent["hasMemberChanges"] == nil, "events without tags or member changes keep the older JSON shape")
+
+            var site = OnlineSite(name: "架空サイト"); site.id = "tag-site"
+            func cycle(_ partner: String, day: Double) -> GiriEvent {
+                var event = GiriEvent(title: "架空サイト"); event.onlineSiteId = site.id; event.siteSeasonID = "s30"; event.tagPartner = partner
+                var round = EventRound(); round.submissionStart = Date(timeIntervalSince1970: day * 86400); event.rounds = [round]
+                return event
+            }
+            let cycles = [cycle("はるか", day: 1), cycle("はるか", day: 8), cycle("たろう", day: 15), cycle("", day: 22)]
+            let partners = giriSeasonTagPartners(site: site, seasonID: "s30", events: cycles)
+            try check(partners.map(\.name) == ["はるか", "たろう"] && partners.map(\.cycles) == [2, 1], "season partners come from each cycle, most frequent first")
+            try check(giriLastTagPartner(site: site, events: cycles) == "たろう", "the next cycle suggests the latest partner")
+            try check(giriSeasonTagPartners(site: site, seasonID: "other", events: cycles).isEmpty, "single-only seasons have no partners")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

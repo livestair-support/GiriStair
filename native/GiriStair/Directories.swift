@@ -318,14 +318,16 @@ struct GiriSiteDetail: View {
         let rule = site.ruleID(forSeason: seasonID).flatMap { store.rule($0) }
         // 0.28：リーグごとに「上から○回答の平均」が決まっている時は、その数で平均する（タッグもリーグの数を使う）。
         let league = seasonLeague(site: site, seasonID: seasonID)
-        let isTag = site.division == "tag" && rule?.tagDivision != nil
+        // 0.28：タッグで出た回（回ごとの相手）があるシーズンはタッグとして出す。
+        let seasonPartners = giriSeasonTagPartners(site: site, seasonID: seasonID, events: store.events)
+        let isTag = rule?.tagDivision != nil && !seasonPartners.isEmpty
         let leagueTop = league.flatMap { rule?.leagueDetail($0, tag: isTag).topAnswerCount }
         let required = leagueTop ?? (rule?.scoring == .topRequired ? rule?.requiredAnswerCount : nil)
         let totals = giriSeasonTotals(siteID: site.id, seasonID: seasonID, seasonName: seasonName, events: store.events, notes: store.notes,
                                       requiredAnswerCount: required)
         if let rule { seasonTotalRow("ルール", rule.displayName) }
         if isTag, let tag = rule?.tagDivision {
-            seasonTotalRow(tag.name, site.tagPartner.isEmpty ? "相手未設定" : "相手：" + site.tagPartner)
+            seasonTotalRow(tag.name, seasonPartners.map { $0.cycles > 0 ? "\($0.name)（\($0.cycles)回）" : $0.name }.joined(separator: "・"))
         }
         seasonTotalRow("提出した回答", "\(totals.submittedAnswerCount)回答")
         seasonTotalRow("点数の記録済み", "\(totals.scoredAnswerCount)回答")
@@ -352,7 +354,8 @@ struct GiriSiteDetail: View {
                 seasonTotalRow("H得票率（上位\(required ?? 0)回答）", totals.averageVoteRate.map { String(format: "%.1f%%", $0) } ?? "未記録")
             }
             if isTag, let tag = rule?.tagDivision {
-                tagTotalRows(site: site, seasonID: seasonID, seasonName: seasonName, tag: tag, top: leagueTop, totals: totals)
+                tagTotalRows(site: site, seasonID: seasonID, seasonName: seasonName, tag: tag, top: leagueTop, totals: totals,
+                             partner: seasonPartners.first?.name ?? "")
             }
         }
         if totals.droppedLowerSamples {
@@ -367,8 +370,7 @@ struct GiriSiteDetail: View {
 
     /// 0.28：タッグの相手の得票率（記録した回答から。なければ手で入れた値）と、2人の合計。
     @ViewBuilder private func tagTotalRows(site: OnlineSite, seasonID: String?, seasonName: String, tag: GiriRuleTagDivision,
-                                           top: Int?, totals: GiriSeasonTotals) -> some View {
-        let partner = site.tagPartner.trimmingCharacters(in: .whitespacesAndNewlines)
+                                           top: Int?, totals: GiriSeasonTotals, partner: String) -> some View {
         let recorded = giriPersonSeasonRate(name: partner, siteID: site.id, seasonID: seasonID, seasonName: seasonName,
                                             events: store.events, notes: store.notes, topCount: top)
         let manual = site.tagPartnerRates[giriSeasonRuleKey(seasonID)]

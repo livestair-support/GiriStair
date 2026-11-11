@@ -556,6 +556,11 @@ struct GiriRuleEditor: View {
             if draft.kind == .live {
                 Toggle("トーナメント（1対1の勝ち抜き）", isOn: $draft.knockout).tint(AppSectionAccent.live)
             }
+            if draft.tournamentFormat != .individual {
+                // 0.28：途中でメンバーを増やせる・入れ替えられる大会（段階ごとに決める）。
+                Toggle(isOn: $draft.hasMemberChanges) { GiriEditorLabel("途中でメンバーが変わる") }
+                    .tint(AppSectionAccent.live)
+            }
             TextField("審査方法（例：拍手審査・投票）", text: $draft.judging)
         }
         .appSectionCardStyle(accentColor: AppSectionAccent.live)
@@ -601,7 +606,8 @@ struct GiriRuleEditor: View {
         let accent = stageAccent(stage)
         let caption = [stage.lineup.isEmpty ? nil : stage.lineup,
                        stage.promptCount.map { "お題\($0)問" },
-                       stage.advanceText.map { $0 + "が勝ち抜け" }].compactMap { $0 }.joined(separator: "・")
+                       stage.advanceText.map { $0 + "が勝ち抜け" },
+                       draft.hasMemberChanges ? stage.memberChangeText : nil].compactMap { $0 }.joined(separator: "・")
         return Button { selectedStageID = selected ? nil : stage.id } label: {
             HStack(alignment: .center, spacing: 12) {
                 VStack(spacing: 2) {
@@ -698,6 +704,18 @@ struct GiriRuleEditor: View {
             TextField("例：得票率○%以上", text: stage.advanceNote).multilineTextAlignment(.trailing)
         }
         .padding(.leading, 40)
+        if draft.hasMemberChanges && draft.tournamentFormat != .individual {
+            Picker(selection: stage.memberChange) {
+                Text("変えない").tag("")
+                ForEach(giriRuleMemberChanges, id: \.value) { Text($0.title).tag($0.value) }
+            } label: { GiriEditorLabel("メンバー") }
+            .pickerStyle(.menu).tint(Color.primary)
+            .padding(.leading, 40)
+            if !stage.wrappedValue.memberChange.isEmpty {
+                GiriOptionalStepper(title: "人数", unit: "人まで", value: stage.memberChangeCount, range: 1...10, initial: 1)
+                    .padding(.leading, 40)
+            }
+        }
         HStack(spacing: 20) {
             Button { moveStage(index, by: -1) } label: { Label("上へ", systemImage: "arrow.up") }
                 .disabled(index == 0)

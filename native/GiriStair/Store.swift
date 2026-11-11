@@ -91,6 +91,9 @@ final class GiriStore: ObservableObject {
         names += event.teams.flatMap(\.members)
         names += event.tournamentResult?.members ?? []
         names += event.standings.flatMap(\.playerNames)
+        // 0.28：タッグの相手・段階ごとのメンバー。
+        names.append(event.tagPartner)
+        names += (event.tournamentResult?.stages ?? []).flatMap(\.members)
         return names
     }
 
@@ -320,20 +323,23 @@ final class GiriStore: ObservableObject {
         return note
     }
     func saveNote(_ candidate: ThoughtNote) throws {
-        let note = Self.normalizedNote(candidate)
+        // 0.28：チーム戦の大会のお題は、自分の回答をチーム戦の回答にする（原案が空ならチームの回答）。
+        let note = Self.normalizedNote(giriMarkingTeamAnswers(candidate, event: candidate.eventId.flatMap { id in events.first { $0.id == id } }))
         try note.validate()
         try mutate { Self.upsert(note, into: &$0.notes) }
     }
     /// 0.16：お題をまとめて保存する（会のお題をまとめて入れる）。
     func saveNotes(_ candidates: [ThoughtNote]) throws {
-        let notes = candidates.map(Self.normalizedNote)
+        let notes = candidates.map { note in
+            Self.normalizedNote(giriMarkingTeamAnswers(note, event: note.eventId.flatMap { id in events.first { $0.id == id } }))
+        }
         try notes.forEach { try $0.validate() }
         try mutate { next in for note in notes { Self.upsert(note, into: &next.notes) } }
     }
     /// Own result and per-answer scores form one durable document mutation.
     func saveResult(event candidate: GiriEvent, notes candidates: [ThoughtNote]) throws {
         let event = Self.normalizedEvent(candidate)
-        let notes = candidates.map(Self.normalizedNote)
+        let notes = candidates.map { Self.normalizedNote(giriMarkingTeamAnswers($0, event: event)) }
         try event.validate()
         try notes.forEach { try $0.validate() }
         guard Set(notes.map(\.id)).count == notes.count else { throw GiriDataError.invalid("回答メモのIDが重複しています。") }
@@ -558,6 +564,9 @@ final class GiriStore: ObservableObject {
         for index in next.onlineSites.indices where !next.onlineSites[index].tagPartner.isEmpty {
             next.onlineSites[index].tagPartner = rename(next.onlineSites[index].tagPartner)
         }
+        for index in next.events.indices where !next.events[index].tagPartner.isEmpty {
+            next.events[index].tagPartner = rename(next.events[index].tagPartner)
+        }
         for index in next.events.indices {
             // 団体の主催者名はプレイヤーの名前変更で変えない。
             if !next.events[index].organizerIsGroup { next.events[index].organizer = rename(next.events[index].organizer) }
@@ -573,6 +582,8 @@ final class GiriStore: ObservableObject {
                 for stage in result.stages.indices {
                     result.stages[stage].opponents = result.stages[stage].opponents.map(rename)
                     result.stages[stage].advancedWith = result.stages[stage].advancedWith.map(rename)
+                    result.stages[stage].members = result.stages[stage].members.map(rename)
+                    result.stages[stage].absentMembers = result.stages[stage].absentMembers.map(rename)
                     for lap in result.stages[stage].laps.indices {
                         result.stages[stage].laps[lap].opponents = result.stages[stage].laps[lap].opponents.map(rename)
                         for other in result.stages[stage].laps[lap].others.indices {

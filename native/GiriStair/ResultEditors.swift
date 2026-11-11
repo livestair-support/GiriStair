@@ -1115,6 +1115,50 @@ struct GiriStageEditor: View {
     @State private var deleting = false
 
     private var isStageWide: Bool { stage.roundId == nil }
+    /// 0.28：この段階のチームのメンバー（自分を除く。入力中の段階のメンバーを使う）。
+    private var previewTeammates: [String] {
+        var preview = event
+        var result = preview.tournamentResult ?? TournamentResult()
+        if let index = result.stages.firstIndex(where: { $0.id == stage.id }) { result.stages[index] = stage } else { result.stages.append(stage) }
+        preview.tournamentResult = result
+        return preview.teammates(isSelf: store.preferences.isSelf, stageID: stage.id)
+    }
+    /// 0.28：途中でメンバーが変わる大会の、この段階のメンバー（出た・休み）と追加。
+    @State private var newMember = ""
+    private var memberSection: some View {
+        let base = event.teammates(isSelf: store.preferences.isSelf)
+        var seen = Set<String>()
+        let names = (base + stage.members).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !store.preferences.isSelf($0) && seen.insert(playerSearchKey($0)).inserted }
+        return Section {
+            AppCardSectionTitle(title: "この段階のメンバー", systemImage: "person.2.badge.gearshape", accentColor: AppSectionAccent.artist,
+                                infoTitle: "メンバーの変更", infoMessage: "途中でメンバーが増えた・入れ替わった・休んだ時に、この段階に出たメンバーを入れます。お題/回答の原案やメンバーの回答も、この段階のメンバーから選びます。")
+                .listRowSeparator(.hidden)
+            ForEach(names, id: \.self) { name in
+                Picker(selection: Binding(get: { stage.absentMembers.contains { playerSearchKey($0) == playerSearchKey(name) } ? "absent" : "in" }, set: { value in
+                    stage.absentMembers.removeAll { playerSearchKey($0) == playerSearchKey(name) }
+                    if value == "absent" { stage.absentMembers.append(name) }
+                    if stage.members.isEmpty { stage.members = base }
+                    if !stage.members.contains(where: { playerSearchKey($0) == playerSearchKey(name) }) { stage.members.append(name) }
+                })) {
+                    Text("出た").tag("in")
+                    Text("休み（欠員）").tag("absent")
+                } label: { GiriEditorLabel(name) }
+                .pickerStyle(.menu).tint(.primary)
+            }
+            HStack(spacing: 8) {
+                GiriPlayerSuggestionField(title: "増えたメンバー", text: $newMember, showsLabel: true, textAlignment: .trailing)
+                Button {
+                    let name = newMember.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty else { return }
+                    if stage.members.isEmpty { stage.members = base }
+                    if !stage.members.contains(where: { playerSearchKey($0) == playerSearchKey(name) }) { stage.members.append(name) }
+                    newMember = ""
+                } label: { Image(systemName: "plus.circle") }
+                .buttonStyle(.borderless).accessibilityLabel("メンバーを足す")
+            }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+    }
     private var isOnline: Bool { event.eventFormat.hasOnlineRounds && !event.effectiveRounds.isEmpty }
     private var roundIDs: Set<String> {
         if let roundID = stage.roundId { return [roundID] }
@@ -1146,6 +1190,7 @@ struct GiriStageEditor: View {
                 standardSections
             }
 
+            if team && event.hasMemberChanges && isStageWide { memberSection }
             if isOnline && isStageWide { onlineTotalsSection }
 
             if !noteIndices.isEmpty {
@@ -1157,7 +1202,7 @@ struct GiriStageEditor: View {
                             .font(.subheadline.weight(.semibold)).lineLimit(4)
                         // 0.17：画像のお題は画像も出す。
                         if !answerNotes[index].imageDataBase64.isEmpty { GiriThoughtImage(base64: answerNotes[index].imageDataBase64) }
-                        GiriAnswerResultFields(records: $answerNotes[index].answerRecords, teammates: event.teammates(isSelf: store.preferences.isSelf))
+                        GiriAnswerResultFields(records: $answerNotes[index].answerRecords, teammates: previewTeammates)
                     }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
                 }
             }
@@ -1468,6 +1513,9 @@ struct GiriCycleResultEditor: View {
     @State private var discardQuestion = false
     @State private var block = ""
     @State private var originalBlock = ""
+    /// 0.28：この回のタッグの相手（空はシングル）。
+    @State private var tagPartner = ""
+    @State private var originalTagPartner = ""
     @State private var keepBlock = false
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
@@ -1483,7 +1531,8 @@ struct GiriCycleResultEditor: View {
     private var changed: Bool {
         result != originalResult || placement != originalPlacement || affiliation != originalAffiliation ||
             nextAffiliation != originalNextAffiliation || movement != originalMovement ||
-            qualification != originalQualification || effectiveDate != originalEffectiveDate || block != originalBlock || keepBlock
+            qualification != originalQualification || effectiveDate != originalEffectiveDate || block != originalBlock || keepBlock ||
+            tagPartner != originalTagPartner
     }
 
     var body: some View {
@@ -1542,6 +1591,11 @@ struct GiriCycleResultEditor: View {
             }
             if let site, block.trimmingCharacters(in: .whitespacesAndNewlines) != site.block {
                 Toggle("次の回からもこのブロック", isOn: $keepBlock).tint(AppSectionAccent.ticket)
+            }
+            // 0.28：タッグ部門のあるサイトは、この回の相手（空はシングル）を直せる。
+            if let site, site.currentRuleID.flatMap({ store.rule($0) })?.tagDivision != nil || !tagPartner.isEmpty {
+                GiriPlayerSuggestionField(title: "タッグの相手", text: $tagPartner, showsLabel: true, textAlignment: .trailing)
+                    .id(site.id)
             }
             TextField("結果・メモ", text: $result, axis: .vertical).lineLimit(3...10)
         }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
@@ -1662,6 +1716,8 @@ struct GiriCycleResultEditor: View {
         effectiveDate = event.nextLeagueEffectiveDate
         block = event.block
         originalBlock = block
+        tagPartner = event.tagPartner
+        originalTagPartner = tagPartner
         if hasLeagueChange { fillEffectiveDate() }
         manualNextLeague = !leagues.contains(nextAffiliation)
         originalResult = result
@@ -1701,6 +1757,7 @@ struct GiriCycleResultEditor: View {
                 next = hasLeagueChange ? nextLeague : nil
             } else { next = nil }
             event.block = block.trimmingCharacters(in: .whitespacesAndNewlines)
+            event.tagPartner = tagPartner.trimmingCharacters(in: .whitespacesAndNewlines)
             try store.saveCycleResult(event: event, nextAffiliation: next)
             // ブロックが回ごとに変わるサイトは、次の回の初期値も変える。
             if keepBlock, var updated = store.onlineSiteById(event.onlineSiteId) {
