@@ -867,6 +867,31 @@ extension GiriEvent {
     /// 生大喜利の自分の立場を、入力した内容から決める（選ぶ項目にはしない）。
     /// 観覧は参加状況で選ぶ。リザーバーにいれば リザーバー、参加者・チームにいれば プレイヤー、
     /// 主催・共催・MC・審査員だけにいれば 主催・MCなど、どれでもなければ プレイヤー。
+    /// 0.28：自分が入っている欄から決まる立場（リザーバー・参加者・主催など。どこにもいなければ nil）。
+    func listedSelfRole(isSelf: (String) -> Bool) -> GiriSelfRole? {
+        if reserveNames.contains(where: isSelf) { return .reserve }
+        if everyone.contains(where: isSelf) { return .player }
+        if isKumiteEvent && kumiteMains.contains(where: isSelf) { return .player }
+        if staffNames.contains(where: isSelf) { return .staff }
+        return nil
+    }
+    /// 0.28：参加者・チーム・リザーバー・組手の主役のどれかに、名前が入っているか。
+    /// 入っていない（名簿を残していない）会は、参加状況を今までどおり選ぶ。
+    var hasEnteredRoster: Bool {
+        !everyone.isEmpty || !reserveNames.isEmpty || (isKumiteEvent && kumiteMains.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+    }
+    /// 0.28：欄から決まる参加状況の名前（参加・主催・運営・リザーバー）。
+    func listedParticipationTitle(isSelf: (String) -> Bool) -> String? {
+        guard let role = listedSelfRole(isSelf: isSelf) else { return nil }
+        switch role {
+        case .player: return "参加"
+        case .reserve: return "リザーバー"
+        case .spectator: return "観覧"
+        case .staff:
+            let hosts = (organizerIsGroup ? [] : [organizer]) + coOrganizers
+            return hosts.contains(where: isSelf) ? "主催" : "運営"
+        }
+    }
     func derivedSelfRole(isSelf: (String) -> Bool) -> GiriSelfRole {
         guard eventFormat == .live else { return .player }
         if selfRole == .spectator && isParticipating && !isInterested && status != .canceled { return .spectator }
@@ -1312,6 +1337,8 @@ struct GiriEventPageDraft: Equatable, Identifiable {
     var participants: [GiriParticipantCandidate] = []
     /// 0.25：ページに書いてある参加者の人数（読み取った人数と比べる）。
     var listedParticipantCount: Int? = nil
+    /// 0.28：ページの書き方から推した会の種類（"tournament"・"kumite"・"project"・"show"。分からなければ nil）。
+    var meetingKind: String? = nil
     var recognizedText = ""
 
     var hasBasicInfo: Bool {
@@ -1554,7 +1581,42 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     draft.start = times.compactMap(\.start).first ?? times.compactMap(\.rangeStart).first
         ?? dateIndex.flatMap { times[$0].lone.first }
     draft.end = times.compactMap(\.end).first ?? times.compactMap(\.rangeEnd).first ?? times.compactMap(\.teardown).first
+    draft.meetingKind = giriInferredMeetingKind(title: draft.title, text: info.map(\.text).joined(separator: "\n"))
     return draft
+}
+
+/// 0.28：会の種類の表示名。
+func giriMeetingKindTitle(_ kind: String) -> String {
+    switch kind {
+    case "tournament": return "大会"
+    case "kumite": return "組手"
+    case "project": return "企画"
+    case "show": return "ライブ"
+    default: return "通常"
+    }
+}
+
+/// 0.28：会の名前と説明の書き方から、会の種類を推す（特定の会の名前ではなく、よくある言い方で決める）。
+/// 組手はタイトルに「組手」、大会は「杯」「カップ」「グランプリ」や決勝・前回優勝など、
+/// ライブはチケット・前売・客席などお客さんを入れる書き方、企画は「企画」やコンセプト・テーマの説明が多い時。
+/// 分からない時は nil（今の選択を変えない）。
+func giriInferredMeetingKind(title: String, text: String) -> String? {
+    let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    let body = text
+    func count(_ words: [String], in value: String) -> Int { words.filter { value.localizedCaseInsensitiveContains($0) }.count }
+    if name.contains("組手") { return "kumite" }
+    let titleCup = ["杯", "カップ", "CUP", "グランプリ", "GP", "選手権", "王決定戦", "トーナメント", "大会", "チャンピオンシップ"]
+    if count(titleCup, in: name) > 0 { return "tournament" }
+    let liveTitle = ["ライブ", "LIVE", "公演", "ショー", "SHOW"]
+    let ticket = ["チケット", "前売", "当日券", "客席", "ご来場", "観覧料", "入場料", "公演", "出演者", "出演：", "出演:", "配信チケット", "ドリンク代"]
+    if count(liveTitle, in: name) > 0 && count(ticket, in: body) >= 1 { return "show" }
+    if count(ticket, in: body) >= 3 { return "show" }
+    let tournament = ["決勝", "準決勝", "予選", "前回優勝", "優勝者", "優勝賞", "賞金", "トーナメント", "勝ち抜け", "初代王者", "王者"]
+    if count(tournament, in: body) >= 2 { return "tournament" }
+    if name.contains("企画") { return "project" }
+    let project = ["企画", "コンセプト", "テーマ", "縛り", "限定", "特別ルール", "今回のルール", "お題は", "形式で", "ルール説明"]
+    if count(project, in: body) >= 3 { return "project" }
+    return nil
 }
 
 // MARK: - 長考の段階・回（0.13）
@@ -1704,11 +1766,13 @@ extension GiriEvent {
     /// 企画として扱う（生大喜利・スプシ系の通常の会で「企画」を選んだ時）。
     var isProjectEvent: Bool { isProject && meetingType == .casual && eventFormat.allowsProject }
     /// 会の種類の表示（通常・大会・企画）。
-    var meetingTitle: String { isKumiteEvent ? "組手" : isProjectEvent ? "企画" : meetingType.title }
+    var meetingTitle: String { isKumiteEvent ? "組手" : isProjectEvent ? "企画" : isLiveShowEvent ? "ライブ" : meetingType.title }
     /// 一覧の絞り込み・共有で使う会の種類の値（"casual"・"tournament"・"project"）。
-    var meetingFilterKey: String { isKumiteEvent ? "kumite" : isProjectEvent ? "project" : meetingType.rawValue }
+    var meetingFilterKey: String { isKumiteEvent ? "kumite" : isProjectEvent ? "project" : isLiveShowEvent ? "show" : meetingType.rawValue }
     /// 0.19：組手（生大喜利・スプシ系の通常の会に印を付ける）。
     var isKumiteEvent: Bool { isKumite && meetingType == .casual && eventFormat.allowsProject }
+    /// 0.28：ライブ（お客さんを入れて見せる会。生大喜利の通常の会に印を付ける）。
+    var isLiveShowEvent: Bool { isLiveShow && meetingType == .casual && eventFormat == .live && !isKumite && !isProject }
 }
 
 

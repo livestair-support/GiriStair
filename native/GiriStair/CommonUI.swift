@@ -2208,3 +2208,58 @@ struct AppIndexSectionTitle: View {
         )
     }
 }
+
+
+// MARK: - 右上のボタンを2つ並べる（LiveStair BulkReadingViews.swift から）
+
+// 「フリガナ」と「＋」が1つの枠にまとまらないよう、間を空けて並べる（iOS 26 から）
+struct AppSeparatedTrailingToolbarButtons<First: View, Second: View>: ViewModifier {
+    let first: First
+    let second: Second
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        first
+                    }
+
+                    ToolbarSpacer(
+                        .fixed,
+                        placement: .topBarTrailing
+                    )
+
+                    ToolbarItem(placement: .topBarTrailing) {
+                        second
+                    }
+                }
+        } else {
+            content
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        first
+                    }
+
+                    ToolbarItem(placement: .topBarTrailing) {
+                        second
+                    }
+                }
+        }
+    }
+}
+
+extension View {
+    func appSeparatedTrailingToolbarButtons<First: View, Second: View>(
+        @ViewBuilder first: () -> First,
+        @ViewBuilder second: () -> Second
+    ) -> some View {
+        modifier(
+            AppSeparatedTrailingToolbarButtons(
+                first: first(),
+                second: second()
+            )
+        )
+    }
+}

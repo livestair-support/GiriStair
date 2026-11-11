@@ -652,16 +652,17 @@ struct GiriPlayersView: View {
         }
         .navigationTitle("大喜利プレイヤー一覧").navigationBarTitleDisplayMode(.inline)
         .giriNavigationBarStyle()
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("プレイヤーを追加", systemImage: "person.badge.plus") { adding = true }
-                    Button("団体を追加", systemImage: "person.3") { addingGroup = true }
-                    Divider()
-                    Button("フリガナを一括で設定", systemImage: "character.textbox") { bulkFurigana = true }
-                } label: { Image(systemName: "plus") }
-                .accessibilityLabel("追加")
-            }
+        // 0.28：LiveStair と同じく「フリガナ」を「＋」と別のボタンにする。
+        .appSeparatedTrailingToolbarButtons {
+            Button("フリガナ") { bulkFurigana = true }
+                .disabled(players.isEmpty)
+                .accessibilityLabel("フリガナを一括設定")
+        } second: {
+            Menu {
+                Button("プレイヤーを追加", systemImage: "person.badge.plus") { adding = true }
+                Button("団体を追加", systemImage: "person.3") { addingGroup = true }
+            } label: { Image(systemName: "plus") }
+            .accessibilityLabel("追加")
         }
         .sheet(isPresented: $adding) { NavigationStack { GiriPlayerEditor() } }
         .navigationDestination(isPresented: $bulkFurigana) { GiriFuriganaBulkEditor(target: .players) }
@@ -1326,14 +1327,13 @@ struct GiriVenuesView: View {
         }
         .navigationTitle("会場一覧").navigationBarTitleDisplayMode(.inline)
         .giriNavigationBarStyle()
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("会場を追加", systemImage: "plus.circle") { adding = true }
-                    Button("フリガナを一括で設定", systemImage: "character.textbox") { bulkFurigana = true }
-                } label: { Image(systemName: "plus") }
-                .accessibilityLabel("追加")
-            }
+        .appSeparatedTrailingToolbarButtons {
+            Button("フリガナ") { bulkFurigana = true }
+                .disabled(venues.isEmpty)
+                .accessibilityLabel("フリガナを一括設定")
+        } second: {
+            Button { adding = true } label: { Image(systemName: "plus") }
+                .accessibilityLabel("会場を追加")
         }
         .sheet(isPresented: $adding) { NavigationStack { GiriVenueEditor() } }
         .navigationDestination(isPresented: $bulkFurigana) { GiriFuriganaBulkEditor(target: .venues) }

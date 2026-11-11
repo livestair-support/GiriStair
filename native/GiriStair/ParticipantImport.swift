@@ -357,6 +357,8 @@ struct GiriEventPageReview: View {
                 AppCardSectionTitle(title: "基本情報", systemImage: "slider.horizontal.3", accentColor: AppSectionAccent.live)
                     .listRowSeparator(.hidden)
                 valueRow("会の名前", draft.title)
+                // 0.28：ページの書き方から推した会の種類。
+                if let kind = draft.meetingKind { valueRow("会の種類", giriMeetingKindTitle(kind)) }
                 valueRow("日付", draft.date.map { GiriDateText.day($0) } ?? "")
                 valueRow("開場", clockText(draft.opens))
                 valueRow("開始", clockText(draft.start))

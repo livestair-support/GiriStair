@@ -442,63 +442,75 @@ struct GiriRuleEditor: View {
         .appSectionCardStyle(accentColor: AppSectionAccent.live)
     }
 
-    /// 0.24：大会の流れ（予選→本戦→決勝など）を見ながら組み立てる。段階を押すと下で詳しく直せる。
+    /// 0.24：大会の流れ（予選→本戦→決勝など）を見ながら組み立てる。
+    /// 0.28：流れは上から下へ縦に並べ、段階を押すとその下に詳しい入力の行を出す。
     private var stageSection: some View {
         Section {
             AppCardSectionTitle(title: "大会の流れ", systemImage: "arrow.triangle.branch", accentColor: AppSectionAccent.ticket,
-                                infoTitle: "大会の流れ", infoMessage: "下のボタンで段階を足すと、決勝の前など流れに合う場所に入ります。段階を押すと、名前・形式・勝ち抜けの条件を段階ごとに直せます。")
+                                infoTitle: "大会の流れ", infoMessage: "上から順に進みます。下のボタンで段階を足すと、決勝の前など流れに合う場所に入ります。段階を押すと、名前・形式・勝ち抜けの条件を直せます。")
                 .listRowSeparator(.hidden)
-            flowRow
+            if draft.stages.isEmpty {
+                Text("段階がありません").font(.subheadline).foregroundStyle(.secondary)
+            }
+            ForEach(Array(draft.stages.enumerated()), id: \.element.id) { index, stage in
+                stageListRow(index, stage)
+                if stage.id == selectedStageID { stageDetailRows(index) }
+            }
             addStageRow
             Menu {
                 ForEach(giriRuleTemplates.filter { $0.kind == draft.kind && $0.effectiveScope == .tournament && !$0.stages.isEmpty }) { template in
                     Button(template.name) {
                         draft.stages = template.stages.map { var stage = $0; stage.id = UUID().uuidString; return stage }
-                        selectedStageID = draft.stages.first?.id
+                        selectedStageID = nil
                     }
                 }
             } label: {
                 Label("よくある流れから選ぶ", systemImage: "square.on.square").font(.subheadline)
             }
             .tint(accentActionColor)
-            if let index = draft.stages.firstIndex(where: { $0.id == selectedStageID }) {
-                stageDetail(index)
-            }
         }
         .appSectionCardStyle(accentColor: AppSectionAccent.ticket)
     }
 
-    private var flowRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                if draft.stages.isEmpty {
-                    Text("段階がありません").font(.subheadline).foregroundStyle(.secondary)
-                }
-                ForEach(Array(draft.stages.enumerated()), id: \.element.id) { index, stage in
-                    if index > 0 {
-                        Image(systemName: "arrow.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    }
-                    Button { selectedStageID = selectedStageID == stage.id ? nil : stage.id } label: { stageChip(stage) }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("\(index + 1)番目の段階：" + stageTitle(stage))
-                }
-            }
-            .padding(.vertical, 6)
-        }
+    private func stageAccent(_ stage: GiriRuleStage) -> Color {
+        stage.stageKind == .repechage ? AppSectionAccent.favorite : stage.stageKind == .final ? AppSectionAccent.live : AppSectionAccent.ticket
     }
 
-    private func stageChip(_ stage: GiriRuleStage) -> some View {
+    /// 段階の1行（番号・名前・形式と勝ち抜け）。押すと下に詳しい入力を開く。
+    private func stageListRow(_ index: Int, _ stage: GiriRuleStage) -> some View {
         let selected = stage.id == selectedStageID
-        let accent = stage.stageKind == .repechage ? AppSectionAccent.favorite : stage.stageKind == .final ? AppSectionAccent.live : AppSectionAccent.ticket
-        let caption = [stage.lineup.isEmpty ? nil : stage.lineup, stage.advanceText.map { $0 + "通過" }].compactMap { $0 }.joined(separator: "・")
-        return VStack(spacing: 1) {
-            Text(stageTitle(stage)).font(.subheadline.weight(.semibold)).lineLimit(1)
-            if !caption.isEmpty { Text(caption).font(.caption2).lineLimit(1) }
+        let accent = stageAccent(stage)
+        let caption = [stage.lineup.isEmpty ? nil : stage.lineup,
+                       stage.promptCount.map { "お題\($0)問" },
+                       stage.advanceText.map { $0 + "が勝ち抜け" }].compactMap { $0 }.joined(separator: "・")
+        return Button { selectedStageID = selected ? nil : stage.id } label: {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(spacing: 2) {
+                    Text("\(index + 1)")
+                        .font(.subheadline.weight(.bold)).monospacedDigit()
+                        .foregroundStyle(selected ? Color.white : accent)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(selected ? accent : accent.opacity(0.14)))
+                    if index + 1 < draft.stages.count {
+                        Image(systemName: "arrow.down").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(stageTitle(stage)).font(.body.weight(.semibold)).foregroundStyle(.primary)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    if !caption.isEmpty {
+                        Text(caption).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 8)
+                Image(systemName: selected ? "chevron.up" : "chevron.down")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 12).padding(.vertical, 7)
-        .foregroundStyle(selected ? Color.white : Color.primary)
-        .background(Capsule().fill(selected ? accent : accent.opacity(0.14)))
-        .overlay(Capsule().stroke(accent.opacity(selected ? 0 : 0.5), lineWidth: 1))
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(index + 1)番目の段階：" + stageTitle(stage))
     }
 
     private var addStageRow: some View {
@@ -522,45 +534,66 @@ struct GiriRuleEditor: View {
         }
     }
 
-    private func stageDetail(_ index: Int) -> some View {
+    /// 0.28：選んだ段階の詳しい入力。ライブ登録と同じく、名前は左に小さく、入力は右に置いた行にする。
+    @ViewBuilder private func stageDetailRows(_ index: Int) -> some View {
         let stage = Binding(get: { draft.stages.indices.contains(index) ? draft.stages[index] : GiriRuleStage() },
                             set: { if draft.stages.indices.contains(index) { draft.stages[index] = $0 } })
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Picker("種類", selection: Binding(get: { stage.wrappedValue.kind ?? "" }, set: { stage.wrappedValue.kind = $0.isEmpty ? nil : $0 })) {
-                    Text("種類").tag("")
-                    ForEach(StageKind.allCases) { Text($0.title).tag($0.rawValue) }
-                }
-                .labelsHidden().pickerStyle(.menu).tint(Color.primary)
-                Spacer(minLength: 8)
-                Button { moveStage(index, by: -1) } label: { Image(systemName: "chevron.left") }
-                    .buttonStyle(.borderless).disabled(index == 0).accessibilityLabel("前へ")
-                Button { moveStage(index, by: 1) } label: { Image(systemName: "chevron.right") }
-                    .buttonStyle(.borderless).disabled(index + 1 >= draft.stages.count).accessibilityLabel("後ろへ")
-                Button(role: .destructive) {
-                    draft.stages.remove(at: index)
-                    selectedStageID = nil
-                } label: { Image(systemName: "trash") }
-                .buttonStyle(.borderless).accessibilityLabel("この段階を削除")
-            }
-            TextField("段階の名前（例：予選1回戦）", text: stage.name)
-            // 0.27：段階ごとに形式を選ぶ（準決勝だけタイマン、など）。
-            HStack(spacing: 8) {
-                TextField("形式（例：横並び5人）", text: stage.lineup)
-                Menu {
-                    ForEach(giriRuleStageLineups, id: \.self) { lineup in Button(lineup) { stage.wrappedValue.lineup = lineup } }
-                } label: { Image(systemName: "list.bullet").accessibilityLabel("形式を選ぶ") }
-                .tint(accentActionColor)
-            }
-            TextField("審査方法（空なら大会の審査方法）", text: stage.judging)
-            Stepper("お題　\(stage.wrappedValue.promptCount.map { "\($0)問" } ?? "未定")",
-                    value: Binding(get: { stage.wrappedValue.promptCount ?? 0 }, set: { stage.wrappedValue.promptCount = $0 == 0 ? nil : $0 }), in: 0...30)
-            GiriAdvanceRows(count: stage.advanceCount, fraction: stage.advanceFraction, accent: AppSectionAccent.ticket, title: "勝ち抜け")
-            TextField("ほかの条件（例：得票率○%以上）", text: stage.advanceNote)
+        HStack(spacing: 12) {
+            GiriEditorLabel("段階の名前")
+            TextField("例：予選1回戦", text: stage.name).multilineTextAlignment(.trailing)
         }
+        .padding(.leading, 40)
+        Picker(selection: Binding(get: { stage.wrappedValue.kind ?? "" }, set: { stage.wrappedValue.kind = $0.isEmpty ? nil : $0 })) {
+            Text("未設定").tag("")
+            ForEach(StageKind.allCases) { Text($0.title).tag($0.rawValue) }
+        } label: { GiriEditorLabel("種類") }
+        .pickerStyle(.menu).tint(Color.primary)
+        .padding(.leading, 40)
+        HStack(spacing: 12) {
+            GiriEditorLabel("形式")
+            TextField("例：横並び5人", text: stage.lineup).multilineTextAlignment(.trailing)
+            Menu {
+                ForEach(giriRuleStageLineups, id: \.self) { lineup in Button(lineup) { stage.wrappedValue.lineup = lineup } }
+            } label: { Image(systemName: "list.bullet.circle").font(.body) }
+            .accessibilityLabel("形式を選ぶ")
+            .tint(accentActionColor)
+        }
+        .padding(.leading, 40)
+        HStack(spacing: 12) {
+            GiriEditorLabel("審査方法")
+            TextField("大会と同じ", text: stage.judging).multilineTextAlignment(.trailing)
+        }
+        .padding(.leading, 40)
+        Stepper(value: Binding(get: { stage.wrappedValue.promptCount ?? 0 }, set: { stage.wrappedValue.promptCount = $0 == 0 ? nil : $0 }), in: 0...30) {
+            HStack {
+                GiriEditorLabel("お題の数")
+                Spacer(minLength: 8)
+                Text(stage.wrappedValue.promptCount.map { "\($0)問" } ?? "未定").font(.subheadline).monospacedDigit()
+            }
+        }
+        .padding(.leading, 40)
+        GiriAdvanceRows(count: stage.advanceCount, fraction: stage.advanceFraction, accent: AppSectionAccent.ticket, title: "勝ち抜け")
+            .padding(.leading, 40)
+        HStack(spacing: 12) {
+            GiriEditorLabel("ほかの条件")
+            TextField("例：得票率○%以上", text: stage.advanceNote).multilineTextAlignment(.trailing)
+        }
+        .padding(.leading, 40)
+        HStack(spacing: 20) {
+            Button { moveStage(index, by: -1) } label: { Label("上へ", systemImage: "arrow.up") }
+                .disabled(index == 0)
+            Button { moveStage(index, by: 1) } label: { Label("下へ", systemImage: "arrow.down") }
+                .disabled(index + 1 >= draft.stages.count)
+            Spacer(minLength: 8)
+            Button(role: .destructive) {
+                draft.stages.remove(at: index)
+                selectedStageID = nil
+            } label: { Label("削除", systemImage: "trash") }
+        }
+        .buttonStyle(.borderless)
         .font(.subheadline)
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(AppSectionAccent.ticket.opacity(0.08)))
+        .tint(accentActionColor)
+        .padding(.leading, 40)
     }
 
     private func stageTitle(_ stage: GiriRuleStage) -> String {
@@ -640,11 +673,17 @@ struct GiriAdvanceRows: View {
         } label: { GiriEditorLabel(title) }
         .pickerStyle(.menu).tint(Color.primary)
         if let value = count {
-            Stepper("上位　\(value)人", value: Binding(get: { value }, set: { count = $0 }), in: 1...500)
+            Stepper(value: Binding(get: { value }, set: { count = $0 }), in: 1...500) {
+                HStack {
+                    GiriEditorLabel("人数")
+                    Spacer(minLength: 8)
+                    Text("上位\(value)人").font(.subheadline).monospacedDigit()
+                }
+            }
         }
         if fraction != nil {
             Picker(selection: Binding(get: { fraction ?? "1/2" }, set: { fraction = $0 })) {
-                ForEach(giriAdvanceFractions, id: \.value) { Text("上位" + $0.title + "（\($0.value)以上）").tag($0.value) }
+                ForEach(giriAdvanceFractions, id: \.value) { Text("上位" + $0.title).tag($0.value) }
             } label: { GiriEditorLabel("割合") }
             .pickerStyle(.menu).tint(Color.primary)
         }

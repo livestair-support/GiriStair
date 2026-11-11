@@ -87,7 +87,7 @@ struct GiriStatisticsView: View {
             .accessibilityIdentifier("statistics-page-tabs")
             Picker("年", selection: $year) { Text("全期間").tag(0); ForEach(years, id: \.self) { Text("\($0)年").tag($0) } }.pickerStyle(.menu).tint(.primary)
             Picker("月", selection: $month) { Text("すべて").tag(0); ForEach(1...12, id: \.self) { Text("\($0)月").tag($0) } }.pickerStyle(.menu).tint(.primary)
-            Picker("会の種類", selection: $meeting) { Text("すべて").tag("all"); Text("通常").tag("casual"); Text("大会").tag("tournament"); Text("企画").tag("project"); Text("組手").tag("kumite") }.pickerStyle(.menu).tint(.primary)
+            Picker("会の種類", selection: $meeting) { Text("すべて").tag("all"); Text("通常").tag("casual"); Text("大会").tag("tournament"); Text("企画").tag("project"); Text("組手").tag("kumite"); Text("ライブ").tag("show") }.pickerStyle(.menu).tint(.primary)
         }.appSectionCardStyle(accentColor: accent)
     }
 

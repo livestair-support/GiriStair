@@ -1190,7 +1190,8 @@ let giriRuleTemplates: [GiriRule] = {
         rule.memo = "投稿が終わって投票、投票が終わってから次のお題。"
     }
     // 0.27：2部制の昇格・降格リーグ（規定数以上の人をシーズン得票率で並べ、入れ替える）。
-    add("two-league-promotion", "1部・2部の昇格降格リーグ（全8回）", .online) { rule in
+    // 0.28：ユーザーの指定で、このルールの名前は元のサイトのシーズン（S28〜S29）の名前にする。
+    add("two-league-promotion", "大喜利天文台(S28～S29)", .online) { rule in
         rule.submissionDays = 7
         rule.votingDays = 4
         rule.regularCycleCount = 8

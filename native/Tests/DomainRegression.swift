@@ -1969,6 +1969,42 @@ struct DomainRegression {
             try check(unreadable.found.isEmpty && unreadable.rule == GiriRule(id: unreadable.rule.id, kind: .online, updatedAt: unreadable.rule.updatedAt), "text without rules changes nothing")
         }
 
+        // 0.28 participation from the roster, the live-show meeting type and reading the meeting type.
+        do {
+            let me: (String) -> Bool = { $0 == "わたし" }
+            var meeting = GiriEvent(title: "名簿のある会"); meeting.eventFormat = .live; meeting.organizer = "はるか"
+            try check(!meeting.hasEnteredRoster && meeting.listedSelfRole(isSelf: me) == nil, "meetings without a roster keep choosing participation")
+            meeting.participants = ["わたし", "たろう"]
+            try check(meeting.hasEnteredRoster && meeting.listedParticipationTitle(isSelf: me) == "参加", "being in the participants means taking part")
+            meeting.participants = ["たろう"]; meeting.coOrganizers = ["わたし"]
+            try check(meeting.listedSelfRole(isSelf: me) == .staff && meeting.listedParticipationTitle(isSelf: me) == "主催", "being a co-host means hosting")
+            meeting.coOrganizers = []; meeting.mcs = ["わたし"]
+            try check(meeting.listedParticipationTitle(isSelf: me) == "運営", "an MC who is not a host is staff")
+            meeting.mcs = []; meeting.hasReserves = true; meeting.reserves = ["わたし"]
+            try check(meeting.listedParticipationTitle(isSelf: me) == "リザーバー", "being a reserve comes from the reserve list")
+            meeting.reserves = []
+            try check(meeting.hasEnteredRoster && meeting.listedSelfRole(isSelf: me) == nil, "not being in any list leaves spectating, interested or not attending")
+
+            var show = GiriEvent(title: "架空ライブ"); show.eventFormat = .live; show.meetingType = .casual
+            let plainShow = try JSONSerialization.jsonObject(with: JSONEncoder().encode(show)) as? [String: Any] ?? [:]
+            try check(plainShow["isLiveShow"] == nil, "meetings that are not live shows keep the older JSON shape")
+            show.isLiveShow = true
+            let decodedShow = try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(show))
+            try check(decodedShow.isLiveShowEvent && decodedShow.meetingTitle == "ライブ" && decodedShow.meetingFilterKey == "show", "a live show roundtrips and is listed as ライブ")
+            var onlineShow = show; onlineShow.eventFormat = .onlineLong
+            try check(!onlineShow.isLiveShowEvent && onlineShow.meetingTitle == "通常", "live shows are only for in-person meetings")
+
+            try check(giriInferredMeetingKind(title: "第3回 架空組手", text: "") == "kumite", "kumite comes from the title")
+            try check(giriInferredMeetingKind(title: "架空杯", text: "") == "tournament" && giriInferredMeetingKind(title: "架空カップ2026", text: "") == "tournament",
+                      "cup-style titles are tournaments")
+            try check(giriInferredMeetingKind(title: "夜の大喜利会", text: "予選のあと決勝を行います\n前回優勝：はるか") == "tournament", "finals and previous winners mean a tournament")
+            try check(giriInferredMeetingKind(title: "架空大喜利ライブ", text: "前売チケット 2000円\n当日券あり") == "show"
+                      && giriInferredMeetingKind(title: "夜の会", text: "チケット販売中\n前売2000円\n客席は自由席です") == "show", "tickets and seats mean a live show")
+            try check(giriInferredMeetingKind(title: "夜の会", text: "今回のテーマは春\nコンセプトは「縛り」\n特別ルールあり") == "project", "many concept words mean a project")
+            try check(giriInferredMeetingKind(title: "夜の大喜利会", text: "参加費500円\n初心者歓迎") == nil, "a plain meeting keeps the current choice")
+            try check(giriRuleTemplates.contains { $0.id == "template:two-league-promotion" && $0.name == "大喜利天文台(S28～S29)" }, "the two-league template carries the requested name")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

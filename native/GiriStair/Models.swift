@@ -541,6 +541,8 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var parentEventId: String? = nil
     /// 0.19：組手（主役に対してたくさんのメンバーが対戦する企画）。会の種類の保存値は通常（casual）のまま。
     var isKumite: Bool = false
+    /// 0.28：ライブ（お客さんを入れて見せる生大喜利。通常の会に印を付ける。値がある時だけ書く）。
+    var isLiveShow: Bool = false
     /// 組手の主役（タッグなどは複数）。
     var kumiteMains: [String] = []
     /// 組手の対戦ごとの記録（主役から見た勝敗）。
@@ -584,7 +586,7 @@ enum GiriSelfRole: String, CaseIterable, Identifiable {
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts, ruleID, stageBoards, sideResults, battleKind
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts, ruleID, stageBoards, sideResults, battleKind, isLiveShow
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -700,6 +702,7 @@ extension GiriEvent {
         entryEnd = try c.giriDate(forKey: .entryEnd, required: false, calendarOnly: false)
         parentEventId = try c.decodeIfPresent(String.self, forKey: .parentEventId)
         isKumite = try c.decodeIfPresent(Bool.self, forKey: .isKumite) ?? false
+        isLiveShow = try c.decodeIfPresent(Bool.self, forKey: .isLiveShow) ?? false
         kumiteMains = try c.decodeIfPresent([String].self, forKey: .kumiteMains) ?? []
         kumiteBouts = try c.decodeIfPresent([KumiteBout].self, forKey: .kumiteBouts) ?? []
         ruleID = try c.decodeIfPresent(String.self, forKey: .ruleID)
@@ -818,6 +821,7 @@ extension GiriEvent {
         try c.encodeIfPresent(parentEventId, forKey: .parentEventId)
         // 組手の項目は入れた時だけ書く（以前の版のJSONの形を保つ）。
         if isKumite { try c.encode(isKumite, forKey: .isKumite) }
+        if isLiveShow { try c.encode(true, forKey: .isLiveShow) }
         if !kumiteMains.isEmpty { try c.encode(kumiteMains, forKey: .kumiteMains) }
         if !kumiteBouts.isEmpty { try c.encode(kumiteBouts, forKey: .kumiteBouts) }
         try c.encodeIfPresent(ruleID, forKey: .ruleID)
