@@ -594,6 +594,12 @@ struct GiriSiteDeadlineSheet: View {
     /// 0.23：次のシーズンのルール（nil は前のシーズンと同じ）。
     @State private var seasonRuleID: String?
     @State private var creatingRule: GiriRule?
+    /// 0.30：次のシーズンの日程（シーズンごとに確認して、開始時期や日数を合わせる）。
+    @State private var submissionDays = 7
+    @State private var votingDays = 7
+    @State private var timing: SiteNextPromptTiming = .withVoting
+    @State private var intervalDays = 7
+    @State private var cycleCount: Int?
 
     /// シーズン明けのルール変更は、ルールが複雑なサイトだけ聞く。
     private var asksRules: Bool { request == .nextSeason && siteHasComplexRules(site, events: store.events) }
@@ -619,12 +625,22 @@ struct GiriSiteDeadlineSheet: View {
             Section {
                 AppCardSectionTitle(title: sectionTitle, systemImage: "calendar.badge.plus", accentColor: AppSectionAccent.artist,
                                     infoTitle: "締切について",
-                                    infoMessage: "サイトに書いてある投稿の締切を入れます。投票の締切は投票期間から自動で入ります。")
+                                    infoMessage: request == .nextSeason
+                                        ? "サイトの告知に合わせて、最初の回の投稿開始か締切を入れます。シーズンごとに開始時期を合わせられます。"
+                                        : "サイトに書いてある投稿の締切を入れます。投票の締切は投票期間から自動で入ります。")
                     .listRowSeparator(.hidden)
+                if request == .nextSeason {
+                    OptionalDateRow(title: "最初の回の投稿開始", selection: Binding(get: { deadline.map { addCalendarDays($0, -submissionDays) } }, set: { value in
+                        deadline = value.map { addCalendarDays($0, submissionDays) }
+                    }))
+                }
                 OptionalDateRow(title: request == .nextSeason ? "最初の回の投稿締切" : "投稿の締切", selection: Binding(get: { deadline }, set: { value in
                     deadline = value
                     if let value { votingEnd = addCalendarDays(value, site.votingDays) }
                 }))
+                if request == .nextSeason, let summary = seasonSummary {
+                    Text(summary).font(.caption).foregroundStyle(.secondary)
+                }
                 if request == .nextCycle {
                     OptionalDateRow(title: "投票の締切", selection: $votingEnd)
                 }
@@ -639,6 +655,7 @@ struct GiriSiteDeadlineSheet: View {
                 }
             }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
             if request == .nextSeason {
+                scheduleSection
                 // 0.23：シーズンごとのルール。同じ・別のルール・新しく作るから選ぶ。
                 Section {
                     AppCardSectionTitle(title: "このシーズンのルール", systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.memo,
@@ -650,13 +667,18 @@ struct GiriSiteDeadlineSheet: View {
                         Spacer(minLength: 8)
                         GiriRuleMenuPicker(kind: .online, selectedID: seasonRuleID ?? site.currentRuleID,
                                            noneTitle: site.currentRuleID == nil ? "選ばない" : "前のシーズンと同じ",
-                                           onSelect: { seasonRuleID = $0 },
+                                           onSelect: { seasonRuleID = $0; loadSchedule() },
                                            onCreate: {
                                                var rule = site.currentRuleID.flatMap { store.rule($0) } ?? giriRule(from: site)
                                                rule.id = UUID().uuidString
                                                rule.name = [site.name, "第\(nextSeasonNumber)シーズン"].joined(separator: " ")
                                                creatingRule = rule
                                            })
+                    }
+                    if let rule = chosenRule {
+                        GiriRuleDetailRows(rule: rule)
+                    } else {
+                        Text("ルールを選ぶと、日程・リーグ・1シーズンの回数をルールに合わせます。").font(.caption).foregroundStyle(.secondary)
                     }
                 }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
             }
@@ -675,7 +697,7 @@ struct GiriSiteDeadlineSheet: View {
         }
         .appEditorFormStyle()
         .sheet(item: $creatingRule) { rule in
-            NavigationStack { GiriRuleEditor(rule: rule, isNew: true) { saved in seasonRuleID = saved.id } }
+            NavigationStack { GiriRuleEditor(rule: rule, isNew: true) { saved in seasonRuleID = saved.id; loadSchedule(rule: saved) } }
         }
         .navigationTitle(pageTitle).navigationBarTitleDisplayMode(.inline)
         .giriNavigationBarStyle()
@@ -689,7 +711,83 @@ struct GiriSiteDeadlineSheet: View {
             let start = fiveMinuteSelection(Date())
             deadline = addCalendarDays(start, site.submissionDays)
             votingEnd = deadline.map { addCalendarDays($0, site.votingDays) }
+            if request == .nextSeason {
+                submissionDays = site.submissionDays
+                loadSchedule()
+            }
         }
+    }
+
+    /// 0.30：このシーズンのルール（選んでいない時は前のシーズンのルール）。
+    private var chosenRule: GiriRule? { (seasonRuleID ?? site.currentRuleID).flatMap { store.rule($0) } }
+
+    private var schedule: SiteSeasonSchedule? {
+        guard let deadline else { return nil }
+        return SiteSeasonSchedule(firstDeadline: deadline, submissionDays: submissionDays, votingDays: votingDays,
+                                  timing: timing, intervalDays: intervalDays, regularCycleCount: timing == .irregular ? nil : cycleCount)
+    }
+
+    /// 0.30：前のシーズン（選んだルール）の日程を入れる。入れてある開始日はそのままにする。
+    private func loadSchedule(rule: GiriRule? = nil) {
+        let start = deadline.map { addCalendarDays($0, -submissionDays) } ?? fiveMinuteSelection(Date())
+        let value = siteSeasonSchedule(site, rule: rule ?? chosenRule, firstDeadline: addCalendarDays(start, site.submissionDays))
+        submissionDays = value.submissionDays
+        votingDays = value.votingDays
+        timing = value.timing
+        intervalDays = value.intervalDays
+        cycleCount = value.regularCycleCount
+        deadline = addCalendarDays(start, submissionDays)
+    }
+
+    /// 最初の回と（回数が決まっていれば）最後の回の結果発表。
+    private var seasonSummary: String? {
+        guard let schedule else { return nil }
+        var round = EventRound()
+        round.submissionStart = schedule.firstStart()
+        round = completeRoundSchedule(round, submissionDays: schedule.submissionDays, votingDays: schedule.votingDays)
+        var parts = ["第1回の結果発表 " + GiriDateText.dateTime(round.votingEnd)]
+        if schedule.regularCycleCount != nil,
+           let last = siteSeasonLastCycleEnd(siteStartingNextSeason(site, schedule: schedule, rule: nil)) {
+            parts.append("最後の回の結果発表 " + GiriDateText.dateTime(last))
+        }
+        return parts.joined(separator: "・")
+    }
+
+    /// 0.30：シーズンごとに確認する日程。前のシーズン（ルール）から入れて、変わった所だけ直す。
+    private var scheduleSection: some View {
+        Section {
+            AppCardSectionTitle(title: "このシーズンの日程", systemImage: "arrow.triangle.2.circlepath", accentColor: AppSectionAccent.artist,
+                                infoTitle: "日程について",
+                                infoMessage: "前のシーズンの日程を入れています。サイトの告知と違う所だけ直してください。")
+                .listRowSeparator(.hidden)
+            Picker(selection: $timing) {
+                ForEach(SiteNextPromptTiming.allCases) { Text($0.title).tag($0) }
+            } label: { GiriEditorLabel("次のお題") }
+            .pickerStyle(.menu).tint(.primary)
+            Stepper("投稿期間　\(submissionDays)日", value: Binding(get: { submissionDays }, set: { days in
+                // 開始日はそのままにして、締切を数え直す。
+                let start = deadline.map { addCalendarDays($0, -submissionDays) }
+                submissionDays = days
+                if let start { deadline = addCalendarDays(start, days) }
+            }), in: 1...365)
+            Stepper("投票期間　\(votingDays)日", value: $votingDays, in: 1...365)
+            if timing == .interval {
+                Stepper("お題の間隔　\(intervalDays)日", value: $intervalDays, in: 1...365)
+            }
+            if timing != .irregular {
+                Toggle("1シーズンの回数が決まっている", isOn: Binding(get: { cycleCount != nil }, set: { cycleCount = $0 ? (cycleCount ?? site.cycleSettings?.regularCycleCount ?? 8) : nil }))
+                    .tint(AppSectionAccent.artist)
+                if let count = cycleCount {
+                    Stepper(value: Binding(get: { count }, set: { cycleCount = $0 }), in: 1...9999) {
+                        HStack {
+                            GiriEditorLabel("1シーズン")
+                            Spacer()
+                            Text("全\(count)回").font(.body.weight(.semibold))
+                        }
+                    }
+                }
+            }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
     }
 
     private var nextSeasonNumber: Int { siteNextSeasonNumber(site.cycleSettings ?? SiteCycleSettings()) }
@@ -698,7 +796,8 @@ struct GiriSiteDeadlineSheet: View {
         guard let deadline else { return }
         store.run {
             if request == .nextSeason {
-                try store.startNextSiteSeason(site.id, firstDeadline: deadline, ruleID: seasonRuleID)
+                guard let schedule else { return }
+                try store.startNextSiteSeason(site.id, schedule: schedule, ruleID: seasonRuleID)
             } else if request == .resume {
                 try store.resumeSiteCycle(site.id, firstDeadline: deadline, cycleNumber: cycleNumber)
             } else {

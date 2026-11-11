@@ -1690,6 +1690,42 @@ struct DomainRegression {
             try check(nextSeasonID != "first" && nextSeasonSite?.ruleID(forSeason: nextSeasonID) == rule.id && nextSeasonSite?.ruleID(forSeason: "first") == rule.id,
                       "a new season keeps the previous season's rule unless another is chosen")
             try check(nextSeasonSite?.cycleSettings?.specialPeriods.contains { $0.id.hasPrefix("rule-plan:") } == true, "a new season with a rule gets its playoff schedule")
+
+            // 0.30: every new season confirms its schedule; the confirmed values win over the previous season and the rule.
+            var seasonal = OnlineSite(id: "season-check", name: "シーズンのサイト", recurrence: .weekly)
+            seasonal.submissionDays = 7; seasonal.votingDays = 3
+            seasonal.cycleSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: anchor, intervalDays: 7, anchorCycleNumber: 1)
+            seasonal.cycleSettings?.seasonID = "s1"; seasonal.cycleSettings?.seasonNumber = 1; seasonal.cycleSettings?.regularCycleCount = 8
+            let firstDeadline = addCalendarDays(anchor, 80)
+            let carried = siteSeasonSchedule(seasonal, rule: nil, firstDeadline: firstDeadline)
+            try check(carried.submissionDays == 7 && carried.votingDays == 3 && carried.timing == .withVoting && carried.regularCycleCount == 8
+                      && carried.firstStart() == addCalendarDays(anchor, 73), "the next season starts from the previous season's schedule")
+            let fromRule = siteSeasonSchedule(seasonal, rule: rule, firstDeadline: firstDeadline)
+            try check(fromRule.submissionDays == 7 && fromRule.votingDays == 3 && fromRule.regularCycleCount == 4, "choosing a rule fills the season's schedule from it")
+            var adjusted = carried
+            adjusted.submissionDays = 5; adjusted.votingDays = 2; adjusted.timing = .afterVoting; adjusted.regularCycleCount = 6
+            let started = siteStartingNextSeason(seasonal, schedule: adjusted, rule: nil)
+            try check(started.submissionDays == 5 && started.votingDays == 2 && started.cycleSettings?.pattern == .alternating && started.cycleSettings?.intervalDays == 7
+                      && started.cycleSettings?.anchorStart == addCalendarDays(anchor, 75) && started.cycleSettings?.seasonStart == addCalendarDays(anchor, 75)
+                      && started.cycleSettings?.seasonNumber == 2 && started.cycleSettings?.seasonID != "s1" && started.cycleSettings?.anchorCycleNumber == 1
+                      && started.cycleSettings?.regularCycleCount == 6, "the confirmed start, days, timing and count are used for the new season")
+            try check(siteSeasonLastCycleEnd(started) == addCalendarDays(anchor, 75 + 5 * 7 + 7), "the last round follows the confirmed schedule")
+            var ruled = fromRule; ruled.submissionDays = 6
+            let startedWithRule = siteStartingNextSeason(seasonal, schedule: ruled, rule: rule)
+            try check(startedWithRule.submissionDays == 6 && startedWithRule.ruleID(forSeason: startedWithRule.cycleSettings?.seasonID) == rule.id
+                      && startedWithRule.cycleSettings?.leagues == ["1部", "2部"]
+                      && startedWithRule.cycleSettings?.specialPeriods.filter({ $0.id.hasPrefix("rule-plan:") }).first?.round.submissionStart
+                         == siteSeasonLastCycleEnd(startedWithRule).map { addCalendarDays($0, 2) }, "a rule still brings leagues and playoffs while the confirmed days win")
+            var irregular = carried; irregular.timing = .irregular
+            let startedIrregular = siteStartingNextSeason(seasonal, schedule: irregular, rule: nil)
+            try check(startedIrregular.recurrence == .irregular && startedIrregular.cycleSettings?.regularCycleCount == nil
+                      && startedIrregular.cycleSettings?.specialPeriods.filter({ $0.kind == .regular }).map(\.round.submissionEnd) == [firstDeadline],
+                      "an irregular season starts with its first round")
+            try ruleStore.saveOnlineSite(seasonal)
+            try ruleStore.startNextSiteSeason(seasonal.id, schedule: adjusted, ruleID: nil)
+            let storedSeasonal = ruleStore.onlineSiteById(seasonal.id)
+            try check(storedSeasonal?.cycleSettings?.seasonNumber == 2 && storedSeasonal?.submissionDays == 5 && storedSeasonal?.cycleSettings?.regularCycleCount == 6
+                      && storedSeasonal?.ruleHistory.isEmpty == false, "starting a confirmed season saves it and keeps the previous season's schedule")
             let reopenedRules = GiriStore(directory: ruleDirectory)
             try check(reopenedRules.rules == ruleStore.rules && reopenedRules.onlineSiteById(storedSite.id)?.seasonRuleIDs == nextSeasonSite?.seasonRuleIDs, "rules and season links survive restart")
             try reopenedRules.deleteRule(rule.id)

@@ -1111,6 +1111,13 @@ final class GiriStore: ObservableObject {
         try saveOnlineSite(site)
     }
 
+    /// 0.30：シーズンごとに確認した日程（開始・日数・出方・回数）とルールで、次のシーズンを始める。
+    func startNextSiteSeason(_ siteID: String, schedule: SiteSeasonSchedule, ruleID: String?) throws {
+        guard let site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
+        let chosen = (ruleID ?? site.currentRuleID).flatMap { rule($0) }
+        try saveOnlineSite(siteStartingNextSeason(site, schedule: schedule, rule: chosen))
+    }
+
     // MARK: 0.23 ルール
 
     var rules: [GiriRule] { document.rules }
