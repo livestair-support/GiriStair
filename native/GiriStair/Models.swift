@@ -252,6 +252,10 @@ struct ResultStage: Codable, Equatable, Identifiable {
     var laps: [StageLap] = []
     /// 0.14：一緒に通過した人（任意）。
     var advancedWith: [String] = []
+    /// 0.28：途中でメンバーが変わる大会で、この段階に出たチームのメンバー（空はチームのメンバーのまま）。
+    var members: [String] = []
+    /// 0.28：この段階を休んだ（欠員になった）メンバー。
+    var absentMembers: [String] = []
 }
 
 /// 0.14：段階の1周分（ブロック・対戦相手・お題ごとの点・ほかの人の点）。
@@ -302,7 +306,7 @@ extension ResultStage {
     private enum CodingKeys: String, CodingKey {
         case id, name, outcome, placement, memo, roundId, stageId, teamPlacement, individualPlacement, voterCount, points, maxPointsPerVoter
         case group, lineup, judging, opponents, entrantCount, advanceCount, scoring, borderScore, kind
-        case promptCount, votesPerPrompt, laps, advancedWith
+        case promptCount, votesPerPrompt, laps, advancedWith, members, absentMembers
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -344,6 +348,8 @@ extension ResultStage {
         votesPerPrompt = try c.decodeIfPresent(Bool.self, forKey: .votesPerPrompt) ?? false
         laps = try c.decodeIfPresent([StageLap].self, forKey: .laps) ?? []
         advancedWith = try c.decodeIfPresent([String].self, forKey: .advancedWith) ?? []
+        members = try c.decodeIfPresent([String].self, forKey: .members) ?? []
+        absentMembers = try c.decodeIfPresent([String].self, forKey: .absentMembers) ?? []
 
         try validate()
     }
@@ -388,6 +394,8 @@ extension ResultStage {
         if votesPerPrompt { try c.encode(votesPerPrompt, forKey: .votesPerPrompt) }
         if !laps.isEmpty { try c.encode(laps, forKey: .laps) }
         if !advancedWith.isEmpty { try c.encode(advancedWith, forKey: .advancedWith) }
+        if !members.isEmpty { try c.encode(members, forKey: .members) }
+        if !absentMembers.isEmpty { try c.encode(absentMembers, forKey: .absentMembers) }
     }
 }
 
@@ -541,6 +549,12 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var parentEventId: String? = nil
     /// 0.19：組手（主役に対してたくさんのメンバーが対戦する企画）。会の種類の保存値は通常（casual）のまま。
     var isKumite: Bool = false
+    /// 0.28：ライブ（お客さんを入れて見せる生大喜利。通常の会に印を付ける。値がある時だけ書く）。
+    var isLiveShow: Bool = false
+    /// 0.28：サイトの回にタッグで出た時の相手（空はシングル）。値がある時だけ書く。
+    var tagPartner: String = ""
+    /// 0.28：大会の途中でメンバーが変わる（段階ごとにメンバーを入れる）。値がある時だけ書く。
+    var hasMemberChanges: Bool = false
     /// 組手の主役（タッグなどは複数）。
     var kumiteMains: [String] = []
     /// 組手の対戦ごとの記録（主役から見た勝敗）。
@@ -584,7 +598,7 @@ enum GiriSelfRole: String, CaseIterable, Identifiable {
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts, ruleID, stageBoards, sideResults, battleKind
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts, ruleID, stageBoards, sideResults, battleKind, isLiveShow, tagPartner, hasMemberChanges
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -700,6 +714,9 @@ extension GiriEvent {
         entryEnd = try c.giriDate(forKey: .entryEnd, required: false, calendarOnly: false)
         parentEventId = try c.decodeIfPresent(String.self, forKey: .parentEventId)
         isKumite = try c.decodeIfPresent(Bool.self, forKey: .isKumite) ?? false
+        isLiveShow = try c.decodeIfPresent(Bool.self, forKey: .isLiveShow) ?? false
+        tagPartner = try c.decodeIfPresent(String.self, forKey: .tagPartner) ?? ""
+        hasMemberChanges = try c.decodeIfPresent(Bool.self, forKey: .hasMemberChanges) ?? false
         kumiteMains = try c.decodeIfPresent([String].self, forKey: .kumiteMains) ?? []
         kumiteBouts = try c.decodeIfPresent([KumiteBout].self, forKey: .kumiteBouts) ?? []
         ruleID = try c.decodeIfPresent(String.self, forKey: .ruleID)
@@ -818,6 +835,9 @@ extension GiriEvent {
         try c.encodeIfPresent(parentEventId, forKey: .parentEventId)
         // 組手の項目は入れた時だけ書く（以前の版のJSONの形を保つ）。
         if isKumite { try c.encode(isKumite, forKey: .isKumite) }
+        if isLiveShow { try c.encode(true, forKey: .isLiveShow) }
+        if !tagPartner.isEmpty { try c.encode(tagPartner, forKey: .tagPartner) }
+        if hasMemberChanges { try c.encode(true, forKey: .hasMemberChanges) }
         if !kumiteMains.isEmpty { try c.encode(kumiteMains, forKey: .kumiteMains) }
         if !kumiteBouts.isEmpty { try c.encode(kumiteBouts, forKey: .kumiteBouts) }
         try c.encodeIfPresent(ruleID, forKey: .ruleID)
@@ -1050,6 +1070,8 @@ struct AppPreferences: Codable, Equatable {
     var entryLeadMinutes: Int? = nil
     /// 募集開始の時刻ちょうどの通知。
     var entryNotifyAtStart: Bool = false
+    /// 0.28：エントリー締切の前の通知（何分前かは entryLeadMinutes と同じ）。
+    var entryEndNotify: Bool = true
     /// 0.23：LiveStair のライブ通知と同じく、会（生大喜利・短考・スプシ系）の当日通知と会の前の通知を分ける。
     /// 当日通知（会の日の決まった時刻。時刻は reminderHour・reminderMinute）。
     var dayNotify: Bool = true
@@ -1068,7 +1090,7 @@ struct AppPreferences: Codable, Equatable {
 
 extension AppPreferences {
     private enum CodingKeys: String, CodingKey {
-        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder, hiddenFormats, selfAliases, mergesSelfAliases, entryNotifyBefore, entryLeadMinutes, entryNotifyAtStart, dayNotify, beforeNotify, beforeBase, beforeMinutes, deadlineBeforeNotify, deadlineLeadMinutes, deadlineAtNotify
+        case theme, notificationsEnabled, reminderMinutes, reminderHour, reminderMinute, selfName, onboardingCompleted, listCurrentMode, submissionDays, votingDays, submissionStartDayOffset, submissionStartHour, submissionStartMinute, playerIconMode, hasShownInitialResultPrompt, formatOrder, hiddenFormats, selfAliases, mergesSelfAliases, entryNotifyBefore, entryLeadMinutes, entryNotifyAtStart, entryEndNotify, dayNotify, beforeNotify, beforeBase, beforeMinutes, deadlineBeforeNotify, deadlineLeadMinutes, deadlineAtNotify
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1109,6 +1131,7 @@ extension AppPreferences {
         entryNotifyBefore = try c.decodeIfPresent(Bool.self, forKey: .entryNotifyBefore) ?? true
         entryLeadMinutes = try c.decodeIfPresent(Int.self, forKey: .entryLeadMinutes)
         entryNotifyAtStart = try c.decodeIfPresent(Bool.self, forKey: .entryNotifyAtStart) ?? false
+        entryEndNotify = try c.decodeIfPresent(Bool.self, forKey: .entryEndNotify) ?? true
         dayNotify = try c.decodeIfPresent(Bool.self, forKey: .dayNotify) ?? true
         beforeNotify = try c.decodeIfPresent(Bool.self, forKey: .beforeNotify) ?? true
         let base = try c.decodeIfPresent(String.self, forKey: .beforeBase) ?? "start"
@@ -1159,6 +1182,7 @@ extension AppPreferences {
         try c.encode(entryNotifyBefore, forKey: .entryNotifyBefore)
         try c.encodeIfPresent(entryLeadMinutes, forKey: .entryLeadMinutes)
         try c.encode(entryNotifyAtStart, forKey: .entryNotifyAtStart)
+        if !entryEndNotify { try c.encode(false, forKey: .entryEndNotify) }
         try c.encode(dayNotify, forKey: .dayNotify)
         try c.encode(beforeNotify, forKey: .beforeNotify)
         try c.encode(beforeBase, forKey: .beforeBase)
@@ -1193,11 +1217,16 @@ struct OnlineSite: Codable, Equatable, Identifiable {
     var isPaused: Bool = false
     /// 0.23：シーズンごとに選んだルール（シーズンのID、シーズンがないサイトは "site" → ルールのID）。
     var seasonRuleIDs: [String: String] = [:]
+    /// 0.28：参加している部門（"" はシングル・"tag" はタッグ）とタッグの相手。値がある時だけ書く。
+    var division: String = ""
+    var tagPartner: String = ""
+    /// 0.28：相手の回答を記録していないシーズンに、手で入れた相手の得票率（シーズンのキー → 値）。
+    var tagPartnerRates: [String: Double] = [:]
 }
 
 extension OnlineSite {
     private enum CodingKeys: String, CodingKey {
-        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline, ruleHistory, isPaused, seasonRuleIDs
+        case id, name, url, recurrence, weekday, startHour, startMinute, submissionDays, votingDays, affiliation, block, memo, hasAffiliations, format, cycleSettings, leagueChanges, leagueBaseline, ruleHistory, isPaused, seasonRuleIDs, division, tagPartner, tagPartnerRates
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1234,6 +1263,9 @@ extension OnlineSite {
         ruleHistory = try c.decodeIfPresent([SiteRuleRevision].self, forKey: .ruleHistory) ?? []
         isPaused = try c.decodeIfPresent(Bool.self, forKey: .isPaused) ?? false
         seasonRuleIDs = try c.decodeIfPresent([String: String].self, forKey: .seasonRuleIDs) ?? [:]
+        division = try c.decodeIfPresent(String.self, forKey: .division) ?? ""
+        tagPartner = try c.decodeIfPresent(String.self, forKey: .tagPartner) ?? ""
+        tagPartnerRates = (try c.decodeIfPresent([String: Double].self, forKey: .tagPartnerRates) ?? [:]).filter { $0.value.isFinite && $0.value >= 0 }
 
         try validate()
     }
@@ -1272,6 +1304,9 @@ extension OnlineSite {
         try c.encode(ruleHistory, forKey: .ruleHistory)
         try c.encode(isPaused, forKey: .isPaused)
         if !seasonRuleIDs.isEmpty { try c.encode(seasonRuleIDs, forKey: .seasonRuleIDs) }
+        if !division.isEmpty { try c.encode(division, forKey: .division) }
+        if !tagPartner.isEmpty { try c.encode(tagPartner, forKey: .tagPartner) }
+        if !tagPartnerRates.isEmpty { try c.encode(tagPartnerRates, forKey: .tagPartnerRates) }
 
     }
 }

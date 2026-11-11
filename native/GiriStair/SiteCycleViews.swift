@@ -245,6 +245,11 @@ struct GiriSitePeriodActions: View {
     @State private var breakCycle: SiteVisibleCycle?
     /// 次のシーズンでルールが変わる時、締切の保存のあとに日程・ルールの設定を開く。
     @State private var setupAfterDeadline = false
+    /// 0.28：タッグ部門のあるサイトで参加する回（シングル／タッグと相手を選んでから参加する）。
+    @State private var joiningCycle: SiteVisibleCycle?
+    @State private var joinDivision = ""
+    @State private var joinPartner = ""
+    private var usesTagDivision: Bool { site.currentRuleID.flatMap { store.rule($0) }?.tagDivision != nil || site.division == "tag" }
 
     var body: some View {
         // The page owns its clock. A List cell must not create a second
@@ -257,6 +262,7 @@ struct GiriSitePeriodActions: View {
             Text("この回は作らず、次の回から番号を1つずつ詰めます。あとで取り消せます。")
         }
         .sheet(isPresented: $showingSetup) { NavigationStack { GiriSiteEditor(site: site) } }
+        .sheet(item: $joiningCycle) { cycle in NavigationStack { joinSheet(cycle) }.presentationDetents([.medium]) }
         .sheet(item: $resultEvent) { event in NavigationStack { GiriCycleResultEditor(eventID: event.id) } }
         .sheet(item: $deadlineRequest, onDismiss: {
             guard setupAfterDeadline else { return }
@@ -413,9 +419,9 @@ struct GiriSitePeriodActions: View {
                     actionButton("今回は投稿しない", systemImage: "forward") { skip(cycle) }
                 } else if skipped {
                     Text("見送り").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                    actionButton("やっぱり参加する", systemImage: "arrow.uturn.backward") { open(cycle, join: true) }
+                    actionButton("やっぱり参加する", systemImage: "arrow.uturn.backward") { requestJoin(cycle) }
                 } else {
-                    actionButton("参加する", systemImage: "person.badge.plus") { open(cycle, join: true) }
+                    actionButton("参加する", systemImage: "person.badge.plus") { requestJoin(cycle) }
                     actionButton("今回は見送る", systemImage: "forward") { skip(cycle) }
                 }
             }
@@ -495,9 +501,50 @@ struct GiriSitePeriodActions: View {
         }
     }
 
-    private func open(_ cycle: SiteVisibleCycle, join: Bool) {
+    /// 0.28：タッグ部門のあるサイトは、参加する回ごとにシングル／タッグと相手を選ぶ。
+    private func requestJoin(_ cycle: SiteVisibleCycle) {
+        guard usesTagDivision else { open(cycle, join: true); return }
+        let last = giriLastTagPartner(site: site, events: store.events)
+        joinDivision = site.division == "tag" ? "tag" : (cycle.event?.tagPartner.isEmpty == false ? "tag" : "")
+        joinPartner = cycle.event?.tagPartner.isEmpty == false ? (cycle.event?.tagPartner ?? "") : last
+        joiningCycle = cycle
+    }
+
+    private func joinSheet(_ cycle: SiteVisibleCycle) -> some View {
+        Form {
+            Section {
+                AppCardSectionTitle(title: "この回の参加", systemImage: "person.2", accentColor: AppSectionAccent.favorite)
+                    .listRowSeparator(.hidden)
+                Picker(selection: $joinDivision) {
+                    Text("シングル").tag("")
+                    Text("タッグ").tag("tag")
+                } label: { GiriEditorLabel("部門") }
+                .pickerStyle(.menu).tint(.primary)
+                if joinDivision == "tag" {
+                    GiriPlayerSuggestionField(title: "タッグの相手", text: $joinPartner, showsLabel: true, textAlignment: .trailing)
+                }
+            }.appSectionCardStyle(accentColor: AppSectionAccent.favorite)
+        }
+        .appEditorFormStyle()
+        .giriNavigationBarStyle()
+        .navigationTitle("参加する").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { joiningCycle = nil } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("参加する") {
+                    let partner = joinDivision == "tag" ? joinPartner.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+                    joiningCycle = nil
+                    open(cycle, join: true, partner: partner, setsPartner: true)
+                }
+                .fontWeight(.bold)
+                .disabled(joinDivision == "tag" && joinPartner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private func open(_ cycle: SiteVisibleCycle, join: Bool, partner: String = "", setsPartner: Bool = false) {
         store.run {
-            let event: GiriEvent
+            var event: GiriEvent
             if let descriptor = cycle.descriptor {
                 event = try store.createSiteCycle(site.id, descriptor: descriptor, join: join || cycle.event?.isActualParticipant == true)
             } else if var existing = cycle.event {
@@ -507,6 +554,18 @@ struct GiriSitePeriodActions: View {
                 }
                 event = existing
             } else { return }
+            // 0.28：選んだ部門と相手をこの回に残し、次に選ぶ時の初期値にする。
+            if setsPartner {
+                if event.tagPartner != partner {
+                    event.tagPartner = partner
+                    try store.saveEvent(event)
+                }
+                if var updated = store.onlineSiteById(site.id), updated.division != (partner.isEmpty ? "" : "tag") || (!partner.isEmpty && updated.tagPartner != partner) {
+                    updated.division = partner.isEmpty ? "" : "tag"
+                    if !partner.isEmpty { updated.tagPartner = partner }
+                    try store.saveOnlineSite(updated)
+                }
+            }
             guard let round = event.effectiveRounds.first(where: { $0.id == cycle.round.id }) ?? event.effectiveRounds.first else { return }
             navigation.openThoughts(eventID: event.id, roundID: round.id)
         }
@@ -848,6 +907,17 @@ struct GiriSiteCycleSettingsForm: View {
                     if !site.affiliation.isEmpty && !settings.wrappedValue.leagues.contains(site.affiliation) { Text(site.affiliation).tag(site.affiliation) }
                 } label: { GiriEditorLabel("今のリーグ") }
                 .pickerStyle(.menu).tint(.primary)
+                // 0.28：ルールにタッグ部門がある時は、シングル／タッグと相手を入れる。
+                if site.currentRuleID.flatMap({ store.rule($0) })?.tagDivision != nil || site.division == "tag" {
+                    Picker(selection: $site.division) {
+                        Text("シングル").tag("")
+                        Text("タッグ").tag("tag")
+                    } label: { GiriEditorLabel("部門") }
+                    .pickerStyle(.menu).tint(.primary)
+                    if site.division == "tag" {
+                        GiriPlayerSuggestionField(title: "タッグの相手", text: $site.tagPartner, showsLabel: true, textAlignment: .trailing)
+                    }
+                }
                 if seasons {
                     Picker(selection: settings.leagueChangesPerSeason) {
                         Text("毎回").tag(false)

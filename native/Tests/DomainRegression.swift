@@ -1969,6 +1969,263 @@ struct DomainRegression {
             try check(unreadable.found.isEmpty && unreadable.rule == GiriRule(id: unreadable.rule.id, kind: .online, updatedAt: unreadable.rule.updatedAt), "text without rules changes nothing")
         }
 
+        // 0.28 participation from the roster, the live-show meeting type and reading the meeting type.
+        do {
+            let me: (String) -> Bool = { $0 == "わたし" }
+            var meeting = GiriEvent(title: "名簿のある会"); meeting.eventFormat = .live; meeting.organizer = "はるか"
+            try check(!meeting.hasEnteredRoster && meeting.listedSelfRole(isSelf: me) == nil, "meetings without a roster keep choosing participation")
+            meeting.participants = ["わたし", "たろう"]
+            try check(meeting.hasEnteredRoster && meeting.listedParticipationTitle(isSelf: me) == "参加", "being in the participants means taking part")
+            meeting.participants = ["たろう"]; meeting.coOrganizers = ["わたし"]
+            try check(meeting.listedSelfRole(isSelf: me) == .staff && meeting.listedParticipationTitle(isSelf: me) == "主催", "being a co-host means hosting")
+            meeting.coOrganizers = []; meeting.mcs = ["わたし"]
+            try check(meeting.listedParticipationTitle(isSelf: me) == "運営", "an MC who is not a host is staff")
+            meeting.mcs = []; meeting.hasReserves = true; meeting.reserves = ["わたし"]
+            try check(meeting.listedParticipationTitle(isSelf: me) == "リザーバー", "being a reserve comes from the reserve list")
+            meeting.reserves = []
+            try check(meeting.hasEnteredRoster && meeting.listedSelfRole(isSelf: me) == nil, "not being in any list leaves spectating, interested or not attending")
+
+            var show = GiriEvent(title: "架空ライブ"); show.eventFormat = .live; show.meetingType = .casual
+            let plainShow = try JSONSerialization.jsonObject(with: JSONEncoder().encode(show)) as? [String: Any] ?? [:]
+            try check(plainShow["isLiveShow"] == nil, "meetings that are not live shows keep the older JSON shape")
+            show.isLiveShow = true
+            let decodedShow = try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(show))
+            try check(decodedShow.isLiveShowEvent && decodedShow.meetingTitle == "ライブ" && decodedShow.meetingFilterKey == "show", "a live show roundtrips and is listed as ライブ")
+            var onlineShow = show; onlineShow.eventFormat = .onlineLong
+            try check(!onlineShow.isLiveShowEvent && onlineShow.meetingTitle == "通常", "live shows are only for in-person meetings")
+
+            try check(giriInferredMeetingKind(title: "第3回 架空組手", text: "") == "kumite", "kumite comes from the title")
+            try check(giriInferredMeetingKind(title: "架空杯", text: "") == "tournament" && giriInferredMeetingKind(title: "架空カップ2026", text: "") == "tournament",
+                      "cup-style titles are tournaments")
+            try check(giriInferredMeetingKind(title: "夜の大喜利会", text: "予選のあと決勝を行います\n前回優勝：はるか") == "tournament", "finals and previous winners mean a tournament")
+            try check(giriInferredMeetingKind(title: "架空大喜利ライブ", text: "前売チケット 2000円\n当日券あり") == "show"
+                      && giriInferredMeetingKind(title: "夜の会", text: "チケット販売中\n前売2000円\n客席は自由席です") == "show", "tickets and seats mean a live show")
+            try check(giriInferredMeetingKind(title: "夜の会", text: "今回のテーマは春\nコンセプトは「縛り」\n特別ルールあり") == "project", "many concept words mean a project")
+            try check(giriInferredMeetingKind(title: "夜の大喜利会", text: "参加費500円\n初心者歓迎") == nil, "a plain meeting keeps the current choice")
+            try check(giriRuleTemplates.contains { $0.id == "template:two-league-promotion" && $0.name == "大喜利天文台(S28～S29)" }, "the two-league template carries the requested name")
+        }
+
+        // 0.28 seasons with single and tag divisions, per-league schedules and entry periods.
+        do {
+            guard let s30 = giriRuleTemplates.first(where: { $0.id == "template:two-league-tag-s30" }) else { throw GiriDataError.invalid("Missing S30 template") }
+            let upper = s30.leagueDetail("1部"), lower = s30.leagueDetail("2部")
+            try check(s30.name == "大喜利天文台(S30～)" && upper.topAnswerCount == 8 && lower.topAnswerCount == 4 && upper.stayCount == 35
+                      && upper.unqualifiedRanksLast && lower.unqualifiedExcluded && lower.entryDays == 1 && lower.submissionDays == 6 && upper.answersPerPrompt == 2,
+                      "the S30 template keeps top-N averages, stays, shortfall handling and per-league schedules")
+            let tagUpper = s30.leagueDetail("1部", tag: true), tagLower = s30.leagueDetail("2部", tag: true)
+            try check(tagUpper.relegationCount == 8 && tagUpper.stayCount == 17 && tagLower.promotionCount == 8 && s30.tagDivision?.playoffEntrants == 4
+                      && s30.tagDivision?.memberShortfallZero == true && s30.tagDivision?.teamScoring == "sum", "the tag division has its own exchange counts and playoff size")
+            try check(try JSONDecoder().decode(GiriRule.self, from: JSONEncoder().encode(s30)) == s30, "rules with a tag division roundtrip")
+            let plainS28 = try JSONSerialization.jsonObject(with: JSONEncoder().encode(GiriRule(name: "タッグなし", kind: .online))) as? [String: Any] ?? [:]
+            try check(plainS28["tagDivision"] == nil && plainS28["entryDays"] == nil && plainS28["entryNote"] == nil, "rules without tags or entry keep the older JSON shape")
+
+            var site = OnlineSite(name: "架空リーグ")
+            let plainSite = try JSONSerialization.jsonObject(with: JSONEncoder().encode(site)) as? [String: Any] ?? [:]
+            try check(plainSite["division"] == nil && plainSite["tagPartner"] == nil, "single-division sites keep the older JSON shape")
+            site.division = "tag"; site.tagPartner = "はるか"
+            let decodedSite = try JSONDecoder().decode(OnlineSite.self, from: JSONEncoder().encode(site))
+            try check(decodedSite.division == "tag" && decodedSite.tagPartner == "はるか", "the tag division and partner roundtrip")
+            site.affiliation = "2部"
+            giriApplyRule(s30, to: &site)
+            try check(site.submissionDays == 6 && site.votingDays == 4 && site.cycleSettings?.intervalDays == 7,
+                      "a league's own posting days are used for that league and the entry day keeps the weekly cadence")
+            site.affiliation = "1部"
+            giriApplyRule(s30, to: &site)
+            try check(site.submissionDays == 7, "the first league uses the rule's posting days")
+
+            var cup = GiriEvent(title: "架空グランプリ"); cup.eventFormat = .live; cup.meetingType = .tournament
+            let start = Date(timeIntervalSince1970: 1_800_000_000); cup.startsAt = start
+            var entryRule = GiriRule(name: "エントリーあり", kind: .live, scope: .tournament); entryRule.entryDays = 7; entryRule.capacity = 32
+            giriApplyRule(entryRule, to: &cup)
+            try check(cup.entryEnd == start && cup.entryStart == Calendar.current.date(byAdding: .day, value: -7, to: start), "a tournament rule's entry period is placed before the start")
+
+            let singlePage = """
+            ルール
+            昇格・降格
+            1シーズンの成績で、1部の下位15名と2部の上位15名が入れ替わります。
+            H得票率
+            シーズン中投稿したボケのうち、得票率が高いもの（1部は上から8ボケ、2部は上から4ボケ）を平均した値です。
+            1部 NIGHT
+            成績順に上からの8ボケの得票率を平均
+            上位35名が残留
+            下位15名が降格
+            2部 DAY
+            成績順に上からの4ボケの得票率を平均
+            上位15名が昇格
+            それ以外は残留
+            1部は、投稿数が8ボケに満たない場合は最下位扱いとなります。
+            2部は、投稿数が4ボケに満たない場合は集計対象外となります。
+            同率の場合は、投稿数が多い人を上位とします。
+            シーズン中のランキングは、1部は結果お題のうち1/2以上の投稿数がある方・2部は結果お題のうち1/4以上の投稿数がある方を対象に集計されます。
+            エントリー・投稿・投票
+            自分が投稿したお題に投票すると、投票ボーナス3点が加算されます。1シーズンに8回お題が出題されます。
+            1部は1題につき2投稿、2部は1題につき1投稿可能です。
+            1部 NIGHT
+            2題から1題
+            投稿7日間（水曜23:00〜翌水曜23:00）
+            投票4日間（水曜23:00〜日曜23:00）
+            2部 DAY
+            4題から1題
+            エントリー1日間（水曜23:00〜木曜23:00）
+            投稿6日間（木曜23:00〜水曜23:00）
+            投票4日間（水曜23:00〜日曜23:00）
+            エントリーについて
+            エントリーは先着順です。エントリーは取り下げられません。
+            プレーオフ
+            各シーズンの予選終了後、1部の成績上位者で優勝を決定するプレーオフを行います。
+            """
+            let single = giriRuleReadingText(singlePage, into: GiriRule(kind: .online)).rule
+            let one = single.leagueDetail("1部"), two = single.leagueDetail("2部")
+            try check(single.leagues == ["1部", "2部"] && single.regularCycleCount == 8 && single.submissionDays == 7 && single.votingDays == 4 && single.voteBonusPoints == 3,
+                      "the single page fills periods, cycles and the voting bonus")
+            try check(one.topAnswerCount == 8 && two.topAnswerCount == 4 && one.stayCount == 35 && one.relegationCount == 15 && two.promotionCount == 15,
+                      "league headings carry the top-N average and stay/exchange counts")
+            try check(one.unqualifiedRanksLast && two.unqualifiedExcluded && one.requiredFraction == "1/2" && two.requiredFraction == "1/4",
+                      "shortfall handling and ranking requirements are read per league")
+            try check(one.subtitle == "NIGHT" && two.subtitle == "DAY" && one.promptChoices == 2 && two.promptChoices == 4 && one.answersPerPrompt == 2 && two.answersPerPrompt == 1,
+                      "league names, prompt choices and answers per prompt are read")
+            try check(two.entryDays == 1 && two.submissionDays == 6 && one.submissionDays == nil && two.votingDays == nil && single.entryNote.contains("先着"),
+                      "per-league entry and posting days are read and equal days stay on the rule")
+            try check(single.tagDivision == nil, "a single page does not create a tag division")
+
+            let tagPage = """
+            昇格・降格
+            1シーズンの成績で、1部の下位8タッグと2部の上位8タッグが入れ替わります。
+            1部 NIGHT
+            成績順に上からの8ボケの得票率を平均
+            2人のH得票率を合計
+            上位17タッグが残留
+            下位8タッグが降格
+            2部 DAY
+            成績順に上からの4ボケの得票率を平均
+            2人のH得票率を合計
+            上位8タッグが昇格
+            1部は、タッグを組んでいない人は最下位扱いとなります。
+            2部は、タッグを組んでいない人は集計対象外となります。
+            同率の場合は、投稿数が多いタッグを上位とします。
+            投稿数が満たない人は、H得票率0として扱われます。
+            タッグの結成は、シーズン中いつでも可能です。
+            プレーオフ
+            各シーズンの予選終了後、1部の成績上位4タッグで優勝を決定するプレーオフを行います。
+            """
+            let tagged = giriRuleReadingText(tagPage, into: single).rule
+            let tagOne = tagged.leagueDetail("1部", tag: true), tagTwo = tagged.leagueDetail("2部", tag: true)
+            try check(tagged.tagDivision != nil && tagOne.relegationCount == 8 && tagOne.stayCount == 17 && tagTwo.promotionCount == 8 && tagOne.topAnswerCount == 8,
+                      "the tag page fills the tag division's counts")
+            try check(tagOne.unqualifiedRanksLast && tagTwo.unqualifiedExcluded && tagged.tagDivision?.memberShortfallZero == true
+                      && tagged.tagDivision?.playoffEntrants == 4 && tagged.tagDivision?.tieBreak.contains("タッグ") == true && !(tagged.tagDivision?.formationNote.isEmpty ?? true),
+                      "unpaired players, zero for short members, tie breaks and the playoff size are read")
+            try check(tagged.leagueDetail("1部").stayCount == 35 && tagged.leagueDetail("1部").relegationCount == 15, "reading the tag page keeps the single division as it was")
+        }
+
+        // 0.28 team answers credited to the drafter, tag partner rates and entry deadline notices.
+        do {
+            let me: (String) -> Bool = { $0 == "わたし" }
+            var plainRecord = AnswerRecord(text: "回答")
+            let plainJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plainRecord)) as? [String: Any] ?? [:]
+            try check(plainJSON["drafter"] == nil && plainJSON["isTeammate"] == nil && plainJSON["answerer"] as? String == "", "answers without team data keep the older JSON shape")
+            plainRecord.drafter = "はるか"; plainRecord.isTeammate = false
+            let decodedRecord = try JSONDecoder().decode(AnswerRecord.self, from: JSONEncoder().encode(plainRecord))
+            try check(decodedRecord.drafter == "はるか" && decodedRecord.isOwn && !decodedRecord.countsForSelf && decodedRecord.creditedName == "はるか" && decodedRecord.isTeamCredit,
+                      "a team answer drafted by a teammate is credited to the teammate")
+            var teammateRecord = AnswerRecord(text: "メンバーの回答", answerer: "たろう"); teammateRecord.isTeammate = true
+            try check(!teammateRecord.isOwn && teammateRecord.creditedName == "たろう" && teammateRecord.isTeamCredit && AnswerRecord(text: "自分").countsForSelf,
+                      "teammates' answers are credited to them and own answers stay mine")
+
+            var teamCup = GiriEvent(title: "架空チーム杯"); teamCup.meetingType = .tournament; teamCup.tournamentFormat = .team; teamCup.eventFormat = .onlineLong
+            teamCup.teams = [GiriTeam(name: "自分のチーム", members: ["わたし", "はるか", "たろう"], isMine: true), GiriTeam(name: "相手", members: ["じろう"])]
+            try check(teamCup.teammates(isSelf: me) == ["はるか", "たろう"], "teammates are the other members of my team")
+            var single = teamCup; single.tournamentFormat = .individual
+            try check(single.teammates(isSelf: me).isEmpty, "individual tournaments have no teammates")
+
+            var cycle = GiriEvent(title: "架空サイト 第1回"); cycle.eventFormat = .onlineLong; cycle.onlineSiteId = "site-x"; cycle.siteSeasonID = "s1"
+            var mine = ThoughtNote(title: "お題", kind: .answers); mine.eventId = cycle.id; mine.usesAnswerRecords = true
+            var drafted = AnswerRecord(text: "相手が原案", isSubmitted: true, points: 30, voterCount: 100); drafted.drafter = "はるか"
+            var partnerAnswer = AnswerRecord(text: "相手の回答", points: 10, voterCount: 100, answerer: "はるか")
+            partnerAnswer.isTeammate = false
+            mine.answerRecords = [AnswerRecord(text: "自分の回答", isSubmitted: true, points: 20, voterCount: 100), drafted, partnerAnswer]
+            let own = giriSeasonTotals(siteID: "site-x", seasonID: "s1", seasonName: "", events: [cycle], notes: [mine])
+            try check(own.submittedAnswerCount == 1 && own.averageVoteRate == 20, "answers drafted by someone else do not count in my season")
+            let partner = giriPersonSeasonRate(name: "はるか", siteID: "site-x", seasonID: "s1", seasonName: "", events: [cycle], notes: [mine], topCount: 1)
+            try check(partner.sampleCount == 2 && partner.countedSampleCount == 1 && partner.averageVoteRate == 30, "the partner's rate uses their recorded answers and keeps the top ones")
+            try check(giriTagSeasonRate(own: 20, ownCount: 4, partner: 30, partnerCount: 4, topCount: 4, scoring: "sum", shortfallZero: true) == 50
+                      && giriTagSeasonRate(own: 20, ownCount: 4, partner: 30, partnerCount: 2, topCount: 4, scoring: "sum", shortfallZero: true) == 20
+                      && giriTagSeasonRate(own: 20, ownCount: 4, partner: 30, partnerCount: 4, topCount: 4, scoring: "average", shortfallZero: false) == 25
+                      && giriTagSeasonRate(own: 20, ownCount: 4, partner: nil, partnerCount: nil, topCount: 4, scoring: "sum", shortfallZero: false) == nil,
+                      "tag totals add or average the two and count a short member as zero when the rule says so")
+
+            var tagSite = OnlineSite(name: "架空サイト")
+            let plainTagSite = try JSONSerialization.jsonObject(with: JSONEncoder().encode(tagSite)) as? [String: Any] ?? [:]
+            try check(plainTagSite["tagPartnerRates"] == nil, "sites without typed partner rates keep the older JSON shape")
+            tagSite.tagPartnerRates = ["s1": 12.5]
+            try check(try JSONDecoder().decode(OnlineSite.self, from: JSONEncoder().encode(tagSite)).tagPartnerRates == ["s1": 12.5], "typed partner rates roundtrip")
+
+            let base = GiriDates.parse("2026-11-05T00:00:00Z") ?? Date()
+            var entryCup = GiriEvent(title: "エントリーのある大会"); entryCup.eventFormat = .onlineLong; entryCup.meetingType = .tournament
+            entryCup.entryStart = base.addingTimeInterval(86400); entryCup.entryEnd = base.addingTimeInterval(4 * 86400)
+            var prefs = AppPreferences(notificationsEnabled: true); prefs.entryLeadMinutes = 60
+            let reminders = planNativeReminders(events: [entryCup], preferences: prefs, now: base)
+            try check(reminders.contains { $0.id.hasSuffix(":entry-end") && $0.date == base.addingTimeInterval(4 * 86400 - 3600) }
+                      && reminders.contains { $0.id.hasSuffix(":entry-start") }, "entry start and deadline notices are both planned")
+            var noEnd = prefs; noEnd.entryEndNotify = false
+            try check(!planNativeReminders(events: [entryCup], preferences: noEnd, now: base).contains { $0.id.hasSuffix(":entry-end") }, "the deadline notice can be turned off")
+            let oldPrefs = try JSONDecoder().decode(AppPreferences.self, from: Data("{}".utf8))
+            try check(oldPrefs.entryEndNotify, "older preferences turn the entry deadline notice on")
+        }
+
+        // 0.28 team-born answers, per-stage members and per-cycle tag partners.
+        do {
+            let me: (String) -> Bool = { $0 == "わたし" }
+            var teamBorn = AnswerRecord(text: "チームの回答", isSubmitted: true, points: 40, voterCount: 100); teamBorn.isTeamAnswer = true
+            try check(teamBorn.isTeamBorn && !teamBorn.countsForSelf && teamBorn.creditedName.isEmpty && !teamBorn.isTeamCredit,
+                      "a team answer without a drafter belongs to nobody")
+            var selfDrafted = teamBorn; selfDrafted.drafter = giriSelfDrafter
+            try check(selfDrafted.countsForSelf && selfDrafted.creditedName.isEmpty && !selfDrafted.isTeamCredit, "choosing myself as the drafter counts it for me")
+
+            var teamCup = GiriEvent(title: "架空チーム杯"); teamCup.meetingType = .tournament; teamCup.tournamentFormat = .team; teamCup.eventFormat = .onlineLong
+            teamCup.teams = [GiriTeam(name: "自分のチーム", members: ["わたし", "はるか", "たろう"], isMine: true)]
+            var note = ThoughtNote(title: "お題", kind: .answers); note.eventId = teamCup.id; note.usesAnswerRecords = true
+            note.answerRecords = [AnswerRecord(text: "出した回答", isSubmitted: true)]
+            try check(giriMarkingTeamAnswers(note, event: teamCup).answerRecords.allSatisfy(\.isTeamAnswer), "answers in team tournaments are marked as team answers")
+            var soloCup = teamCup; soloCup.tournamentFormat = .individual
+            try check(giriMarkingTeamAnswers(note, event: soloCup).answerRecords.allSatisfy { !$0.isTeamAnswer }, "individual tournaments keep answers as mine")
+
+            var wide = ResultStage(); wide.name = "予選"; wide.stageId = "stage-a"
+            wide.members = ["わたし", "はるか", "たろう", "じろう"]; wide.absentMembers = ["たろう"]
+            var round = ResultStage(); round.roundId = "round-a"; round.stageId = "stage-a"
+            teamCup.tournamentResult = TournamentResult(stages: [wide, round])
+            try check(teamCup.teammates(isSelf: me, stageID: wide.id) == ["はるか", "たろう"], "without member changes the team stays the same")
+            teamCup.hasMemberChanges = true
+            try check(teamCup.teammates(isSelf: me, stageID: wide.id) == ["はるか", "じろう"] && teamCup.teammates(isSelf: me, stageID: "round-a") == ["はるか", "じろう"],
+                      "member changes add and drop members for the stage and its rounds")
+            let stageJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ResultStage())) as? [String: Any] ?? [:]
+            try check(stageJSON["members"] == nil && stageJSON["absentMembers"] == nil, "stages without member changes keep the older JSON shape")
+            try check(try JSONDecoder().decode(ResultStage.self, from: JSONEncoder().encode(wide)).absentMembers == ["たろう"], "stage members roundtrip")
+
+            var ruleStage = GiriRuleStage(name: "予選2試合目"); ruleStage.memberChange = "add"; ruleStage.memberChangeCount = 1
+            try check(ruleStage.memberChangeText == "1人まで増やせる", "a stage can allow adding a member")
+            var memberRule = GiriRule(name: "途中で増える", kind: .online, scope: .tournament, tournamentFormat: .team, stages: [ruleStage])
+            memberRule.hasMemberChanges = true
+            var ruled = GiriEvent(title: "架空の大会"); ruled.eventFormat = .onlineLong; ruled.meetingType = .tournament
+            giriApplyRule(memberRule, to: &ruled)
+            try check(ruled.hasMemberChanges && ruled.tournamentFormat == .team && giriRuleStageResults(memberRule).first?.memo.contains("1人まで増やせる") == true,
+                      "a rule with member changes turns them on for the tournament and notes each stage")
+            let plainEvent = try JSONSerialization.jsonObject(with: JSONEncoder().encode(GiriEvent(title: "会"))) as? [String: Any] ?? [:]
+            try check(plainEvent["tagPartner"] == nil && plainEvent["hasMemberChanges"] == nil, "events without tags or member changes keep the older JSON shape")
+
+            var site = OnlineSite(name: "架空サイト"); site.id = "tag-site"
+            func cycle(_ partner: String, day: Double) -> GiriEvent {
+                var event = GiriEvent(title: "架空サイト"); event.onlineSiteId = site.id; event.siteSeasonID = "s30"; event.tagPartner = partner
+                var round = EventRound(); round.submissionStart = Date(timeIntervalSince1970: day * 86400); event.rounds = [round]
+                return event
+            }
+            let cycles = [cycle("はるか", day: 1), cycle("はるか", day: 8), cycle("たろう", day: 15), cycle("", day: 22)]
+            let partners = giriSeasonTagPartners(site: site, seasonID: "s30", events: cycles)
+            try check(partners.map(\.name) == ["はるか", "たろう"] && partners.map(\.cycles) == [2, 1], "season partners come from each cycle, most frequent first")
+            try check(giriLastTagPartner(site: site, events: cycles) == "たろう", "the next cycle suggests the latest partner")
+            try check(giriSeasonTagPartners(site: site, seasonID: "other", events: cycles).isEmpty, "single-only seasons have no partners")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

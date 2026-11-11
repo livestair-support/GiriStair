@@ -43,14 +43,18 @@ struct GiriNotificationKindRows: View {
             kindHeader("長考の締切通知", systemImage: "bell.badge", isOn: preference(\.deadlineAtNotify),
                        info: "長考などの投稿締切・投票締切の時刻ちょうどに知らせます。")
 
-            kindHeader("募集開始前の通知", systemImage: "calendar.badge.clock", isOn: preference(\.entryNotifyBefore),
-                       info: "大喜利会の「募集期間」に入れた募集開始の、設定した時間前に知らせます。")
+            kindHeader("エントリー開始前の通知", systemImage: "calendar.badge.clock", isOn: preference(\.entryNotifyBefore),
+                       info: "会・大会の「エントリー期間」に入れたエントリー開始の、設定した時間前に知らせます。")
             if preferences.entryNotifyBefore {
                 optionRow("どのくらい前") { leadPicker(entryLead, options: [5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880]) }
             }
 
-            kindHeader("募集開始時の通知", systemImage: "calendar", isOn: preference(\.entryNotifyAtStart),
-                       info: "大喜利会の「募集期間」に入れた募集開始の時刻ちょうどに知らせます。")
+            kindHeader("エントリー開始時の通知", systemImage: "calendar", isOn: preference(\.entryNotifyAtStart),
+                       info: "会・大会の「エントリー期間」に入れたエントリー開始の時刻ちょうどに知らせます。")
+
+            // 0.28：エントリー締切の前（何分前かは開始前の通知と同じ）。
+            kindHeader("エントリー締切前の通知", systemImage: "calendar.badge.exclamationmark", isOn: preference(\.entryEndNotify),
+                       info: "「エントリー期間」に入れたエントリー締切の、開始前の通知と同じ時間前に知らせます。")
         }
         .sheet(isPresented: $showingBeforePicker) { beforePickerSheet }
     }

@@ -78,6 +78,7 @@ struct GiriListView: View {
         var options = [("all", "すべて"), ("casual", "通常"), ("tournament", "大会")]
         if selectedFormat.allowsProject || meeting == "project" { options.append(("project", "企画")) }
         if selectedFormat.allowsProject || meeting == "kumite" { options.append(("kumite", "組手")) }
+        if selectedFormat == .live || meeting == "show" { options.append(("show", "ライブ")) }
         return options
     }
     /// 主催者・共催（団体を含む）の名前。
@@ -963,7 +964,7 @@ enum GiriBadgeColors {
         type == .tournament ? AppSectionAccent.ticket : AppSectionAccent.artist
     }
     static func meeting(_ event: GiriEvent) -> Color {
-        event.isKumiteEvent ? AppSectionAccent.favorite : event.isProjectEvent ? AppSectionAccent.venue : meeting(event.meetingType)
+        event.isKumiteEvent ? AppSectionAccent.favorite : event.isProjectEvent ? AppSectionAccent.venue : event.isLiveShowEvent ? AppSectionAccent.song : meeting(event.meetingType)
     }
 }
 
@@ -1001,7 +1002,8 @@ enum GiriEventPresentation {
         // 大会・企画は、通常の会と色を分ける（企画は札と同じ色）。
         let base = event.meetingType == .tournament ? AppSectionAccent.ticket
             : event.isKumiteEvent ? AppSectionAccent.favorite
-            : event.isProjectEvent ? AppSectionAccent.venue : accent(event.eventFormat)
+            : event.isProjectEvent ? AppSectionAccent.venue
+            : event.isLiveShowEvent ? AppSectionAccent.song : accent(event.eventFormat)
         // 観覧の会は、参加する会と見分けられるように少し色を変える。
         if event.eventFormat == .live && event.selfRole == .spectator { return base.mix(with: GiriBadgeColors.spectator, by: 0.55) }
         return base

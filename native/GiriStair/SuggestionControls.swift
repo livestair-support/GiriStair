@@ -168,13 +168,16 @@ struct GiriVenueSuggestionField: View {
     @EnvironmentObject private var store: GiriStore
     @Binding var text: String
     @State private var cachedNames: [String] = []
+    @State private var cachedReadings: [String: [String]] = [:]
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Text("会場名").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
                 .fixedSize().padding(.top, 2)
+            // 0.28：LiveStair と同じく、会場のフリガナでも候補を出す。
             GiriSuggestionTextField(placeholder: "会場名", text: $text,
-                suggestions: cachedNames, textAlignment: .trailing)
+                suggestions: cachedNames, textAlignment: .trailing,
+                suggestionSearchTexts: cachedReadings)
         }
         .onAppear(perform: rebuild)
         .onReceive(store.objectWillChange) { _ in DispatchQueue.main.async { rebuild() } }
@@ -194,5 +197,8 @@ struct GiriVenueSuggestionField: View {
             }
             return playerSearchKey(first.name) < playerSearchKey(second.name)
         }.map(\.name)
+        cachedReadings = Dictionary(store.venueDirectory.map { venue in
+            (venue.name, venue.furigana.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [venue.furigana])
+        }, uniquingKeysWith: { first, _ in first })
     }
 }

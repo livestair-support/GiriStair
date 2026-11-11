@@ -316,23 +316,47 @@ struct GiriSiteDetail: View {
     @ViewBuilder private func seasonTotalsRows(site: OnlineSite, seasonID: String?, seasonName: String) -> some View {
         // 0.23：シーズンのルールが「規定回答数の上位の平均」なら、上位の規定回答数分だけで平均する。
         let rule = site.ruleID(forSeason: seasonID).flatMap { store.rule($0) }
-        let required = rule?.scoring == .topRequired ? rule?.requiredAnswerCount : nil
+        // 0.28：リーグごとに「上から○回答の平均」が決まっている時は、その数で平均する（タッグもリーグの数を使う）。
+        let league = seasonLeague(site: site, seasonID: seasonID)
+        // 0.28：タッグで出た回（回ごとの相手）があるシーズンはタッグとして出す。
+        let seasonPartners = giriSeasonTagPartners(site: site, seasonID: seasonID, events: store.events)
+        let isTag = rule?.tagDivision != nil && !seasonPartners.isEmpty
+        let leagueTop = league.flatMap { rule?.leagueDetail($0, tag: isTag).topAnswerCount }
+        let required = leagueTop ?? (rule?.scoring == .topRequired ? rule?.requiredAnswerCount : nil)
         let totals = giriSeasonTotals(siteID: site.id, seasonID: seasonID, seasonName: seasonName, events: store.events, notes: store.notes,
                                       requiredAnswerCount: required)
         if let rule { seasonTotalRow("ルール", rule.displayName) }
+        if isTag, let tag = rule?.tagDivision {
+            seasonTotalRow(tag.name, seasonPartners.map { $0.cycles > 0 ? "\($0.name)（\($0.cycles)回）" : $0.name }.joined(separator: "・"))
+        }
         seasonTotalRow("提出した回答", "\(totals.submittedAnswerCount)回答")
         seasonTotalRow("点数の記録済み", "\(totals.scoredAnswerCount)回答")
         if let required {
             seasonTotalRow("規定回答数", totals.rateSampleCount >= required ? "\(required)回答（達成）" : "\(required)回答（あと\(required - totals.rateSampleCount)）")
         }
+        // 0.28：上から○回答に届かない時の扱い（最下位・集計対象外）。
+        if let league, let rule, let top = leagueTop, totals.rateSampleCount < top {
+            let detail = rule.leagueDetail(league, tag: isTag)
+            if detail.unqualifiedRanksLast || detail.unqualifiedExcluded {
+                Text("\(top)回答に届かない時は" + (detail.unqualifiedRanksLast ? "最下位扱い" : "集計対象外") + "になります。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
         // 0.27：リーグの規定数（○回以上・結果お題数の1/2以上など）に届いているか。
-        if let rule, let league = seasonLeague(site: site, seasonID: seasonID),
-           let needed = rule.leagueDetail(league).requiredAnswers(cycleCount: rule.regularCycleCount) {
+        if let rule, let league,
+           let needed = rule.leagueDetail(league, tag: isTag).requiredAnswers(cycleCount: rule.regularCycleCount) {
             seasonTotalRow("規定数（\(league)）", totals.answeredCycleCount >= needed ? "\(needed)回（達成）" : "\(needed)回（あと\(needed - totals.answeredCycleCount)）")
         }
         // 0.27：回ごとに勝ち抜けを決めるルールは、平均を出さない。
         if rule?.scoring != .perRound {
             seasonTotalRow(required == nil ? "平均（1人あたり）" : "上位\(required ?? 0)回答の平均（1人あたり）", totals.averagePointsPerVoter.map(giriScoreText) ?? "未記録")
+            if leagueTop != nil {
+                seasonTotalRow("H得票率（上位\(required ?? 0)回答）", totals.averageVoteRate.map { String(format: "%.1f%%", $0) } ?? "未記録")
+            }
+            if isTag, let tag = rule?.tagDivision {
+                tagTotalRows(site: site, seasonID: seasonID, seasonName: seasonName, tag: tag, top: leagueTop, totals: totals,
+                             partner: seasonPartners.first?.name ?? "")
+            }
         }
         if totals.droppedLowerSamples {
             Text("得票率の低い\(totals.rateSampleCount - (required ?? 0))回答は平均に入れていません。")
@@ -342,6 +366,31 @@ struct GiriSiteDetail: View {
             Text("平均には回単位で残した点数\(totals.legacyRoundResultCount)件も含みます。")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    /// 0.28：タッグの相手の得票率（記録した回答から。なければ手で入れた値）と、2人の合計。
+    @ViewBuilder private func tagTotalRows(site: OnlineSite, seasonID: String?, seasonName: String, tag: GiriRuleTagDivision,
+                                           top: Int?, totals: GiriSeasonTotals, partner: String) -> some View {
+        let recorded = giriPersonSeasonRate(name: partner, siteID: site.id, seasonID: seasonID, seasonName: seasonName,
+                                            events: store.events, notes: store.notes, topCount: top)
+        let manual = site.tagPartnerRates[giriSeasonRuleKey(seasonID)]
+        let partnerRate = recorded.averageVoteRate ?? manual
+        let total = giriTagSeasonRate(own: totals.averageVoteRate, ownCount: totals.rateSampleCount,
+                                      partner: partnerRate, partnerCount: recorded.averageVoteRate == nil ? nil : recorded.sampleCount,
+                                      topCount: top, scoring: tag.teamScoring, shortfallZero: tag.memberShortfallZero)
+        if !partner.isEmpty {
+            seasonTotalRow("相手（" + partner + "）", partnerRate.map { String(format: "%.1f%%", $0) + (recorded.averageVoteRate == nil ? "（手入力）" : "（\(recorded.sampleCount)回答）") } ?? "未記録")
+        }
+        seasonTotalRow("タッグの成績（" + tag.scoringTitle + "）", total.map { String(format: "%.1f%%", $0) } ?? "未記録")
+        NavigationLink {
+            GiriTagPartnerRateEditor(siteID: site.id, seasonKey: giriSeasonRuleKey(seasonID), partner: partner)
+        } label: {
+            Label(recorded.averageVoteRate == nil ? "相手の得票率を入れる" : "相手の得票率（手入力）を直す", systemImage: "square.and.pencil")
+                .font(.subheadline)
+        }
+        .tint(accentActionColor)
+        Text("相手の回答を「他人の回答」として得票率付きで記録すると、上から○回答の平均を自動で出します。記録がないシーズンは手で入れた値を使います。")
+            .font(.caption).foregroundStyle(.secondary)
     }
 
     /// 0.27：そのシーズンに入っていたリーグ（記録した回の所属。なければ今のリーグ）。
@@ -377,6 +426,10 @@ struct GiriSiteDetail: View {
                 if site.hasAffiliations {
                     Divider().overlay(appSeparatorColor)
                     GiriProfileInfoRow(title: "現在のリーグ", value: siteLeague(site), labelWidth: 80, verticalPadding: 8)
+                }
+                if site.division == "tag" {
+                    Divider().overlay(appSeparatorColor)
+                    GiriProfileInfoRow(title: "部門", value: site.tagPartner.isEmpty ? "タッグ" : "タッグ（" + site.tagPartner + "）", labelWidth: 80, verticalPadding: 8)
                 }
                 if let settings = site.cycleSettings {
                     Divider().overlay(appSeparatorColor)
@@ -581,5 +634,60 @@ struct GiriProfileInfoRow: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.vertical, verticalPadding)
+    }
+}
+
+
+/// 0.28：タッグの相手のシーズンの得票率を手で入れる（相手の回答を記録していない時）。
+struct GiriTagPartnerRateEditor: View {
+    @EnvironmentObject private var store: GiriStore
+    @Environment(\.dismiss) private var dismiss
+    let siteID: String
+    let seasonKey: String
+    let partner: String
+    @State private var text = ""
+    @State private var loaded = false
+
+    var body: some View {
+        Form {
+            Section {
+                AppCardSectionTitle(title: "相手の得票率", systemImage: "person.2", accentColor: AppSectionAccent.favorite,
+                                    infoTitle: "相手の得票率", infoMessage: "サイトに出ている相手の得票率（H得票率など）を入れます。相手の回答を記録すると、そちらを優先します。")
+                    .listRowSeparator(.hidden)
+                HStack(spacing: 12) {
+                    GiriEditorLabel(partner.isEmpty ? "相手" : partner)
+                    TextField("例：12.5", text: $text).keyboardType(.decimalPad).multilineTextAlignment(.trailing)
+                    Text("%").foregroundStyle(.secondary)
+                }
+                if store.onlineSiteById(siteID)?.tagPartnerRates[seasonKey] != nil {
+                    Button("手入力の値を消す", role: .destructive) { save(nil) }
+                }
+            }.appSectionCardStyle(accentColor: AppSectionAccent.favorite)
+        }
+        .appEditorFormStyle()
+        .giriNavigationBarStyle()
+        .navigationTitle("相手の得票率").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("保存") { save(Double(text.replacingOccurrences(of: "%", with: "").trimmingCharacters(in: .whitespacesAndNewlines))) }
+                    .fontWeight(.bold)
+            }
+        }
+        .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            if let value = store.onlineSiteById(siteID)?.tagPartnerRates[seasonKey] { text = String(format: "%g", value) }
+        }
+    }
+
+    private func save(_ value: Double?) {
+        guard var site = store.onlineSiteById(siteID) else { return }
+        if let value, !(value.isFinite && value >= 0) { store.errorMessage = "得票率は0以上の数で入れてください。"; return }
+        site.tagPartnerRates[seasonKey] = value
+        store.run {
+            try store.saveOnlineSite(site)
+            playLiveStairSaveFeedback()
+            dismiss()
+        }
     }
 }

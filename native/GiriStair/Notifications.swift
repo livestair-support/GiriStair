@@ -34,17 +34,22 @@ func planNativeReminders(events: [GiriEvent], preferences: AppPreferences, sites
             }
         }
     }
-    // 募集開始（任意）：参加・興味ありのどちらでも、キャンセルした会以外に知らせる。
+    // エントリー開始・締切（任意。0.28 で「募集」から名前を変えた）：参加・興味ありのどちらでも、キャンセルした会以外に知らせる。
     // 0.19：LiveStair のチケット通知と同じく、開始前の通知と開始時の通知を分けて設定する。
     for event in events where event.status != .canceled && event.onlineSiteId == nil {
-        guard let start = event.entryStart else { continue }
         let leadMinutes = preferences.entryLeadMinutes ?? preferences.reminderMinutes
-        if preferences.entryNotifyBefore && leadMinutes > 0 {
-            append(event, "entry-start", "募集開始の" + giriLeadText(leadMinutes) + "前です", start.addingTimeInterval(-TimeInterval(leadMinutes * 60)))
-        } else if preferences.entryNotifyBefore && !preferences.entryNotifyAtStart {
-            append(event, "entry-start", "募集開始の時刻です", start)
+        // 0.28：エントリー締切の前（ネットの大会など）。締切の時刻だけ入れた会にも出す。
+        if preferences.entryEndNotify, let end = event.entryEnd {
+            append(event, "entry-end", leadMinutes > 0 ? "エントリー締切の" + giriLeadText(leadMinutes) + "前です" : "エントリー締切の時刻です",
+                   end.addingTimeInterval(-TimeInterval(leadMinutes * 60)))
         }
-        if preferences.entryNotifyAtStart { append(event, "entry-open", "募集が始まりました", start) }
+        guard let start = event.entryStart else { continue }
+        if preferences.entryNotifyBefore && leadMinutes > 0 {
+            append(event, "entry-start", "エントリー開始の" + giriLeadText(leadMinutes) + "前です", start.addingTimeInterval(-TimeInterval(leadMinutes * 60)))
+        } else if preferences.entryNotifyBefore && !preferences.entryNotifyAtStart {
+            append(event, "entry-start", "エントリー開始の時刻です", start)
+        }
+        if preferences.entryNotifyAtStart { append(event, "entry-open", "エントリーが始まりました", start) }
     }
     for event in events where event.isActualParticipant {
         if event.eventFormat.hasLiveTiming {

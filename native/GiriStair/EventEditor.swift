@@ -88,13 +88,34 @@ struct GiriEventEditor: View {
         }
     }
     private var fixedTeamSize: Int? { draft.tournamentFormat == .pair ? 2 : draft.teamSize }
+    /// 0.28：入力中の参加者を入れた会（参加状況を欄から決めるため）。
+    private var rosterDraft: GiriEvent {
+        var value = draft
+        value.participants = participants
+        return value
+    }
+    /// 0.28：生大喜利で名簿を入れた会は、参加状況を欄から決める（参加者なら参加、主催なら主催、リザーバーならリザーバー）。
+    /// どこにもいない時だけ、観覧・興味あり・不参加から選ぶ。
+    private var derivesParticipation: Bool { isLive && rosterDraft.hasEnteredRoster }
+    private var listedParticipationTitle: String? { rosterDraft.listedParticipationTitle(isSelf: store.preferences.isSelf) }
     /// 参加状況。生大喜利の「観覧」は参加状況で選び、自分の立場を観覧にする（ほかの立場は入力から決める）。
     private var participationChoice: Binding<String> {
         Binding(get: {
             if draft.status == .canceled { return "canceled" }
             if draft.isInterested { return "interested" }
+            if derivesParticipation {
+                return listedParticipationTitle == nil ? "spectating" : "listed"
+            }
             return isLive && draft.selfRole == .spectator ? "spectating" : "participating"
         }, set: { choice in
+            if choice == "listed" || choice == "join" {
+                draft.isInterested = false
+                draft.isParticipating = true
+                draft.status = .planned
+                if draft.selfRole == .spectator { draft.selfRole = .player }
+                if choice == "join" { placeSelf(force: true) }
+                return
+            }
             draft.isInterested = choice == "interested"
             draft.isParticipating = choice == "participating" || choice == "spectating"
             draft.status = choice == "canceled" ? .canceled : .planned
@@ -112,9 +133,10 @@ struct GiriEventEditor: View {
 
     /// 会の種類（企画は通常の会として保存し、企画の印を付ける）。
     private var meetingChoice: Binding<String> {
-        Binding(get: { draft.isKumiteEvent ? "kumite" : draft.isProjectEvent ? "project" : draft.meetingType.rawValue }, set: { value in
+        Binding(get: { draft.isKumiteEvent ? "kumite" : draft.isProjectEvent ? "project" : draft.isLiveShowEvent ? "show" : draft.meetingType.rawValue }, set: { value in
             draft.isProject = value == "project"
             draft.isKumite = value == "kumite"
+            draft.isLiveShow = value == "show"
             draft.meetingType = value == "tournament" ? .tournament : .casual
         })
     }
@@ -370,6 +392,37 @@ struct GiriEventEditor: View {
     }
 
     /// 0.23：生大喜利の大会のルール。選ぶと参加形式・対戦形式・審査方法を入れ、段階は結果の入力で入れられる。
+    /// 参加状況の行。0.28：名簿を入れた生大喜利は、自分がいる欄（参加者・主催・リザーバー）から決める。
+    @ViewBuilder private var participationRow: some View {
+        if derivesParticipation {
+            Picker(selection: participationChoice) {
+                if let listed = listedParticipationTitle {
+                    Text(listed).tag("listed")
+                } else {
+                    Text("観覧").tag("spectating")
+                    Text("参加者に自分を入れる").tag("join")
+                }
+                Text("興味あり").tag("interested")
+                Text(listedParticipationTitle == nil ? "不参加" : "キャンセル").tag("canceled")
+            } label: {
+                HStack(spacing: 4) {
+                    GiriEditorLabel("参加状況")
+                    AppInfoButton(title: "参加状況について",
+                                  message: "参加者・主催・リザーバーの欄に自分がいれば、そこから決まります。どこにもいない時は、観覧・興味あり・不参加から選びます。",
+                                  tintColor: AppSectionAccent.live)
+                }
+            }
+            .pickerStyle(.menu).tint(.primary)
+        } else {
+            Picker(selection: participationChoice) {
+                Text("参加").tag("participating")
+                if isLive { Text("観覧").tag("spectating") }
+                Text("興味あり").tag("interested")
+                Text("キャンセル").tag("canceled")
+            } label: { GiriEditorLabel("参加状況") }.pickerStyle(.menu).tint(.primary)
+        }
+    }
+
     /// 0.27：通常会・企画で対戦がある時。形式は詳細の「会の中の結果」を足す時の最初の形式になる。
     @ViewBuilder private var battleRows: some View {
         Toggle(isOn: Binding(get: { draft.battleKind != nil }, set: { draft.battleKind = $0 ? (draft.battleKind ?? "tournament") : nil })) {
@@ -504,6 +557,13 @@ struct GiriEventEditor: View {
         value.venueRoom = Self.merged(value.venueRoom, page.venueRoom, replace: replace)
         value.organizer = Self.merged(value.organizer, page.organizer, replace: replace)
         if let fee = page.fee, replace || value.entryFee == nil { value.entryFee = fee }
+        // 0.28：会の種類は、新しく登録する時（まだ通常のまま）か置き換える時だけ入れる。
+        if let kind = page.meetingKind, replace || (event == nil && value.meetingType == .casual && !value.isProject && !value.isKumite && !value.isLiveShow) {
+            value.meetingType = kind == "tournament" ? .tournament : .casual
+            value.isProject = kind == "project" && value.eventFormat.allowsProject
+            value.isKumite = kind == "kumite" && value.eventFormat.allowsProject
+            value.isLiveShow = kind == "show" && value.eventFormat == .live
+        }
         let day = value.eventDate ?? calendar.startOfDay(for: Date())
         value.opensAt = Self.merged(value.opensAt, page.opens, on: day, replace: replace)
         value.startsAt = Self.merged(value.startsAt, page.start, on: day, replace: replace)
@@ -546,9 +606,12 @@ struct GiriEventEditor: View {
                               message: "使わない形式は、設定→デフォルト設定の「使用する形式・並び順」でチェックを外すと、ここと一覧・戦績のタブに出なくなります。登録済みの記録は消えません。",
                               tintColor: AppSectionAccent.live)
                 Spacer(minLength: 8)
+                // 0.28：「ネット大喜利（長考）」などが2行にならないよう、選んだ名前は1行で出す。
                 Picker("形式", selection: $draft.eventFormat) {
-                    ForEach(store.preferences.formatChoices(including: event?.eventFormat)) { Text($0.title).tag($0) }
+                    ForEach(store.preferences.formatChoices(including: event?.eventFormat)) { Text($0.title).lineLimit(1).tag($0) }
                 }.labelsHidden().pickerStyle(.menu).tint(.primary)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
             }
             Picker(selection: meetingChoice) {
                 Text("通常").tag("casual")
@@ -557,6 +620,8 @@ struct GiriEventEditor: View {
                 if draft.eventFormat.allowsProject { Text("企画").tag("project") }
                 // 0.19：組手（主役に対してたくさんのメンバーが対戦する企画）。
                 if draft.eventFormat.allowsProject { Text("組手").tag("kumite") }
+                // 0.28：ライブ（お客さんを入れて見せる会）。生大喜利だけ。
+                if isLive { Text("ライブ").tag("show") }
             } label: { GiriEditorLabel("会の種類") }.pickerStyle(.menu).tint(.primary)
             // 0.27：通常会・企画の中のミニトナメなどは、基本情報で「対戦がある」にして形式を選ぶ。
             if draft.meetingType == .casual && !draft.isKumiteEvent && draft.eventFormat.hasLiveTiming { battleRows }
@@ -581,6 +646,15 @@ struct GiriEventEditor: View {
                                           tintColor: AppSectionAccent.live)
                         }
                     }.tint(AppSectionAccent.live)
+                    // 0.28：予選の途中でメンバーが増える・欠員が出る大会は、段階ごとにメンバーを入れる。
+                    Toggle(isOn: $draft.hasMemberChanges) {
+                        HStack(spacing: 4) {
+                            GiriEditorLabel("途中でメンバーが変わる")
+                            AppInfoButton(title: "メンバーの変更",
+                                          message: "途中でメンバーを増やせる大会や、欠員が出た時にオンにします。結果の入力で段階ごとに出たメンバーを入れられます。",
+                                          tintColor: AppSectionAccent.live)
+                        }
+                    }.tint(AppSectionAccent.live)
                 }
                 if isLive {
                     Picker(selection: $draft.knockout) {
@@ -591,14 +665,7 @@ struct GiriEventEditor: View {
                 // 0.24：生大喜利とスプシ系は大会のルールを共用する。0.27：ネットの大会も大会のルールを選べる。
                 liveRuleRow
             }
-            if !isSite {
-                Picker(selection: participationChoice) {
-                    Text("参加").tag("participating")
-                    if isLive { Text("観覧").tag("spectating") }
-                    Text("興味あり").tag("interested")
-                    Text("キャンセル").tag("canceled")
-                } label: { GiriEditorLabel("参加状況") }.pickerStyle(.menu).tint(.primary)
-            }
+            if !isSite { participationRow }
             TextField(isSite ? "サイト名 *" : "会・大会名 *", text: $draft.title, axis: .vertical)
                 .lineLimit(1...5)
             if !isSite {
@@ -615,7 +682,7 @@ struct GiriEventEditor: View {
                         // 施設の会議室などは、会場名と分けて部屋を入れる（会場一覧は施設でまとまる）。
                         HStack(spacing: 12) {
                             GiriEditorLabel("部屋")
-                            TextField("会議室名・部屋番号（任意）", text: $draft.venueRoom).multilineTextAlignment(.trailing)
+                            TextField("会議室名・部屋番号", text: $draft.venueRoom).multilineTextAlignment(.trailing)
                         }
                     }
                     // 参加費は生大喜利だけ（スプシ系・ネットは参加費なし）。
@@ -701,7 +768,7 @@ struct GiriEventEditor: View {
     private var entrySection: some View {
         Section {
             HStack(spacing: 8) {
-                GiriEventCardSectionTitle(title: "募集期間", systemImage: "calendar.badge.clock", accentColor: AppSectionAccent.ticket)
+                GiriEventCardSectionTitle(title: "エントリー期間", systemImage: "calendar.badge.clock", accentColor: AppSectionAccent.ticket)
                 if showsEntry {
                     Spacer(minLength: 8)
                     Button(role: .destructive) {
@@ -710,7 +777,7 @@ struct GiriEventEditor: View {
                         showsEntry = false
                     } label: { Image(systemName: "xmark.circle").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("募集期間を外す")
+                    .accessibilityLabel("エントリー期間を外す")
                 }
             }
             .listRowSeparator(.hidden)
@@ -740,7 +807,7 @@ struct GiriEventEditor: View {
         }
         .appEventEditorCardStyle(accentColor: AppSectionAccent.ticket)
         .sheet(item: $entryEndpoint) { endpoint in
-            GiriDateTimePickerSheet(title: endpoint == .start ? "募集開始" : "募集締切",
+            GiriDateTimePickerSheet(title: endpoint == .start ? "エントリー開始" : "エントリー締切",
                                     date: (endpoint == .start ? draft.entryStart : draft.entryEnd) ?? giriFiveMinuteRounded(Date())) { date in
                 if endpoint == .start { draft.entryStart = date } else { draft.entryEnd = date }
             }
@@ -749,12 +816,13 @@ struct GiriEventEditor: View {
 
     private var entryNotificationCaption: String {
         let preferences = store.preferences
-        guard preferences.notificationsEnabled else { return "設定で通知をオンにすると、募集開始を知らせます。" }
+        guard preferences.notificationsEnabled else { return "設定で通知をオンにすると、エントリーの開始・締切を知らせます。" }
         var parts: [String] = []
         let lead = preferences.entryLeadMinutes ?? preferences.reminderMinutes
         if preferences.entryNotifyBefore && lead > 0 { parts.append("開始の" + giriLeadText(lead) + "前") }
         if preferences.entryNotifyAtStart || (preferences.entryNotifyBefore && lead == 0) { parts.append("開始時") }
-        return parts.isEmpty ? "募集期間の通知はオフです（設定の通知で変えられます）。" : "募集の" + parts.joined(separator: "と") + "に通知します（設定の通知で変えられます）。"
+        if preferences.entryEndNotify { parts.append(lead > 0 ? "締切の" + giriLeadText(lead) + "前" : "締切時") }
+        return parts.isEmpty ? "エントリー期間の通知はオフです（設定の通知で変えられます）。" : "エントリーの" + parts.joined(separator: "と") + "に通知します（設定の通知で変えられます）。"
     }
 
     /// チーム戦（参加者の欄がない時）のリザーバー。
@@ -819,14 +887,15 @@ struct GiriEventEditor: View {
             ForEach(draft.mcs.indices, id: \.self) { index in staffNameRow("MC", \.mcs, index) }
             ForEach(draft.judges.indices, id: \.self) { index in staffNameRow("審査員", \.judges, index) }
         }
-        Menu {
-            Button("共催を追加") { draft.coOrganizers.append("") }
-            if isTournament {
-                Button("MCを追加") { draft.mcs.append("") }
-                Button("審査員を追加") { draft.judges.append("") }
-            }
-        } label: { Label(isTournament ? "共催・MC・審査員を追加" : "共催を追加", systemImage: "plus.circle") }
-        .tint(accentActionColor)
+        // 0.28：参加者の追加と同じく、押すとすぐ行を足す（メニューで選び直させない）。
+        Button { draft.coOrganizers.append("") } label: { Label("共催を追加", systemImage: "plus.circle") }
+            .tint(accentActionColor)
+        if isTournament {
+            Button { draft.mcs.append("") } label: { Label("MCを追加", systemImage: "plus.circle") }
+                .tint(accentActionColor)
+            Button { draft.judges.append("") } label: { Label("審査員を追加", systemImage: "plus.circle") }
+                .tint(accentActionColor)
+        }
     }
 
     private func staffNameRow(_ title: String, _ path: WritableKeyPath<GiriEvent, [String]>, _ index: Int) -> some View {
@@ -1184,6 +1253,8 @@ struct GiriEventEditor: View {
                 candidate.reserves = candidate.hasReserves ? cleanedNames(candidate.reserves) : []
                 // 企画は生大喜利・スプシ系の通常の会だけ。
                 if !candidate.eventFormat.allowsProject || candidate.meetingType != .casual { candidate.isProject = false; candidate.isKumite = false }
+                if candidate.eventFormat != .live || candidate.meetingType != .casual || candidate.isProject || candidate.isKumite { candidate.isLiveShow = false }
+                if !candidate.isTeamTournament { candidate.hasMemberChanges = false }
                 candidate.kumiteMains = candidate.isKumite ? cleanedNames(candidate.kumiteMains) : candidate.kumiteMains
                 // 0.27：対戦の形式は、通常会・企画（組手を除く）の時だけ残す。
                 if candidate.meetingType != .casual || candidate.isKumiteEvent || !candidate.eventFormat.hasLiveTiming { candidate.battleKind = nil }
@@ -1199,6 +1270,13 @@ struct GiriEventEditor: View {
                 }
                 for i in candidate.teams.indices { candidate.teams[i].members = candidate.teams[i].members.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
                 // 自分の立場は選ばず、参加状況（観覧）・リザーバー・参加者・主催などの入力から決める。
+                // 0.28：名簿を入れた生大喜利で、どの欄にもいない参加予定は観覧にする。
+                if candidate.eventFormat == .live && candidate.hasEnteredRoster && candidate.isParticipating && !candidate.isInterested
+                    && candidate.status != .canceled && candidate.listedSelfRole(isSelf: store.preferences.isSelf) == nil {
+                    candidate.selfRole = .spectator
+                } else if candidate.selfRole == .spectator, candidate.listedSelfRole(isSelf: store.preferences.isSelf) != nil {
+                    candidate.selfRole = .player
+                }
                 candidate.selfRole = candidate.derivedSelfRole(isSelf: store.preferences.isSelf)
                 if let size = candidate.teamSize, candidate.teams.contains(where: { $0.members.count > size }) {
                     store.errorMessage = "チーム人数を超えているチームがあります。人数設定かメンバーを確認してください。"; return

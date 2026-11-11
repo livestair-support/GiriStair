@@ -131,6 +131,13 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
     var answerer: String = ""
     /// 0.13：回答案に付けた印（◎・〇・△・× や点数）。空は印なし。
     var mark: String = ""
+    /// 0.28：チームで出した回答の原案の人。成績は原案の人に数える。
+    /// 自分は giriSelfDrafter。チーム戦の回答（isTeamAnswer）で空なら、チームで生んだ回答として誰にも数えない。
+    var drafter: String = ""
+    /// 0.28：チーム戦のメンバーの回答（他人の回答のうち、同じチームの人が出したもの）。
+    var isTeammate: Bool = false
+    /// 0.28：チーム戦の大会で出した回答（原案が空ならチームの回答として誰の成績にもしない）。
+    var isTeamAnswer: Bool = false
 
     init(id: String = UUID().uuidString, text: String = "", isSubmitted: Bool = false, placement: Int? = nil, points: Double? = nil, voterCount: Int? = nil, maxPointsPerVoter: Int = 1, memo: String = "", answerer: String = "", mark: String = "") {
         self.id = id; self.text = text; self.isSubmitted = isSubmitted
@@ -138,7 +145,7 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
         self.maxPointsPerVoter = maxPointsPerVoter; self.memo = memo; self.answerer = answerer; self.mark = mark
     }
 
-    private enum CodingKeys: String, CodingKey { case id, text, isSubmitted, placement, points, voterCount, maxPointsPerVoter, memo, answerer, mark }
+    private enum CodingKeys: String, CodingKey { case id, text, isSubmitted, placement, points, voterCount, maxPointsPerVoter, memo, answerer, mark, drafter, isTeammate, isTeamAnswer }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
@@ -151,7 +158,41 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
         memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
         answerer = try c.decodeIfPresent(String.self, forKey: .answerer) ?? ""
         mark = try c.decodeIfPresent(String.self, forKey: .mark) ?? ""
+        drafter = try c.decodeIfPresent(String.self, forKey: .drafter) ?? ""
+        isTeammate = try c.decodeIfPresent(Bool.self, forKey: .isTeammate) ?? false
+        isTeamAnswer = try c.decodeIfPresent(Bool.self, forKey: .isTeamAnswer) ?? false
         try validate()
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(text, forKey: .text)
+        try c.encode(isSubmitted, forKey: .isSubmitted)
+        try c.encodeIfPresent(placement, forKey: .placement)
+        try c.encodeIfPresent(points, forKey: .points)
+        try c.encodeIfPresent(voterCount, forKey: .voterCount)
+        try c.encode(maxPointsPerVoter, forKey: .maxPointsPerVoter)
+        try c.encode(memo, forKey: .memo)
+        try c.encode(answerer, forKey: .answerer)
+        try c.encode(mark, forKey: .mark)
+        // 0.28：原案・チームメンバーの印は、ある時だけ書く。
+        if !drafter.isEmpty { try c.encode(drafter, forKey: .drafter) }
+        if isTeammate { try c.encode(true, forKey: .isTeammate) }
+        if isTeamAnswer { try c.encode(true, forKey: .isTeamAnswer) }
+    }
+    private var trimmedDrafter: String { drafter.trimmingCharacters(in: .whitespacesAndNewlines) }
+    /// 0.28：自分の成績に数える回答。チーム戦の回答は、原案に自分を選んだ時だけ。
+    var countsForSelf: Bool {
+        guard isOwn else { return false }
+        if trimmedDrafter == giriSelfDrafter { return true }
+        return trimmedDrafter.isEmpty && !isTeamAnswer
+    }
+    /// 0.28：チームで生んだ回答（チーム戦で原案を選んでいない）。誰の成績にも数えない。
+    var isTeamBorn: Bool { isOwn && isTeamAnswer && trimmedDrafter.isEmpty }
+    /// 0.28：成績を数える人の名前（自分は空。チームで生んだ回答も空）。
+    var creditedName: String {
+        if !isOwn { return answerer.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return trimmedDrafter == giriSelfDrafter ? "" : trimmedDrafter
     }
     var isOwn: Bool { answerer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     /// 1人あたりの点（得点÷投票人数）。
@@ -195,7 +236,7 @@ extension ThoughtNote {
     var submittedAnswers: [AnswerRecord] { ownAnswerRecords.filter(\.isSubmitted) }
     /// 作題者・回答者として出てくる名前（プレイヤー一覧・名前の変更に使う）。
     var referencedPeople: [String] {
-        var names = effectiveAnswerRecords.map(\.answerer).filter { !$0.isEmpty && $0 != "回答者不明" }
+        var names = (effectiveAnswerRecords.map(\.answerer) + effectiveAnswerRecords.map(\.drafter)).filter { !$0.isEmpty && $0 != "回答者不明" && $0 != giriSelfDrafter }
         if !promptAuthor.isEmpty { names.append(promptAuthor) }
         return names
     }
@@ -867,6 +908,31 @@ extension GiriEvent {
     /// 生大喜利の自分の立場を、入力した内容から決める（選ぶ項目にはしない）。
     /// 観覧は参加状況で選ぶ。リザーバーにいれば リザーバー、参加者・チームにいれば プレイヤー、
     /// 主催・共催・MC・審査員だけにいれば 主催・MCなど、どれでもなければ プレイヤー。
+    /// 0.28：自分が入っている欄から決まる立場（リザーバー・参加者・主催など。どこにもいなければ nil）。
+    func listedSelfRole(isSelf: (String) -> Bool) -> GiriSelfRole? {
+        if reserveNames.contains(where: isSelf) { return .reserve }
+        if everyone.contains(where: isSelf) { return .player }
+        if isKumiteEvent && kumiteMains.contains(where: isSelf) { return .player }
+        if staffNames.contains(where: isSelf) { return .staff }
+        return nil
+    }
+    /// 0.28：参加者・チーム・リザーバー・組手の主役のどれかに、名前が入っているか。
+    /// 入っていない（名簿を残していない）会は、参加状況を今までどおり選ぶ。
+    var hasEnteredRoster: Bool {
+        !everyone.isEmpty || !reserveNames.isEmpty || (isKumiteEvent && kumiteMains.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+    }
+    /// 0.28：欄から決まる参加状況の名前（参加・主催・運営・リザーバー）。
+    func listedParticipationTitle(isSelf: (String) -> Bool) -> String? {
+        guard let role = listedSelfRole(isSelf: isSelf) else { return nil }
+        switch role {
+        case .player: return "参加"
+        case .reserve: return "リザーバー"
+        case .spectator: return "観覧"
+        case .staff:
+            let hosts = (organizerIsGroup ? [] : [organizer]) + coOrganizers
+            return hosts.contains(where: isSelf) ? "主催" : "運営"
+        }
+    }
     func derivedSelfRole(isSelf: (String) -> Bool) -> GiriSelfRole {
         guard eventFormat == .live else { return .player }
         if selfRole == .spectator && isParticipating && !isInterested && status != .canceled { return .spectator }
@@ -1312,6 +1378,8 @@ struct GiriEventPageDraft: Equatable, Identifiable {
     var participants: [GiriParticipantCandidate] = []
     /// 0.25：ページに書いてある参加者の人数（読み取った人数と比べる）。
     var listedParticipantCount: Int? = nil
+    /// 0.28：ページの書き方から推した会の種類（"tournament"・"kumite"・"project"・"show"。分からなければ nil）。
+    var meetingKind: String? = nil
     var recognizedText = ""
 
     var hasBasicInfo: Bool {
@@ -1554,7 +1622,42 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     draft.start = times.compactMap(\.start).first ?? times.compactMap(\.rangeStart).first
         ?? dateIndex.flatMap { times[$0].lone.first }
     draft.end = times.compactMap(\.end).first ?? times.compactMap(\.rangeEnd).first ?? times.compactMap(\.teardown).first
+    draft.meetingKind = giriInferredMeetingKind(title: draft.title, text: info.map(\.text).joined(separator: "\n"))
     return draft
+}
+
+/// 0.28：会の種類の表示名。
+func giriMeetingKindTitle(_ kind: String) -> String {
+    switch kind {
+    case "tournament": return "大会"
+    case "kumite": return "組手"
+    case "project": return "企画"
+    case "show": return "ライブ"
+    default: return "通常"
+    }
+}
+
+/// 0.28：会の名前と説明の書き方から、会の種類を推す（特定の会の名前ではなく、よくある言い方で決める）。
+/// 組手はタイトルに「組手」、大会は「杯」「カップ」「グランプリ」や決勝・前回優勝など、
+/// ライブはチケット・前売・客席などお客さんを入れる書き方、企画は「企画」やコンセプト・テーマの説明が多い時。
+/// 分からない時は nil（今の選択を変えない）。
+func giriInferredMeetingKind(title: String, text: String) -> String? {
+    let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    let body = text
+    func count(_ words: [String], in value: String) -> Int { words.filter { value.localizedCaseInsensitiveContains($0) }.count }
+    if name.contains("組手") { return "kumite" }
+    let titleCup = ["杯", "カップ", "CUP", "グランプリ", "GP", "選手権", "王決定戦", "トーナメント", "大会", "チャンピオンシップ"]
+    if count(titleCup, in: name) > 0 { return "tournament" }
+    let liveTitle = ["ライブ", "LIVE", "公演", "ショー", "SHOW"]
+    let ticket = ["チケット", "前売", "当日券", "客席", "ご来場", "観覧料", "入場料", "公演", "出演者", "出演：", "出演:", "配信チケット", "ドリンク代"]
+    if count(liveTitle, in: name) > 0 && count(ticket, in: body) >= 1 { return "show" }
+    if count(ticket, in: body) >= 3 { return "show" }
+    let tournament = ["決勝", "準決勝", "予選", "前回優勝", "優勝者", "優勝賞", "賞金", "トーナメント", "勝ち抜け", "初代王者", "王者"]
+    if count(tournament, in: body) >= 2 { return "tournament" }
+    if name.contains("企画") { return "project" }
+    let project = ["企画", "コンセプト", "テーマ", "縛り", "限定", "特別ルール", "今回のルール", "お題は", "形式で", "ルール説明"]
+    if count(project, in: body) >= 3 { return "project" }
+    return nil
 }
 
 // MARK: - 長考の段階・回（0.13）
@@ -1704,11 +1807,13 @@ extension GiriEvent {
     /// 企画として扱う（生大喜利・スプシ系の通常の会で「企画」を選んだ時）。
     var isProjectEvent: Bool { isProject && meetingType == .casual && eventFormat.allowsProject }
     /// 会の種類の表示（通常・大会・企画）。
-    var meetingTitle: String { isKumiteEvent ? "組手" : isProjectEvent ? "企画" : meetingType.title }
+    var meetingTitle: String { isKumiteEvent ? "組手" : isProjectEvent ? "企画" : isLiveShowEvent ? "ライブ" : meetingType.title }
     /// 一覧の絞り込み・共有で使う会の種類の値（"casual"・"tournament"・"project"）。
-    var meetingFilterKey: String { isKumiteEvent ? "kumite" : isProjectEvent ? "project" : meetingType.rawValue }
+    var meetingFilterKey: String { isKumiteEvent ? "kumite" : isProjectEvent ? "project" : isLiveShowEvent ? "show" : meetingType.rawValue }
     /// 0.19：組手（生大喜利・スプシ系の通常の会に印を付ける）。
     var isKumiteEvent: Bool { isKumite && meetingType == .casual && eventFormat.allowsProject }
+    /// 0.28：ライブ（お客さんを入れて見せる会。生大喜利の通常の会に印を付ける）。
+    var isLiveShowEvent: Bool { isLiveShow && meetingType == .casual && eventFormat == .live && !isKumite && !isProject }
 }
 
 
@@ -2369,13 +2474,14 @@ enum GiriThoughtHistoryOrder: String, CaseIterable, Identifiable {
 extension ThoughtNote {
     /// 自分の回答のいちばん良い順位（提出した回答を優先。なければ記録のある回答）。
     var bestOwnPlacement: Int? {
-        let own = ownAnswerRecords
+        // 0.28：原案が他のメンバーのチーム回答は、自分の成績に入れない。
+        let own = ownAnswerRecords.filter(\.countsForSelf)
         let submitted = own.filter(\.isSubmitted).compactMap(\.placement)
         return (submitted.isEmpty ? own.compactMap(\.placement) : submitted).filter { $0 > 0 }.min()
     }
     /// 自分の回答のいちばん高い得票率。
     var bestOwnVoteRate: Double? {
-        let own = ownAnswerRecords
+        let own = ownAnswerRecords.filter(\.countsForSelf)
         let submitted = own.filter(\.isSubmitted).compactMap(\.voteRate)
         return (submitted.isEmpty ? own.compactMap(\.voteRate) : submitted).filter(\.isFinite).max()
     }
@@ -2663,7 +2769,7 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
 
     if rule.effectiveScope == .regular {
         // 1シーズンの回数
-        let cyclePatterns = [#"全\s*([0-9]+)\s*回"#, #"([0-9]+)\s*回で\s*1\s*シーズン"#, #"1\s*シーズン\s*[:は]?\s*([0-9]+)\s*回"#]
+        let cyclePatterns = [#"全\s*([0-9]+)\s*回"#, #"([0-9]+)\s*回で\s*1\s*シーズン"#, #"1\s*シーズン\s*[:はに]?\s*([0-9]+)\s*回"#]
         if let count = lines.lazy.compactMap({ line in cyclePatterns.lazy.compactMap { firstInt($0, in: line) }.first }).first, (1...200).contains(count) {
             rule.regularCycleCount = count; found.append("全\(count)回")
         }
@@ -2675,11 +2781,31 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
             if rule.leagues != names { rule.setLeagues(names) }
             found.append("リーグ（" + names.joined(separator: "・") + "）")
         }
+        // 0.28：タッグのページ（「〜タッグが残留」「タッグを組んでいない」など）は、タッグ部門の決まりとして読む。
+        let isTagPage = lines.contains { line in
+            line.range(of: #"[0-9]+\s*タッグ"#, options: .regularExpression) != nil || line.contains("タッグを組") || line.contains("2人のH得票率")
+        }
+        if isTagPage && rule.tagDivision == nil {
+            rule.tagDivision = GiriRuleTagDivision(leagueDetails: rule.leagues.map { GiriRuleLeague(name: $0) })
+            found.append("タッグ部門")
+        }
         // 決まりを持っていないリーグ（0.26以前のルール）も直せるように、名前と同じ順にそろえる。
-        if rule.leagueDetails.map(\.name) != rule.leagues { rule.setLeagues(rule.leagues) }
-        func update(_ name: String, _ change: (inout GiriRuleLeague) -> Void) {
+        if rule.leagueDetails.map(\.name) != rule.leagues || (rule.tagDivision.map { $0.leagueDetails.map(\.name) != rule.leagues } ?? false) {
+            rule.setLeagues(rule.leagues)
+        }
+        /// シングルのリーグの決まりを直す（お題の選び方・日程など、シングルとタッグで同じもの）。
+        func updateSingle(_ name: String, _ change: (inout GiriRuleLeague) -> Void) {
             guard let index = rule.leagueDetails.firstIndex(where: { $0.name == name }) else { return }
             change(&rule.leagueDetails[index])
+        }
+        /// 順位の決まり（入れ替え・残留・規定数など）。タッグのページはタッグ部門に入れる。
+        func update(_ name: String, _ change: (inout GiriRuleLeague) -> Void) {
+            guard isTagPage else { updateSingle(name, change); return }
+            guard let index = rule.tagDivision?.leagueDetails.firstIndex(where: { $0.name == name }) else { return }
+            if var detail = rule.tagDivision?.leagueDetails[index] {
+                change(&detail)
+                rule.tagDivision?.leagueDetails[index] = detail
+            }
         }
         for line in lines {
             let special = line.contains("プレーオフ") || line.contains("エキシビション")
@@ -2702,11 +2828,19 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
             }
             // 「4題から1題」
             for groups in giriRegexGroups(#"([0-9]+)\s*部[^0-9]{0,12}?([0-9]+)\s*題から\s*1\s*題"#, in: line) {
-                if let choices = number(groups[2]) { update("\(groups[1])部") { $0.promptChoices = choices } }
+                if let choices = number(groups[2]) { updateSingle("\(groups[1])部") { $0.promptChoices = choices } }
+            }
+            // 0.28：「1部は1題につき2投稿」
+            for groups in giriRegexGroups(#"([0-9]+)\s*部[はでの]?\s*1\s*題につき\s*([0-9]+)\s*(?:投稿|回答)"#, in: line) {
+                if let answers = number(groups[2]) { updateSingle("\(groups[1])部") { $0.answersPerPrompt = answers } }
+            }
+            // 0.28：「1部は上から8ボケ、2部は上から4ボケ」
+            for groups in giriRegexGroups(#"([0-9]+)\s*部[はでの]?\s*上から\s*の?\s*([0-9]+)\s*(?:ボケ|回答)"#, in: line) {
+                if let top = number(groups[2]) { update("\(groups[1])部") { $0.topAnswerCount = top } }
             }
             // 入れ替え（「1部下位15名と2部上位15名」）
             if !special && (line.contains("入れ替え") || line.contains("入替") || line.contains("昇格") || line.contains("降格")) {
-                for groups in giriRegexGroups(#"([0-9]+)\s*部\s*[のはで]?\s*(上位|下位)\s*([0-9]+)\s*[名人]"#, in: line) {
+                for groups in giriRegexGroups(#"([0-9]+)\s*部\s*[のはで]?\s*(上位|下位)\s*([0-9]+)\s*(?:名|人|タッグ|組)"#, in: line) {
                     guard let count = number(groups[3]) else { continue }
                     update("\(groups[1])部") { league in
                         if groups[2] == "上位" { league.promotionCount = count } else { league.relegationCount = count }
@@ -2714,12 +2848,26 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
                 }
                 found.append("入れ替え")
             }
-            if line.contains("最下位") && (line.contains("対象外") || line.contains("規定")) {
-                for name in leagueNames(in: line) { update(name) { $0.unqualifiedRanksLast = true } }
+            if line.contains("最下位") && (line.contains("対象外") || line.contains("規定") || line.contains("満たない") || line.contains("組んでいない")) {
+                for name in leagueNames(in: line).prefix(1) { update(name) { $0.unqualifiedRanksLast = true } }
+            } else if line.contains("集計対象外") && (line.contains("満たない") || line.contains("組んでいない")) {
+                for name in leagueNames(in: line).prefix(1) { update(name) { $0.unqualifiedExcluded = true } }
             }
-            if line.contains("同率") || line.contains("同点") { rule.tieBreak = line; found.append("同率の扱い") }
+            if isTagPage {
+                if line.contains("合計") && line.contains("得票率") && line.contains("人") { rule.tagDivision?.teamScoring = "sum"; found.append("タッグの成績") }
+                if line.contains("満たない") && line.range(of: #"0\s*と?し?て?扱"#, options: .regularExpression) != nil { rule.tagDivision?.memberShortfallZero = true }
+                if line.contains("同率") { rule.tagDivision?.tieBreak = line }
+                if line.contains("タッグの結成") || line.contains("解消") {
+                    let note = rule.tagDivision?.formationNote ?? ""
+                    rule.tagDivision?.formationNote = note.isEmpty ? line : note + line
+                }
+                if line.contains("プレーオフ"), let entrants = firstInt(#"上位\s*([0-9]+)\s*(?:タッグ|組)"#, in: line) {
+                    rule.tagDivision?.playoffEntrants = entrants
+                }
+            }
+            if !isTagPage && (line.contains("同率") || line.contains("同点")) { rule.tieBreak = line; found.append("同率の扱い") }
             // プレーオフ・エキシビション
-            for (word, kind) in [("プレーオフ", SitePeriodKind.playoff), ("エキシビション", SitePeriodKind.exhibition)] where line.contains(word) {
+            for (word, kind) in [("プレーオフ", SitePeriodKind.playoff), ("エキシビション", SitePeriodKind.exhibition)] where line.contains(word) && !(isTagPage && kind == .playoff) {
                 var plan = rule.specialPlans.first { $0.kind == kind } ?? GiriRuleSpecialPlan(kind: kind, title: word, submissionDays: rule.submissionDays, votingDays: rule.votingDays)
                 if let entrants = firstInt(#"上位\s*([0-9]+)\s*[名人]"#, in: line) { plan.entrantCount = entrants }
                 if let league = leagueNames(in: line).first { plan.entrantLeague = league }
@@ -2727,6 +2875,44 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
                 if line.contains("含めない") || line.contains("含まない") || line.contains("含みません") { plan.countsInSeason = false }
                 if let index = rule.specialPlans.firstIndex(where: { $0.kind == kind }) { rule.specialPlans[index] = plan } else { rule.specialPlans.append(plan); found.append(word) }
             }
+        }
+        // 0.28：リーグの見出し（「1部 NIGHT」など）の下に書いてある、そのリーグの決まりと日程を読む。
+        var current: String? = nil
+        for line in lines {
+            let names = leagueNames(in: line)
+            let compact = line.replacingOccurrences(of: " ", with: "")
+            if let first = names.first, names.count == 1, compact.hasPrefix(first) {
+                // 「1部 NIGHT」「1部は、…」のように、行の頭のリーグを、続く行のリーグにする。
+                current = first
+                let rest = compact.dropFirst(first.count).trimmingCharacters(in: .whitespaces)
+                if !isTagPage, rest.range(of: #"^[A-Za-z]{2,12}"#, options: .regularExpression) != nil,
+                   let word = giriRegexGroups(#"^([A-Za-z]{2,12})"#, in: rest).first?[1] {
+                    updateSingle(first) { $0.subtitle = word.uppercased() }
+                }
+                continue
+            }
+            // 見出しのない段落（プレーオフ・エントリーについて・その他）に入ったら、リーグの続きとして読まない。
+            if line.contains("プレーオフ") || line.contains("について") || line.contains("その他") || line.contains("エキシビション") { current = nil; continue }
+            guard names.isEmpty, let league = current else { continue }
+            if let top = firstInt(#"上から\s*の?\s*([0-9]+)\s*(?:ボケ|回答)"#, in: line) { update(league) { $0.topAnswerCount = top } }
+            if let stay = firstInt(#"上位\s*([0-9]+)\s*(?:名|人|タッグ|組)\s*が?\s*残留"#, in: line) { update(league) { $0.stayCount = stay } }
+            if let up = firstInt(#"上位\s*([0-9]+)\s*(?:名|人|タッグ|組)\s*が?\s*昇格"#, in: line) { update(league) { $0.promotionCount = up } }
+            if let down = firstInt(#"下位\s*([0-9]+)\s*(?:名|人|タッグ|組)\s*が?\s*降格"#, in: line) { update(league) { $0.relegationCount = down } }
+            if let choices = firstInt(#"([0-9]+)\s*題から\s*1\s*題"#, in: line) { updateSingle(league) { $0.promptChoices = choices } }
+            if let days = firstInt(#"エントリー\s*([0-9]+)\s*日"#, in: line) { updateSingle(league) { $0.entryDays = days }; found.append("エントリー") }
+            if let days = firstInt(#"^\s*投稿\s*([0-9]+)\s*日"#, in: line) { updateSingle(league) { $0.submissionDays = days } }
+            if let days = firstInt(#"^\s*投票\s*([0-9]+)\s*日"#, in: line) { updateSingle(league) { $0.votingDays = days } }
+        }
+        // リーグごとの日数がルール全体と同じなら、リーグには持たない。
+        for index in rule.leagueDetails.indices {
+            if rule.leagueDetails[index].submissionDays == rule.submissionDays { rule.leagueDetails[index].submissionDays = nil }
+            if rule.leagueDetails[index].votingDays == rule.votingDays { rule.leagueDetails[index].votingDays = nil }
+        }
+        if rule.leagueDetails.contains(where: { $0.topAnswerCount != nil }) || (rule.tagDivision?.leagueDetails.contains { $0.topAnswerCount != nil } ?? false) {
+            found.append("上位の回答の平均")
+        }
+        if lines.contains(where: { $0.contains("エントリー") && ($0.contains("先着") || $0.contains("定員")) }) && rule.entryNote.isEmpty {
+            rule.entryNote = lines.filter { $0.contains("エントリー") && ($0.contains("先着") || $0.contains("定員") || $0.contains("取り下げ")) }.joined()
         }
     } else {
         // 大会の段階（出てきた順。「1〜4回戦」は1回戦から4回戦に分ける）
@@ -2775,4 +2961,89 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
     }
     var seen = Set<String>()
     return (rule, found.filter { seen.insert($0).inserted })
+}
+
+
+// MARK: - 0.28 チーム戦の回答
+
+extension GiriEvent {
+    /// 自分のチームのメンバー（自分を除く）。チーム戦の大会だけ。
+    func teammates(isSelf: (String) -> Bool) -> [String] {
+        guard meetingType == .tournament, tournamentFormat != .individual else { return [] }
+        let team = teams.first { $0.id == myTeamId || $0.isMine }
+        var seen = Set<String>()
+        return ((team?.members ?? []) + (tournamentResult?.members ?? []))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !isSelf($0) && seen.insert(playerSearchKey($0)).inserted }
+    }
+}
+
+extension AnswerRecord {
+    /// 0.28：チーム戦の回答として、その人の成績に数える回答か（メンバーの回答か、その人が原案のチーム回答）。
+    var isTeamCredit: Bool { isTeammate || (isOwn && !creditedName.isEmpty) }
+}
+
+/// 0.28：原案が自分の時の値（自分の名前を変えても変わらないように、名前ではなく印で持つ）。
+let giriSelfDrafter = "@self"
+
+extension GiriEvent {
+    /// 0.28：その段階に出たチームのメンバー（自分を除く）。途中でメンバーが変わる大会は段階ごとのメンバー、
+    /// 欠員になったメンバーは除く。段階が分からない時はチームのメンバー。
+    func teammates(isSelf: (String) -> Bool, stageID: String?) -> [String] {
+        let base = teammates(isSelf: isSelf)
+        let stages = tournamentResult?.stages ?? []
+        guard hasMemberChanges, let stageID,
+              var stage = stages.first(where: { $0.id == stageID || ($0.roundId != nil && $0.roundId == stageID) }) else { return base }
+        // 回（お題）の記録は、メンバーを入れた段階全体の記録に合わせる。
+        if stage.members.isEmpty && stage.absentMembers.isEmpty, stage.roundId != nil,
+           let wide = stages.first(where: { $0.roundId == nil && $0.stageId != nil && $0.stageId == stage.stageId }) { stage = wide }
+        let absent = Set(stage.absentMembers.map(playerSearchKey))
+        var seen = Set<String>()
+        let names = (stage.members.isEmpty ? base : stage.members)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !isSelf($0) && !absent.contains(playerSearchKey($0)) && seen.insert(playerSearchKey($0)).inserted }
+        return names
+    }
+    /// 0.28：チーム戦の大会か（回答をチームの回答として扱う）。
+    var isTeamTournament: Bool { meetingType == .tournament && tournamentFormat != .individual }
+}
+
+/// 0.28：チーム戦の大会のお題の回答に「チーム戦の回答」の印を付ける（保存する時）。
+func giriMarkingTeamAnswers(_ note: ThoughtNote, event: GiriEvent?) -> ThoughtNote {
+    guard let event, event.isTeamTournament else { return note }
+    var copy = note
+    let records = note.effectiveAnswerRecords
+    guard records.contains(where: { $0.isOwn && !$0.isTeamAnswer }) else { return note }
+    copy.answerRecords = records.map { record in
+        var value = record
+        if value.isOwn { value.isTeamAnswer = true }
+        return value
+    }
+    copy.usesAnswerRecords = true
+    return copy
+}
+
+/// 0.28：サイトのシーズンに組んだタッグの相手（回ごとの相手。多い順。回に相手がなければサイトの相手）。
+func giriSeasonTagPartners(site: OnlineSite, seasonID: String?, events: [GiriEvent]) -> [(name: String, cycles: Int)] {
+    var counts: [String: (name: String, cycles: Int)] = [:]
+    var order: [String] = []
+    for event in events where event.onlineSiteId == site.id && event.isActualParticipant && event.siteSeasonID == seasonID {
+        let name = event.tagPartner.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { continue }
+        let key = playerSearchKey(name)
+        if counts[key] == nil { order.append(key); counts[key] = (name, 0) }
+        counts[key]?.cycles += 1
+    }
+    let partners = order.compactMap { counts[$0] }.sorted { $0.cycles > $1.cycles }
+    if partners.isEmpty, site.division == "tag", !site.tagPartner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return [(site.tagPartner.trimmingCharacters(in: .whitespacesAndNewlines), 0)]
+    }
+    return partners
+}
+
+/// 0.28：次の回にタッグで出る時の相手の候補（このサイトで最後に組んだ相手。なければサイトの相手）。
+func giriLastTagPartner(site: OnlineSite, events: [GiriEvent]) -> String {
+    let latest = events.filter { $0.onlineSiteId == site.id && !$0.tagPartner.isEmpty }
+        .max { ($0.effectiveRounds.compactMap(\.submissionStart).min() ?? $0.createdAt) < ($1.effectiveRounds.compactMap(\.submissionStart).min() ?? $1.createdAt) }
+    return latest?.tagPartner ?? site.tagPartner
 }

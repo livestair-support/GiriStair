@@ -64,7 +64,7 @@ func giriSeasonTotals(
         for note in eventNotes where seenNotes.insert(note.id).inserted {
             var seenAnswers = Set<String>()
             let submitted = note.effectiveAnswerRecords.filter {
-                $0.isOwn && $0.isSubmitted && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                $0.countsForSelf && $0.isSubmitted && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                 seenAnswers.insert($0.id).inserted
             }
             totals.submittedAnswerCount += submitted.count
@@ -170,4 +170,69 @@ private func seasonAnalyticsStageRoundID(
     // A single historical result with no remaining schedule is still one
     // known result sample. Multiple unlinked stages may be aggregate records.
     return rounds.isEmpty && stages.count == 1 ? "event:" + event.id : nil
+}
+
+// MARK: - 0.28 タッグの相手などのシーズンの得票率
+
+/// ほかの人（タッグの相手など）のシーズンの得票率。記録した回答から数える。
+struct GiriPersonSeasonRate: Equatable {
+    /// 得票率の分かる回答の数。
+    var sampleCount: Int = 0
+    /// 平均に使った数（上から○回答の時はその数まで）。
+    var countedSampleCount: Int = 0
+    var averageVoteRate: Double? = nil
+}
+
+/// 名前の人の回答（他人の回答として記録したもの・その人が原案のチーム回答）の得票率を、
+/// 高い方から topCount 件まで平均する。サイトとシーズンは giriSeasonTotals と同じ決め方（キャンセルした回は除く）。
+func giriPersonSeasonRate(
+    name: String,
+    siteID: String,
+    seasonID: String?,
+    seasonName: String,
+    events: [GiriEvent],
+    notes: [ThoughtNote],
+    topCount: Int? = nil
+) -> GiriPersonSeasonRate {
+    let key = playerSearchKey(name)
+    guard !key.isEmpty else { return GiriPersonSeasonRate() }
+    let requestedID = seasonAnalyticsID(seasonID)
+    let seasonTitle = seasonName.trimmingCharacters(in: .whitespacesAndNewlines)
+    let eventIDs = Set(events.filter { event in
+        guard event.onlineSiteId == siteID, event.status != .canceled else { return false }
+        if let eventID = seasonAnalyticsID(event.siteSeasonID) { return requestedID == eventID }
+        if requestedID != nil && seasonTitle.isEmpty { return false }
+        return event.siteSeason.trimmingCharacters(in: .whitespacesAndNewlines) == seasonTitle
+    }.map(\.id))
+    var seen = Set<String>()
+    var rates: [Double] = []
+    for note in notes where note.kind == .answers {
+        guard let eventID = note.eventId, eventIDs.contains(eventID) else { continue }
+        for record in note.effectiveAnswerRecords where seen.insert(record.id).inserted {
+            guard playerSearchKey(record.creditedName) == key, let rate = seasonAnalyticsRate(record.voteRate) else { continue }
+            rates.append(rate)
+        }
+    }
+    var result = GiriPersonSeasonRate()
+    result.sampleCount = rates.count
+    let counted = topCount.map { Array(rates.sorted(by: >).prefix(max(1, $0))) } ?? rates
+    result.countedSampleCount = counted.count
+    if !counted.isEmpty {
+        var mean = 0.0
+        for (index, rate) in counted.enumerated() { mean += (rate - mean) / Double(index + 1) }
+        result.averageVoteRate = mean
+    }
+    return result
+}
+
+/// 0.28：タッグの成績（2人の値の合計か平均）。回答数が足りない人を0にする決まりの時は、足りない人を0にする。
+func giriTagSeasonRate(own: Double?, ownCount: Int, partner: Double?, partnerCount: Int?, topCount: Int?,
+                       scoring: String, shortfallZero: Bool) -> Double? {
+    func value(_ rate: Double?, _ count: Int?) -> Double? {
+        guard let rate else { return shortfallZero ? 0 : nil }
+        if shortfallZero, let topCount, let count, count < topCount { return 0 }
+        return rate
+    }
+    guard let first = value(own, ownCount), let second = value(partner, partnerCount) else { return nil }
+    return scoring == "average" ? (first + second) / 2 : first + second
 }
