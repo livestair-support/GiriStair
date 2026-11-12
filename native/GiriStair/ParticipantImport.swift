@@ -437,6 +437,14 @@ struct GiriEventPageReview: View {
                         Text("即席タッグ・チーム戦").tag("impromptu")
                     } label: { reviewLabel("参加形式") }
                     .pickerStyle(.menu).tint(.primary)
+                    // 0.30.1：タッグ・「〇人チーム」などから読んだチームの人数。
+                    if (draft.tournamentFormat ?? .individual) != .individual {
+                        Picker(selection: Binding(get: { draft.teamSize ?? 0 }, set: { draft.teamSize = $0 == 0 ? nil : $0 })) {
+                            Text("分からない").tag(0)
+                            ForEach(2...6, id: \.self) { Text("\($0)人").tag($0) }
+                        } label: { reviewLabel("チーム人数") }
+                        .pickerStyle(.menu).tint(.primary)
+                    }
                 }
                 valueRow("日付", draft.date.map { GiriDateText.day($0) } ?? "")
                 valueRow("開場", clockText(draft.opens))

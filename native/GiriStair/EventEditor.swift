@@ -660,6 +660,8 @@ struct GiriEventEditor: View {
         if value.meetingType == .tournament, let format = page.tournamentFormat, replace || value.tournamentFormat == .individual {
             value.tournamentFormat = format
             if format == .pair { value.teamSize = 2 }
+            // 0.30.1：「3人1組」「〇人チーム」などから読んだ人数。
+            if format != .individual, let size = page.teamSize { value.teamSize = size }
             // 0.30：確認画面で選んだ「即席タッグ・チーム戦」。
             value.impromptuTeams = format != .individual && page.impromptuTeams
         }

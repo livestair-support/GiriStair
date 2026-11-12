@@ -1404,6 +1404,8 @@ struct GiriEventPageDraft: Equatable, Identifiable {
     var tournamentFormat: TournamentFormat? = nil
     /// 0.30：即席タッグ・チーム戦（当日にチームを分ける）。確認画面で選ぶ。
     var impromptuTeams = false
+    /// 0.30.1：チームの人数（タッグは2人、「3人1組」などから）。分からなければ nil。
+    var teamSize: Int? = nil
     /// 0.29：説明やコメントに書いてあるチーム（タッグ）の名前とメンバー。
     var teams: [GiriEventPageTeam] = []
     /// 0.29：説明に書いてある大会のルール（段階など）。読めなければ nil。
@@ -1614,12 +1616,14 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     }()
     // 0.30：折り返したタイトル（同じ大きさで続く行）はまとめて1つの名前にする。
     var titleBlock: [Int] = titleIndex.map { [$0] } ?? []
-    func continuesTitle(_ first: GiriOCRLine, _ second: GiriOCRLine) -> Bool {
+    /// relaxed：後ろへ続く行は、文字の高さの読み違い（かな・カタカナだけの行は低く読まれる）と行間を広めに見る。
+    func continuesTitle(_ first: GiriOCRLine, _ second: GiriOCRLine, relaxed: Bool = false) -> Bool {
         guard first.height > 0, second.height > 0 else { return false }
         let ratio = min(first.height, second.height) / max(first.height, second.height)
         let gap = abs(second.midY - first.midY)
         // 縦に長い画面では位置が画像全体に対する割合なので、同じ行かどうかも文字の高さで比べる。
-        return ratio >= 0.85 && gap > max(first.height, second.height) * 0.5 && gap <= max(first.height, second.height) * 1.9
+        return ratio >= (relaxed ? 0.7 : 0.85) && gap > max(first.height, second.height) * 0.5
+            && gap <= max(first.height, second.height) * (relaxed ? 2.6 : 1.9)
     }
     if let titleIndex {
         var before = titleIndex - 1
@@ -1629,7 +1633,7 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
             before -= 1
         }
         var after = titleIndex + 1
-        while after < info.count, let last = titleBlock.last, continuesTitle(info[last], info[after]),
+        while after < info.count, let last = titleBlock.last, continuesTitle(info[last], info[after], relaxed: true),
               !giriIsEventPageNoise(info[after].text), !giriIsEventPageSectionStart(info[after].text),
               giriParticipantHeader(info[after].text) == nil {
             titleBlock.append(after)
@@ -1639,6 +1643,7 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
         draft.title = giriTrimmedEventPageTitle(joined)
     }
     let titleEnd = titleBlock.last
+    let titleHeight = titleBlock.map { info[$0].height }.max() ?? 0
 
     // 項目名のある行（同じ行か次の行の値）。
     func labeledValue(_ names: String) -> String? {
@@ -1663,15 +1668,25 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     // なければ「主催」の項目名の値にする。
     var owner: String?
     if let titleEnd {
-        let nearby = info[(titleEnd + 1)...].prefix(3).prefix { !giriIsEventPageSectionStart($0.text) }
+        let nearby = info[(titleEnd + 1)...].prefix(4).prefix { !giriIsEventPageSectionStart($0.text) }
+        // 0.30.1：ページを作った人の名前はタイトルより小さい字。タイトルと同じ大きさの行（タイトルの続き）は主催にしない。
         let following = nearby.first { line in
             let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return !giriIsEventPageNoise(text) && text.count <= 16 && giriEventPageDate(text, now: now, calendar: calendar) == nil
                 && !giriIsParticipantNoise(text) && text.range(of: #"[。、：:]"#, options: .regularExpression) == nil
+                && (titleHeight == 0 || line.height == 0 || line.height < titleHeight * 0.8)
         }
         if let following {
             let cleaned = giriCleanParticipantText(following.text).name
             if !cleaned.isEmpty { owner = giriMatchRegisteredName(cleaned, known: organizers) ?? cleaned }
+            // タイトルと同じ大きさで主催の名前より上にある行は、タイトルの続き（行間が広くて続きと見なせなかった行）。
+            if titleHeight > 0 {
+                let rest = nearby.prefix { $0 != following }.filter { $0.height >= titleHeight * 0.8 && !giriIsEventPageNoise($0.text) }
+                if !rest.isEmpty {
+                    let joined = (titleBlock.map { info[$0].text } + rest.map(\.text)).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.joined()
+                    draft.title = giriTrimmedEventPageTitle(joined)
+                }
+            }
         }
     }
     if let owner {
@@ -1711,9 +1726,21 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     if draft.tournamentFormat != nil && draft.meetingKind == nil { draft.meetingKind = "tournament" }
     // チーム（タッグ）の名前とメンバーは、説明とコメント欄（ページ全体）から読む。
     // 0.30：メンバーはページの参加者の名前にも合わせる。
-    draft.teams = giriEventPageTeams(allText, known: known, roster: draft.participants.filter { $0.section == .participants }.map(\.name))
+    // 0.30.1：タッグ・〇人チームの人数に合わせて読む。
+    let roster = draft.participants.filter { $0.section == .participants && $0.included }.map(\.name)
+    if draft.tournamentFormat == .pair { draft.teamSize = 2 }
+    else if draft.tournamentFormat == .team { draft.teamSize = giriInferredTeamSize(title: draft.title + " " + head, body: allText.joined(separator: "\n")) }
+    draft.teams = giriEventPageTeams(allText, known: known, roster: roster, teamSize: draft.teamSize)
     if !draft.teams.isEmpty && draft.tournamentFormat == nil {
         draft.tournamentFormat = draft.teams.allSatisfy { $0.members.count == 2 } ? .pair : .team
+        if draft.tournamentFormat == .pair { draft.teamSize = 2 }
+    }
+    // 0.30.1：即席でないタッグ・チーム戦は、ページの参加者（代表）1人ごとに1チーム。チームの一覧にいない参加者も、
+    // その人のチームとして足す（チームの数＝参加者の数）。
+    if !draft.teams.isEmpty {
+        for name in roster where !draft.teams.contains(where: { team in team.members.contains { giriOCRNameKey($0) == giriOCRNameKey(name) } }) {
+            draft.teams.append(GiriEventPageTeam(name: "", members: [name]))
+        }
     }
     // ルール：番号付きの段階や「ルール」の見出しがある説明から読む。
     let ruleLines = giriEventPageRuleLines(info.map(\.text))
@@ -1810,9 +1837,15 @@ private func giriTeamMembers(_ text: String, known: [String]) -> [String] {
 /// 「チーム名：〇〇」（同じ行か次の行にメンバー）、「【〇〇】A・B」、「〇〇（A・B）」の書き方を読む。
 /// 0.30：番号付きの一覧（出場者の一覧）の「1. A、B（チーム名）」もチームにする（チーム名がなければ名前なし）。
 /// メンバーは登録した名前と、ページの参加者（roster）の名前に合わせる（「落合」→ 参加者の「落合博美」など、1人に決まる時だけ）。
-func giriEventPageTeams(_ rawLines: [String], known: [String], roster: [String] = []) -> [GiriEventPageTeam] {
+/// 0.30.1：チームは説明（上の方）の一覧を先に使い、コメント欄のチームは、説明にチームがない時か、
+/// まだどのチームにも入っていない参加者がいる時だけ足す。teamSize が分かる時は、多すぎるチームを人数ごとに分ける。
+func giriEventPageTeams(_ rawLines: [String], known: [String], roster: [String] = [], teamSize: Int? = nil) -> [GiriEventPageTeam] {
     let lines = rawLines.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     var teams: [GiriEventPageTeam] = []
+    // ツイプラなどの「コメント」の見出しから下はコメント欄。
+    let commentStart = lines.firstIndex { $0.count <= 12 && $0.range(of: #"^コメント"#, options: .regularExpression) != nil } ?? lines.count
+    var fromComments = false
+    var hasListedTeams = false
     let rosterNames = roster.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     func resolve(_ raw: String) -> String {
         let name = giriMatchRegisteredName(raw, known: known + rosterNames) ?? raw
@@ -1834,25 +1867,37 @@ func giriEventPageTeams(_ rawLines: [String], known: [String], roster: [String] 
         var members: [String] = []
         for member in rawMembers.map(resolve) where !members.contains(where: { sameMember($0, member) }) { members.append(member) }
         guard !members.isEmpty else { return }
+        // 説明にチームの一覧がある時のコメント欄のチームは、足りない所を埋めるだけにする。
+        let supplementary = fromComments && hasListedTeams
         // 同じチーム名、または同じメンバーのチームは1つにまとめる（説明の一覧とコメントの両方に書いてある時）。
         if !title.isEmpty, let index = teams.firstIndex(where: { playerSearchKey($0.name) == playerSearchKey(title) }) {
-            for member in members where !teams[index].members.contains(where: { sameMember($0, member) }) { teams[index].members.append(member) }
+            for member in members where !teams[index].members.contains(where: { sameMember($0, member) }) {
+                if supplementary, let teamSize, teams[index].members.count >= teamSize { break }
+                teams[index].members.append(member)
+            }
             return
         }
         if let index = teams.firstIndex(where: { team in team.members.count == members.count && members.allSatisfy { member in team.members.contains { sameMember($0, member) } } }) {
             if teams[index].name.isEmpty { teams[index].name = title }
             return
         }
+        if supplementary {
+            let placed = teams.flatMap(\.members)
+            let newcomer = members.contains { member in rosterNames.contains { sameMember($0, member) } && !placed.contains { sameMember($0, member) } }
+            guard newcomer else { return }
+        }
         teams.append(GiriEventPageTeam(name: title, members: members))
     }
     func add(_ name: String, _ members: [String]) { addTeam(name, members, requiresName: true) }
     // 出場者の一覧（番号付き）。段階の説明（予選・決勝・上位○名など）の一覧は使わない。
     let entryRuns = giriNumberedRuns(lines).filter(giriIsEntryRun)
-    let entryLines = Set(entryRuns.flatMap { $0.map(\.lineIndex) })
+    let entryLines = Set(entryRuns.flatMap { $0.flatMap(\.allLines) })
     for item in entryRuns.flatMap({ $0 }) {
         if let team = giriEntryTeam(item.body) { addTeam(team.name, team.members, requiresName: false) }
     }
+    hasListedTeams = !teams.isEmpty
     for (index, line) in lines.enumerated() where !entryLines.contains(index) {
+        fromComments = index >= commentStart
         // 「チーム名：〇〇」「タッグ名「〇〇」」
         if let groups = giriRegexGroups(#"(?:チーム名|タッグ名|コンビ名|ユニット名)\s*[:：]?\s*[「『【]?([^」』】\s（(]+)[」』】]?(.*)$"#, in: line).first {
             var rest = groups[2]
@@ -1878,7 +1923,39 @@ func giriEventPageTeams(_ rawLines: [String], known: [String], roster: [String] 
             if !members.isEmpty { add(groups[1], members) }
         }
     }
-    return teams
+    return giriFittingTeamSize(teams, teamSize: teamSize, roster: rosterNames)
+}
+
+/// 0.30.1：チームのメンバーを整える。同じチームで別の名前の書き始めだけの名前（「粉」と「粉骨」）を外し、
+/// 人数が決まっている時は多すぎるチームを人数ごとに分ける。余った1人が参加者でなく、チーム名がない時はチーム名にする
+/// （「A、B、チーム名」のように括弧なしで書いた時）。
+func giriFittingTeamSize(_ teams: [GiriEventPageTeam], teamSize: Int?, roster: [String]) -> [GiriEventPageTeam] {
+    var output: [GiriEventPageTeam] = []
+    for team in teams {
+        let keys = team.members.map(giriOCRNameKey)
+        let members = team.members.enumerated().filter { index, _ in
+            let key = keys[index]
+            // 書き始めだけの名前は2文字までで、参加者にいない時だけ外す（別の人の短い名前を消さない）。
+            let isFragment = key.count <= 2 && !roster.contains { giriOCRNameKey($0) == key }
+                && keys.enumerated().contains { other, longer in other != index && longer.count > key.count && longer.hasPrefix(key) }
+            return !key.isEmpty && !isFragment
+        }.map(\.element)
+        guard let size = teamSize, size >= 2, members.count > size else {
+            output.append(GiriEventPageTeam(id: team.id, name: team.name, members: members))
+            continue
+        }
+        var chunks = stride(from: 0, to: members.count, by: size).map { Array(members[$0..<min($0 + size, members.count)]) }
+        var name = team.name
+        if let last = chunks.last, last.count == 1, chunks.count > 1, name.isEmpty,
+           !roster.contains(where: { giriOCRNameKey($0) == giriOCRNameKey(last[0]) }) {
+            name = last[0]
+            chunks.removeLast()
+        }
+        for (index, chunk) in chunks.enumerated() {
+            output.append(GiriEventPageTeam(id: index == 0 ? team.id : UUID().uuidString, name: index == 0 ? name : "", members: chunk))
+        }
+    }
+    return output
 }
 
 /// 0.30：番号付きの項目（①・「1.」・「(1)」）。番号が戻ったら別の一覧にする。lineIndex は渡した行の位置。
@@ -1886,6 +1963,9 @@ struct GiriNumberedItem: Equatable {
     var number: Int
     var body: String
     var lineIndex: Int
+    /// 0.30.1：折り返して次の行に続いた部分の行（「1. A、B（チーム」「名）」など）。
+    var continuation: [Int] = []
+    var allLines: [Int] { [lineIndex] + continuation }
 }
 
 func giriNumberedRuns(_ lines: [String]) -> [[GiriNumberedItem]] {
@@ -1903,7 +1983,41 @@ func giriNumberedRuns(_ lines: [String]) -> [[GiriNumberedItem]] {
         guard let item = found else { continue }
         if let last = runs.last?.last, item.number > last.number { runs[runs.count - 1].append(item) } else { runs.append([item]) }
     }
+    // 0.30.1：折り返した項目は次の行（次の番号より前）とつなぐ。括弧が閉じていない・区切りで終わる時と、
+    // 括弧のない項目の次の短い行が「〜（チーム名）」で終わる時（名前の途中で折り返した時）だけ。
+    let numbered = Set(runs.flatMap { $0.map(\.lineIndex) })
+    for runIndex in runs.indices {
+        for itemIndex in runs[runIndex].indices {
+            var item = runs[runIndex][itemIndex]
+            var next = item.lineIndex + 1
+            while item.continuation.count < 2, next < lines.count, !numbered.contains(next) {
+                let line = giriHalfwidthDigits(lines[next]).trimmingCharacters(in: .whitespaces)
+                if line.isEmpty || giriIsEventPageSectionStart(line) { break }
+                let opens = item.body.filter { "（(".contains($0) }.count, closes = item.body.filter { "）)".contains($0) }.count
+                let endsWithSeparator = item.body.range(of: #"[、・,，/／&＆]\s*$"#, options: .regularExpression) != nil
+                // 人数（「参加者 (3人)」など）の括弧は名前の続きではない。
+                let finishesName = opens == 0 && line.count <= 24 && giriParticipantHeader(line) == nil
+                    && line.range(of: #"[0-9０-９]"#, options: .regularExpression) == nil
+                    && line.range(of: #"^[^（(]{1,8}[（(][^）)]{1,24}[）)]\s*$"#, options: .regularExpression) != nil
+                guard opens > closes || endsWithSeparator || finishesName else { break }
+                item.body += line
+                item.continuation.append(next)
+                next += 1
+            }
+            runs[runIndex][itemIndex] = item
+        }
+    }
     return runs
+}
+
+/// 0.30.1：チームの人数。タッグ・コンビ・ペアは2人、「3人1組」「4人チーム」はその人数。分からなければ nil。
+/// title はタイトルとページの上の方、body は説明全体（説明では「〇人チーム」の書き方だけを見る）。
+func giriInferredTeamSize(title: String, body: String) -> Int? {
+    let head = giriHalfwidthDigits(title)
+    if let groups = giriRegexGroups(#"([2-9])\s*(?:人|名)\s*(?:1|一)?\s*(?:チーム|組|ユニット)"#, in: head).first, let size = Int(groups[1]) { return size }
+    if head.contains("タッグ") || head.contains("コンビ") || head.contains("ペア") { return 2 }
+    if let groups = giriRegexGroups(#"([2-9])\s*(?:人|名)\s*チーム"#, in: giriHalfwidthDigits(body)).first, let size = Int(groups[1]) { return size }
+    return nil
 }
 
 /// 0.30：出場者の一覧の項目（「キツル、若村情無（滋賀大学）」「刺客・モモス」）。段階の名前・説明らしい時は nil。
@@ -3390,7 +3504,7 @@ func giriNumberedRuleStages(_ rawLines: [String]) -> [GiriRuleStage] {
     let lines = rawLines.map { giriHalfwidthDigits($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     let circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
     // 0.30：出場者の一覧（「1. A、B（チーム名）」）は段階にしない。
-    let entryLines = Set(giriNumberedRuns(lines).filter(giriIsEntryRun).flatMap { $0.map(\.lineIndex) })
+    let entryLines = Set(giriNumberedRuns(lines).filter(giriIsEntryRun).flatMap { $0.flatMap(\.allLines) })
     var stages: [GiriRuleStage] = []
     var current: Int? = nil
     for (index, line) in lines.enumerated() {
