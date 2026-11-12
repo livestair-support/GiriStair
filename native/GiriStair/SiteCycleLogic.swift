@@ -531,11 +531,13 @@ func siteStartingNextSeason(_ site: OnlineSite, schedule: SiteSeasonSchedule, ru
     if schedule.timing == .irregular {
         // 締切が決まっていないサイトは、最初の回をその締切で作る。
         value.cycleSettings?.specialPeriods.removeAll { $0.kind == .regular }
-        value.cycleSettings?.specialPeriods.append(siteIrregularPeriod(value, deadline: schedule.firstDeadline, now: start, calendar: calendar))
+        let first = siteIrregularPeriod(value, deadline: schedule.firstDeadline, now: start, calendar: calendar)
+        value.cycleSettings?.specialPeriods.append(first)
     }
     if let rule, rule.kind == .online, rule.effectiveScope == .regular {
         // 確認した回数・日数から、プレーオフなどの日程を作り直す。
-        value.cycleSettings?.specialPeriods = giriRulePlanPeriods(rule, site: value, calendar: calendar)
+        let planned = giriRulePlanPeriods(rule, site: value, calendar: calendar)
+        value.cycleSettings?.specialPeriods = planned
     }
     return value
 }
