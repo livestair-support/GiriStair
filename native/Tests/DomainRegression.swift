@@ -2375,6 +2375,28 @@ struct DomainRegression {
             try check(try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(teamEvent)).noTeamNames, "the no-team-names choice roundtrips")
         }
 
+        // 0.30.1 tall pages and entry lists (fictional names only).
+        do {
+            // 縦に長い画面では行の間が 0.004 より狭い。高さの半分で行を分けるので、左右の位置で入れ替わらない。
+            let tallRows = [GiriOCRLine(text: "一行目", midX: 0.8, midY: 0.0100, height: 0.0012), GiriOCRLine(text: "二行目", midX: 0.2, midY: 0.0125, height: 0.0012),
+                            GiriOCRLine(text: "右", midX: 0.7, midY: 0.0126, height: 0.0012)]
+            try check(giriReadingOrder(tallRows).map(\.text) == ["一行目", "二行目", "右"], "rows on tall pages keep their top-to-bottom order")
+            func tall(_ text: String, _ y: Double, h: Double = 0.0008) -> GiriOCRLine { GiriOCRLine(text: text, midX: 0.4, midY: y, height: h) }
+            let tallPage = [tall("2026年9月6日(日)", 0.0100, h: 0.0012), tall("9/6(日) 午後2時〜 みどり", 0.0125, h: 0.0012),
+                            tall("会館　秋の会「ながい", 0.0140, h: 0.0012), tall("なまえ」第1部", 0.0155, h: 0.0012),
+                            tall("かえでP", 0.0175), tall("[3 views]", 0.0185), tall("詳細", 0.0200), tall("場所：みどり会館", 0.0215)]
+            let tallDraft = giriEventPageDraft(lines: tallPage, known: [], venues: [], now: GiriDates.parse("2026-07-01T00:00:00Z") ?? Date())
+            try check(tallDraft.title == "秋の会「ながいなまえ」第1部" && tallDraft.organizer == "かえでP", "titles and owners are read on tall pages")
+
+            let entryLines = ["【出場者】", "1. かえで・もみじ", "2. つばき、さざんか（架空大学）", "3. はるか、たろう（架空ズ）", "4. ゆり",
+                              "【架空ズ】はるか・たろう", "【ねこ組】おちあい・じろう", "①予選（8人2ブロック）", "②決勝（4人）"]
+            let entryTeams = giriEventPageTeams(entryLines, known: [], roster: ["おちあいはるみ", "じろう"])
+            try check(entryTeams.map(\.name) == ["", "架空大学", "架空ズ", "", "ねこ組"]
+                      && entryTeams.map(\.members) == [["かえで", "もみじ"], ["つばき", "さざんか"], ["はるか", "たろう"], ["ゆり"], ["おちあいはるみ", "じろう"]],
+                      "numbered entry lists become teams, the same team in comments is merged and short names follow the page participants")
+            try check(giriNumberedRuleStages(entryLines).map(\.name) == ["予選", "決勝"], "entry lists are not read as tournament stages")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

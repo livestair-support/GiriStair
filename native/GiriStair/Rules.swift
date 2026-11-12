@@ -554,7 +554,7 @@ struct GiriRuleEditor: View {
                 .pickerStyle(.menu).tint(Color.primary)
             }
             if draft.kind == .live {
-                Toggle("トーナメント（1対1の勝ち抜き）", isOn: $draft.knockout).tint(AppSectionAccent.live)
+                Toggle("トーナメント", isOn: $draft.knockout).tint(AppSectionAccent.live)
             }
             if draft.tournamentFormat != .individual {
                 // 0.28：途中でメンバーを増やせる・入れ替えられる大会（段階ごとに決める）。
@@ -900,7 +900,7 @@ struct GiriRuleDetailRows: View {
             line("種類", rule.kind.title + "・" + rule.effectiveScope.title)
             if rule.effectiveScope == .tournament {
                 line("参加形式", rule.tournamentFormat.title)
-                if rule.kind == .live && rule.knockout { line("対戦形式", "トーナメント（1対1）") }
+                if rule.kind == .live && rule.knockout { line("対戦形式", "トーナメント") }
                 if let style = rule.teamAnswerStyle, let title = GiriRule.teamAnswerStyles.first(where: { $0.value == style })?.title { line("チームの回答", title) }
                 if rule.hasMemberChanges { line("メンバー", "途中で変わる") }
             }
