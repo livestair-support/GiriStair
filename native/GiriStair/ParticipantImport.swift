@@ -207,12 +207,8 @@ func giriParticipantKnownNames(_ store: GiriStore) -> [String] {
     // 別名義も照合し、読み取った後で本名義にする。
     for player in store.players { names.append(contentsOf: player.aliases) }
     // 0.29：Xの表示名・IDでも照合し、読み取った後でその人の名前にする。
-    for player in store.players {
-        for account in player.xAccounts {
-            if !account.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { names.append(account.displayName) }
-            if !account.cleanHandle.isEmpty { names.append(account.cleanHandle) }
-        }
-    }
+    // 0.30：リンクのXの名前・IDも含める。
+    for player in store.players { names.append(contentsOf: player.xMatchNames) }
     return names
 }
 
@@ -360,6 +356,22 @@ struct GiriEventPageReview: View {
         self.onApply = onApply
     }
 
+    /// 0.30：参加形式（個人戦・タッグ・チーム戦・即席タッグ・チーム戦）。タッグの読み取り（2人）は残す。
+    private var formatChoice: Binding<String> {
+        Binding(get: {
+            guard let format = draft.tournamentFormat, format != .individual else { return "individual" }
+            return draft.impromptuTeams ? "impromptu" : "team"
+        }, set: { choice in
+            if choice == "individual" {
+                draft.tournamentFormat = .individual
+                draft.impromptuTeams = false
+            } else {
+                if draft.tournamentFormat == nil || draft.tournamentFormat == .individual { draft.tournamentFormat = .team }
+                draft.impromptuTeams = choice == "impromptu"
+            }
+        })
+    }
+
     var body: some View {
         Form {
             Section {
@@ -372,8 +384,11 @@ struct GiriEventPageReview: View {
                 } label: { reviewLabel("会の種類") }
                 .pickerStyle(.menu).tint(.primary)
                 if draft.meetingKind == "tournament" {
-                    Picker(selection: Binding(get: { draft.tournamentFormat ?? .individual }, set: { draft.tournamentFormat = $0 })) {
-                        ForEach(TournamentFormat.allCases) { Text($0.title).tag($0) }
+                    // 0.30：タッグとチーム戦は人数だけの違いなので「タッグ・チーム戦」にまとめ、即席を分ける。
+                    Picker(selection: formatChoice) {
+                        Text("個人戦").tag("individual")
+                        Text("タッグ・チーム戦").tag("team")
+                        Text("即席タッグ・チーム戦").tag("impromptu")
                     } label: { reviewLabel("参加形式") }
                     .pickerStyle(.menu).tint(.primary)
                 }
@@ -384,6 +399,8 @@ struct GiriEventPageReview: View {
                 valueRow("会場", draft.venue)
                 if !draft.venueRoom.isEmpty { valueRow("部屋", draft.venueRoom) }
                 valueRow("主催", draft.organizer)
+                // 0.30：説明に書いてあった共催。
+                if !draft.coOrganizers.isEmpty { valueRow("共催", draft.coOrganizers.joined(separator: "・")) }
                 valueRow("参加費", draft.fee.map { "\($0)円" } ?? "")
             }.appSectionCardStyle(accentColor: AppSectionAccent.live)
             GiriParticipantCandidateSections(candidates: $draft.participants, knownNames: giriParticipantKnownNames(store), listedCount: draft.listedParticipantCount)

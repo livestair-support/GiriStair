@@ -2335,6 +2335,46 @@ struct DomainRegression {
             try check(xStore.rooms(forVenue: "架空会館") == ["第2会議室", "和室"], "room suggestions list registered rooms first, then used ones")
         }
 
+        // 0.30 event pages: wrapped titles, the page owner as organizer, co-organizers, cut-off names, X names and team options.
+        do {
+            func row(_ text: String, _ y: Double, x: Double = 0.3, h: Double = 0.006) -> GiriOCRLine { GiriOCRLine(text: text, midX: x, midY: y, height: h) }
+            let page = [row("2026年8月30日(日)", 0.02, h: 0.010), row("途中参加OK", 0.035, x: 0.15),
+                        row("8/30(日) 午後13時〜 みどり区民", 0.05, h: 0.010), row("センター　夏の会「えんどれす」", 0.065, h: 0.010),
+                        row("第2部　ひかりタイマン杯", 0.08, h: 0.010), row("（タッグ）", 0.095, h: 0.010),
+                        row("さくらD", 0.12), row("[14 views]", 0.135), row("詳細", 0.16),
+                        row("共催：みかん星人・なつめさん", 0.18), row("会場：みどり区民センター 301", 0.20), row("第2部は主催のさくらDです！！", 0.22)]
+            let draft = giriEventPageDraft(lines: page, known: [], venues: [], now: GiriDates.parse("2026-07-01T00:00:00Z") ?? Date())
+            try check(draft.title == "夏の会「えんどれす」第2部　ひかりタイマン杯（タッグ）", "a wrapped title is joined without its leading date and venue")
+            try check(draft.organizer == "さくらD", "the page owner below the title is the organizer, not a line of the title")
+            try check(draft.coOrganizers == ["みかん星人", "なつめ"] && draft.venue == "みどり区民センター" && draft.venueRoom == "301", "co-organizers are read from the description")
+            try check(giriTrimmedEventPageTitle("2026/8/30(日) 19:00〜21:00 架空の会") == "架空の会" && giriTrimmedEventPageTitle("8月の会") == "8月の会", "only a leading date and time are removed from titles")
+            try check(giriEventPageCoOrganizers(["今回はひかり会さんとの共催です"], known: ["ひかり会"]) == ["ひかり会"]
+                      && giriEventPageCoOrganizers(["今回は知らない会との共催です"], known: []).isEmpty, "co-organizers in sentences need a registered name")
+
+            let cut = giriCleanParticipantText("pode crer.......")
+            try check(cut.name == "pode crer" && cut.truncated && giriCleanParticipantText("みかん星人．．．").truncated && giriCleanParticipantText("なつめ. . .").name == "なつめ",
+                      "names cut with dots of any kind are marked as cut off")
+            let cutCandidates = giriParticipantCandidates(entries: [(text: "ポジクル", section: .participants), (text: "pode crer.......", section: .participants)], known: ["ポジクル", "pode crer(ポジクル)"])
+            try check(cutCandidates.count == 2 && cutCandidates[1].registered == "pode crer(ポジクル)", "a cut-off name is matched to a registered alias")
+
+            var xPlayer = GiriPlayer(name: "ポジクル")
+            let plainX = try JSONSerialization.jsonObject(with: JSONEncoder().encode(xPlayer)) as? [String: Any] ?? [:]
+            try check(plainX["twitterName"] == nil, "players without an X name keep the older JSON shape")
+            xPlayer.twitterUrl = "https://x.com/pozikuru"; xPlayer.twitterName = "ぽじ@ネタ帳"
+            try check(xPlayer.twitterHandle == "pozikuru" && xPlayer.xMatchNames == ["ぽじ@ネタ帳", "pozikuru"] && GiriPlayer(name: "a", twitterUrl: "https://example.com/a").twitterHandle.isEmpty,
+                      "the link's X name and ID are used for matching")
+            try check(try JSONDecoder().decode(GiriPlayer.self, from: JSONEncoder().encode(xPlayer)).twitterName == "ぽじ@ネタ帳", "X names roundtrip")
+            let xNameStore = GiriStore(directory: temp.appendingPathComponent("x-names", isDirectory: true))
+            try xNameStore.savePlayer(xPlayer)
+            try check(xNameStore.xAccountOwners[playerSearchKey("ぽじ@ネタ帳")] == "ポジクル" && xNameStore.xAccountOwners[playerSearchKey("@pozikuru")] == "ポジクル", "the link's X name points to the player")
+
+            var teamEvent = GiriEvent(title: "タッグの会")
+            let plainTeam = try JSONSerialization.jsonObject(with: JSONEncoder().encode(teamEvent)) as? [String: Any] ?? [:]
+            try check(plainTeam["noTeamNames"] == nil, "events with team names keep the older JSON shape")
+            teamEvent.noTeamNames = true
+            try check(try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(teamEvent)).noTeamNames, "the no-team-names choice roundtrips")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

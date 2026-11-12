@@ -116,8 +116,9 @@ final class GiriStore: ObservableObject {
     var xAccountOwners: [String: String] {
         var owners: [String: String] = [:]
         for player in players {
-            for account in player.xAccounts {
-                for value in [account.displayName, account.cleanHandle, "@" + account.cleanHandle] {
+            // 0.30：リンクのXの名前・IDも含める。
+            for name in player.xMatchNames {
+                for value in [name, "@" + name] {
                     let key = playerSearchKey(value)
                     if !key.isEmpty && key != "@" && key != playerSearchKey(player.name) && owners[key] == nil { owners[key] = player.name }
                 }
@@ -429,6 +430,7 @@ final class GiriStore: ObservableObject {
         player.region = player.region.trimmingCharacters(in: .whitespacesAndNewlines)
         player.prefecture = player.prefecture.trimmingCharacters(in: .whitespacesAndNewlines)
         player.twitterUrl = player.twitterUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        player.twitterName = player.twitterName.trimmingCharacters(in: .whitespacesAndNewlines)
         // 0.29：Xのアカウントは @ や URL を外したIDにし、空の行を外す。
         player.xAccounts = player.xAccounts.map { account in
             var value = account
