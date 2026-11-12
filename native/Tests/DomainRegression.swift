@@ -2397,6 +2397,32 @@ struct DomainRegression {
             try check(giriNumberedRuleStages(entryLines).map(\.name) == ["予選", "決勝"], "entry lists are not read as tournament stages")
         }
 
+        // 0.30.1 team sizes, wrapped entries, description before comments, one team per listed participant (fictional names).
+        do {
+            try check(giriInferredTeamSize(title: "第6回架空タイマントーナメント（タッグ）", body: "") == 2 && giriInferredTeamSize(title: "架空杯 3人1組のチーム戦", body: "") == 3
+                      && giriInferredTeamSize(title: "架空杯", body: "4人チームで参加") == 4 && giriInferredTeamSize(title: "架空杯", body: "予選は5人1組の横並び") == nil,
+                      "team sizes come from tag titles and N-person team wording")
+            let wrapped = giriEventPageTeams(["1. かえで、もみじ（架空", "大学）", "2. つばき、さ", "ざんか（ねこ組）", "3. はるか・たろう"], known: [])
+            try check(wrapped.map(\.name) == ["架空大学", "ねこ組", ""] && wrapped.map(\.members) == [["かえで", "もみじ"], ["つばき", "さざんか"], ["はるか", "たろう"]],
+                      "entries wrapped onto the next line are joined")
+            let fitted = giriFittingTeamSize([GiriEventPageTeam(name: "", members: ["あ1", "い2", "う3", "え4"]), GiriEventPageTeam(name: "", members: ["かえで", "もみじ", "架空ズ"]),
+                                              GiriEventPageTeam(name: "美人", members: ["あると", "粉", "粉末"])], teamSize: 2, roster: ["かえで", "もみじ"])
+            try check(fitted.map(\.members) == [["あ1", "い2"], ["う3", "え4"], ["かえで", "もみじ"], ["あると", "粉末"]] && fitted[2].name == "架空ズ",
+                      "too many members are split by the team size, a leftover non-participant becomes the team name and name fragments are dropped")
+            let withComments = giriEventPageTeams(["1. かえで、もみじ（架空大学）", "2. はるか、たろう", "コメント", "【ねこ組】じろう・さぶろう",
+                                                   "【架空大学】かえで・もみじ・ゆり", "【いぬ組】ごろう・しろう"], known: [], roster: ["かえで", "はるか", "ごろう"], teamSize: 2)
+            try check(withComments.map(\.name) == ["架空大学", "", "いぬ組"] && withComments[0].members == ["かえで", "もみじ"],
+                      "comment teams only fill in participants missing from the listed teams")
+
+            func row(_ text: String, _ y: Double, x: Double = 0.3, h: Double = 0.006) -> GiriOCRLine { GiriOCRLine(text: text, midX: x, midY: y, height: h) }
+            let teamPage = [row("2026年8月30日(日)", 0.02, h: 0.010), row("架空タイマン杯（タッグ）", 0.04, h: 0.010), row("かえでP", 0.06), row("詳細", 0.08),
+                            row("1. かえで、もみじ（架空大学）", 0.10), row("2. はるか、たろう", 0.12), row("参加者 (3人)", 0.20, x: 0.15),
+                            row("かえで", 0.22, x: 0.15), row("はるか", 0.24, x: 0.15), row("ごろう", 0.26, x: 0.15)]
+            let teamDraft = giriEventPageDraft(lines: teamPage, known: [], venues: [], now: GiriDates.parse("2026-07-01T00:00:00Z") ?? Date())
+            try check(teamDraft.teamSize == 2 && teamDraft.teams.count == 3 && teamDraft.teams.last?.members == ["ごろう"] && teamDraft.organizer == "かえでP",
+                      "every listed participant gets a team, so the team count matches the participants")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }
