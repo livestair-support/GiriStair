@@ -856,7 +856,13 @@ struct GiriPlayerDetail: View {
                                trailing: { GiriCardEditButton { editing = .links } }) {
                     let url = giriWebURL(player.twitterUrl)
                     let handle = giriXDisplayText(player.twitterUrl)
-                    GiriProfileLinkRow(title: "X", displayText: handle, url: url, iconName: url != nil && handle.isEmpty ? "safari" : nil)
+                    VStack(spacing: 0) {
+                        GiriProfileLinkRow(title: "X", displayText: handle, url: url, iconName: url != nil && handle.isEmpty ? "safari" : nil)
+                        if !player.twitterName.isEmpty {
+                            Divider().overlay(appSeparatorColor)
+                            GiriProfileInfoRow(title: "X名", value: player.twitterName)
+                        }
+                    }
                 }
                 GiriDetailCard(title: "メモ", systemImage: "note.text", accentColor: AppSectionAccent.memo,
                                trailing: { GiriCardEditButton { editing = .memo } }) {
@@ -1246,6 +1252,8 @@ struct GiriPlayerEditor: View {
                     AppCardSectionTitle(title: "リンク", systemImage: "link", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
                     GiriProfileTextRow(title: "X", placeholder: "@ID またはURL", text: $draft.twitterUrl)
                         .textInputAutocapitalization(.never).keyboardType(.URL).autocorrectionDisabled()
+                    // 0.30：Xの名前（IDではない表示名）。ツイプラなどの読み取りでこの名前の人をこのプレイヤーにする。
+                    GiriProfileTextRow(title: "X名", placeholder: "Xの名前", text: $draft.twitterName)
                 }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
             }
             if shows(.memo) {

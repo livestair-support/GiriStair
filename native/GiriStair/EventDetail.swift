@@ -37,7 +37,7 @@ struct GiriEventDetail: View {
                         // 0.24：組手は主役を先に、対戦相手（出順）をその後に出す。
                         if !event.kumiteMains.isEmpty { participants(event.kumiteMains, title: "主役", numbered: false) }
                         if !event.kumiteOpponents.isEmpty { participants(event.kumiteOpponentOrder, title: "対戦相手", numbered: true) }
-                    } else if event.meetingType == .tournament && event.tournamentFormat != .individual {
+                    } else if (event.meetingType == .tournament || event.battleKind != nil) && event.tournamentFormat != .individual {
                         // チーム戦はチームとして表示し、チームに分けていない参加者（即席チーム）だけを出す。
                         if !event.unassignedParticipants.isEmpty { participants(event.unassignedParticipants, title: "チーム未定の参加者", numbered: false) }
                     } else if !event.participants.isEmpty && !(event.eventFormat.isOnline && event.meetingType == .tournament) {
@@ -420,7 +420,8 @@ struct GiriEventDetail: View {
     @ViewBuilder private func teams(_ event: GiriEvent) -> some View {
         ForEach(event.teams) { team in
             Section {
-                GiriEventCardSectionTitle(title: team.name.isEmpty ? (team.isMine || event.myTeamId == team.id ? "自分のチーム" : "チーム") : team.name,
+                // 0.30：チーム名を使わない会は、自分のチーム／チームとだけ出す（メンバーは下に並ぶ）。
+                GiriEventCardSectionTitle(title: team.name.isEmpty || event.noTeamNames ? (team.isMine || event.myTeamId == team.id ? "自分のチーム" : "チーム") : team.name,
                                     systemImage: team.isMine || event.myTeamId == team.id ? "person.3.fill" : "person.3", accentColor: AppSectionAccent.artist)
                     .listRowSeparator(.hidden)
                 ForEach(Array(team.members.enumerated()), id: \.offset) { _, name in playerRow(name) }

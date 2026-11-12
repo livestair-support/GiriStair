@@ -555,6 +555,8 @@ struct GiriEvent: Codable, Equatable, Identifiable {
     var tagPartner: String = ""
     /// 0.28：大会の途中でメンバーが変わる（段階ごとにメンバーを入れる）。値がある時だけ書く。
     var hasMemberChanges: Bool = false
+    /// 0.30：チーム名を使わない（タッグ・チーム戦でメンバーだけで呼ぶ）。オンの時だけ書く。
+    var noTeamNames: Bool = false
     /// 組手の主役（タッグなどは複数）。
     var kumiteMains: [String] = []
     /// 組手の対戦ごとの記録（主役から見た勝敗）。
@@ -598,7 +600,7 @@ enum GiriSelfRole: String, CaseIterable, Identifiable {
 
 extension GiriEvent {
     private enum CodingKeys: String, CodingKey {
-        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts, ruleID, stageBoards, sideResults, battleKind, isLiveShow, tagPartner, hasMemberChanges
+        case id, title, kind, meetingType, createdAt, organizer, venue, participants, eventDate, startsAt, endsAt, submissionStart, submissionEnd, votingStart, votingEnd, siteUrl, memo, resultText, placement, status, rounds, tournamentResult, onlineSiteId, cycleKey, affiliation, block, teams, teamSize, myTeamId, tournamentFormat, venueId, standings, isParticipating, format, isInterested, promptedResultKeys, cycleResult, cyclePlacement, nextAffiliation, siteScheduleCustomized, siteSeason, siteSeasonID, siteRuleRevisionID, siteSeasonStart, siteSeasonEnd, legacyInferredSeasonEnd, siteCycleNumber, sitePeriodKind, leagueMovement, siteQualification, nextLeagueEffectiveDate, entryFee, hashtag, siteSkipped, impromptuTeams, knockout, judging, coOrganizers, mcs, judges, organizerIsGroup, selfRole, venueRoom, opensAt, series, hasReserves, reserves, isProject, entryStart, entryEnd, parentEventId, isKumite, kumiteMains, kumiteBouts, ruleID, stageBoards, sideResults, battleKind, isLiveShow, tagPartner, hasMemberChanges, noTeamNames
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -717,6 +719,7 @@ extension GiriEvent {
         isLiveShow = try c.decodeIfPresent(Bool.self, forKey: .isLiveShow) ?? false
         tagPartner = try c.decodeIfPresent(String.self, forKey: .tagPartner) ?? ""
         hasMemberChanges = try c.decodeIfPresent(Bool.self, forKey: .hasMemberChanges) ?? false
+        noTeamNames = try c.decodeIfPresent(Bool.self, forKey: .noTeamNames) ?? false
         kumiteMains = try c.decodeIfPresent([String].self, forKey: .kumiteMains) ?? []
         kumiteBouts = try c.decodeIfPresent([KumiteBout].self, forKey: .kumiteBouts) ?? []
         ruleID = try c.decodeIfPresent(String.self, forKey: .ruleID)
@@ -838,6 +841,7 @@ extension GiriEvent {
         if isLiveShow { try c.encode(true, forKey: .isLiveShow) }
         if !tagPartner.isEmpty { try c.encode(tagPartner, forKey: .tagPartner) }
         if hasMemberChanges { try c.encode(true, forKey: .hasMemberChanges) }
+        if noTeamNames { try c.encode(true, forKey: .noTeamNames) }
         if !kumiteMains.isEmpty { try c.encode(kumiteMains, forKey: .kumiteMains) }
         if !kumiteBouts.isEmpty { try c.encode(kumiteBouts, forKey: .kumiteBouts) }
         try c.encodeIfPresent(ruleID, forKey: .ruleID)
@@ -985,6 +989,8 @@ struct GiriPlayer: Codable, Equatable, Identifiable {
     var mergesAliases: Bool = true
     /// 0.29：Xのアカウント（ID と表示名。いくつでも）。読み取りの照合にも使う。値がある時だけ書く。
     var xAccounts: [GiriXAccount] = []
+    /// 0.30：リンクのXの名前（IDではない表示名）。読み取りの照合にも使う。値がある時だけ書く。
+    var twitterName: String = ""
 }
 
 /// 0.29：Xのアカウント（@ID と表示名）。
@@ -1015,7 +1021,7 @@ extension GiriXAccount {
 
 extension GiriPlayer {
     private enum CodingKeys: String, CodingKey {
-        case id, name, furigana, region, iconDataBase64, twitterUrl, memo, prefecture, aliases, mergesAliases, xAccounts
+        case id, name, furigana, region, iconDataBase64, twitterUrl, memo, prefecture, aliases, mergesAliases, xAccounts, twitterName
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1040,6 +1046,7 @@ extension GiriPlayer {
 
         mergesAliases = try c.decodeIfPresent(Bool.self, forKey: .mergesAliases) ?? true
         xAccounts = try c.decodeIfPresent([GiriXAccount].self, forKey: .xAccounts) ?? []
+        twitterName = try c.decodeIfPresent(String.self, forKey: .twitterName) ?? ""
 
         try validate()
     }
@@ -1066,6 +1073,33 @@ extension GiriPlayer {
 
         try c.encode(mergesAliases, forKey: .mergesAliases)
         if !xAccounts.isEmpty { try c.encode(xAccounts, forKey: .xAccounts) }
+        if !twitterName.isEmpty { try c.encode(twitterName, forKey: .twitterName) }
+    }
+
+    /// 0.30：リンクのXのID（URL・@ID から。Xのリンクでない時は空）。
+    var twitterHandle: String {
+        let value = twitterUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return "" }
+        let isX = value.range(of: #"(?i)^(https?://)?(www\.|mobile\.)?(x|twitter)\.com/"#, options: .regularExpression) != nil
+        let isHandle = value.range(of: #"^[@＠]?[A-Za-z0-9_]{1,15}$"#, options: .regularExpression) != nil
+        guard isX || isHandle else { return "" }
+        var trimmed = value.replacingOccurrences(of: #"(?i)^(https?://)?(www\.|mobile\.)?"#, with: "", options: .regularExpression)
+        if let range = trimmed.range(of: #"(?i)^(x|twitter)\.com/"#, options: .regularExpression) { trimmed.removeSubrange(range) }
+        return GiriXAccount(handle: trimmed).cleanHandle
+    }
+
+    /// 0.30：読み取りで照合するXの名前とID（リンクのXと、Xアカウントのすべて）。
+    var xMatchNames: [String] {
+        var names: [String] = []
+        let name = twitterName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { names.append(name) }
+        if !twitterHandle.isEmpty { names.append(twitterHandle) }
+        for account in xAccounts {
+            let display = account.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !display.isEmpty { names.append(display) }
+            if !account.cleanHandle.isEmpty { names.append(account.cleanHandle) }
+        }
+        return names
     }
 }
 

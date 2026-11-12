@@ -484,6 +484,64 @@ func siteNextSeasonSettings(_ site: OnlineSite, firstDeadline: Date, calendar: C
     return value
 }
 
+/// 0.30：次のシーズンを始める時に確認する日程。シーズンごとに開始・日数・出方・回数を見直す。
+struct SiteSeasonSchedule: Equatable {
+    var firstDeadline: Date
+    var submissionDays: Int
+    var votingDays: Int
+    var timing: SiteNextPromptTiming
+    var intervalDays: Int
+    var regularCycleCount: Int?
+
+    /// 最初の回の投稿開始（＝シーズンの開始）。
+    func firstStart(calendar: Calendar = .current) -> Date { addCalendarDays(firstDeadline, -submissionDays, calendar: calendar) }
+}
+
+/// 次のシーズンの日程の初期値：前のシーズンの日程（ルールを選んだ時はそのルールの日程）。
+func siteSeasonSchedule(_ site: OnlineSite, rule: GiriRule?, firstDeadline: Date, calendar: Calendar = .current) -> SiteSeasonSchedule {
+    var copy = site
+    if let rule, rule.kind == .online, rule.effectiveScope == .regular {
+        copy.submissionDays = rule.submissionDays
+        copy.votingDays = rule.votingDays
+    }
+    copy.cycleSettings = siteNextSeasonSettings(copy, firstDeadline: firstDeadline, calendar: calendar)
+    if let rule { giriApplyRule(rule, to: &copy) }
+    let settings = copy.cycleSettings ?? SiteCycleSettings()
+    let timing = SiteNextPromptTiming.current(copy)
+    return SiteSeasonSchedule(firstDeadline: firstDeadline, submissionDays: copy.submissionDays, votingDays: copy.votingDays,
+                              timing: timing, intervalDays: max(1, settings.intervalDays),
+                              regularCycleCount: timing == .irregular ? nil : settings.regularCycleCount)
+}
+
+/// 確認した日程で次のシーズンを始める。ルールのリーグ・プレーオフも入れ、日程は確認した値を使う。
+func siteStartingNextSeason(_ site: OnlineSite, schedule: SiteSeasonSchedule, rule: GiriRule?, calendar: Calendar = .current) -> OnlineSite {
+    var value = site
+    value.submissionDays = max(1, schedule.submissionDays)
+    value.votingDays = max(1, schedule.votingDays)
+    value.cycleSettings = siteNextSeasonSettings(value, firstDeadline: schedule.firstDeadline, calendar: calendar)
+    if let rule { giriApplyRule(rule, to: &value) }
+    // ルールより、このシーズンに確認した日程を優先する。
+    value.submissionDays = max(1, schedule.submissionDays)
+    value.votingDays = max(1, schedule.votingDays)
+    applySiteTiming(schedule.timing, to: &value, intervalDays: schedule.intervalDays)
+    let start = addCalendarDays(schedule.firstDeadline, -value.submissionDays, calendar: calendar)
+    value.cycleSettings?.anchorStart = start
+    value.cycleSettings?.seasonStart = start
+    value.cycleSettings?.regularCycleCount = schedule.timing == .irregular ? nil : schedule.regularCycleCount.map { max(1, $0) }
+    if schedule.timing == .irregular {
+        // 締切が決まっていないサイトは、最初の回をその締切で作る。
+        value.cycleSettings?.specialPeriods.removeAll { $0.kind == .regular }
+        let first = siteIrregularPeriod(value, deadline: schedule.firstDeadline, now: start, calendar: calendar)
+        value.cycleSettings?.specialPeriods.append(first)
+    }
+    if let rule, rule.kind == .online, rule.effectiveScope == .regular {
+        // 確認した回数・日数から、プレーオフなどの日程を作り直す。
+        let planned = giriRulePlanPeriods(rule, site: value, calendar: calendar)
+        value.cycleSettings?.specialPeriods = planned
+    }
+    return value
+}
+
 /// 締切が決まっていないサイトの次の回。投稿締切だけ分かれば作れる。
 func siteIrregularPeriod(_ site: OnlineSite, deadline: Date, votingEnd: Date? = nil, now: Date = Date(), calendar: Calendar = .current) -> SiteSpecialPeriod {
     let settings = site.cycleSettings ?? SiteCycleSettings()

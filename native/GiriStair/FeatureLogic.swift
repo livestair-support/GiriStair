@@ -1237,7 +1237,8 @@ func giriNameWithoutTrailingNote(_ text: String) -> String {
 func giriCleanParticipantText(_ raw: String) -> (name: String, truncated: Bool) {
     var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     var truncated = false
-    if let range = value.range(of: #"\s*(…+|‥+|・・+|･･+|\.\.+)$"#, options: .regularExpression) {
+    // 0.30：ツイプラの「…」「......」「．．．」など、点の並びで切れた名前（空白や点の種類が混ざっても）。
+    if let range = value.range(of: #"[\s　]*(?:[…‥⋯]|[・･•·∙.．。]{2,}|[.．][\s　]+[.．])[…‥⋯・･•·∙.．。\s　]*$"#, options: .regularExpression) {
         value.removeSubrange(range)
         truncated = true
     }
@@ -1390,6 +1391,8 @@ struct GiriEventPageDraft: Equatable, Identifiable {
     var venue = ""
     var venueRoom = ""
     var organizer = ""
+    /// 0.30：説明に書いてある共催。
+    var coOrganizers: [String] = []
     var fee: Int? = nil
     var participants: [GiriParticipantCandidate] = []
     /// 0.25：ページに書いてある参加者の人数（読み取った人数と比べる）。
@@ -1398,6 +1401,8 @@ struct GiriEventPageDraft: Equatable, Identifiable {
     var meetingKind: String? = nil
     /// 0.29：タッグ・チーム戦（大会の時）。分からなければ nil。
     var tournamentFormat: TournamentFormat? = nil
+    /// 0.30：即席タッグ・チーム戦（当日にチームを分ける）。確認画面で選ぶ。
+    var impromptuTeams = false
     /// 0.29：説明やコメントに書いてあるチーム（タッグ）の名前とメンバー。
     var teams: [GiriEventPageTeam] = []
     /// 0.29：説明に書いてある大会のルール（段階など）。読めなければ nil。
@@ -1405,7 +1410,7 @@ struct GiriEventPageDraft: Equatable, Identifiable {
     var recognizedText = ""
 
     var hasBasicInfo: Bool {
-        !title.isEmpty || date != nil || opens != nil || start != nil || end != nil || !venue.isEmpty || !organizer.isEmpty || fee != nil
+        !title.isEmpty || date != nil || opens != nil || start != nil || end != nil || !venue.isEmpty || !organizer.isEmpty || fee != nil || !coOrganizers.isEmpty
     }
 }
 
@@ -1606,7 +1611,32 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
         guard let tallest = candidates.map({ info[$0].height }).max() else { return nil }
         return candidates.first { info[$0].height >= tallest * 0.9 }
     }()
-    if let titleIndex { draft.title = info[titleIndex].text.trimmingCharacters(in: .whitespacesAndNewlines) }
+    // 0.30：折り返したタイトル（同じ大きさで続く行）はまとめて1つの名前にする。
+    var titleBlock: [Int] = titleIndex.map { [$0] } ?? []
+    func continuesTitle(_ first: GiriOCRLine, _ second: GiriOCRLine) -> Bool {
+        guard first.height > 0, second.height > 0 else { return false }
+        let ratio = min(first.height, second.height) / max(first.height, second.height)
+        let gap = abs(second.midY - first.midY)
+        return ratio >= 0.85 && gap > 0.004 && gap <= max(first.height, second.height) * 1.9
+    }
+    if let titleIndex {
+        var before = titleIndex - 1
+        while before > (dateIndex ?? -1), let head = titleBlock.first, continuesTitle(info[before], info[head]),
+              !giriIsEventPageNoise(info[before].text), !giriIsEventPageSectionStart(info[before].text) {
+            titleBlock.insert(before, at: 0)
+            before -= 1
+        }
+        var after = titleIndex + 1
+        while after < info.count, let last = titleBlock.last, continuesTitle(info[last], info[after]),
+              !giriIsEventPageNoise(info[after].text), !giriIsEventPageSectionStart(info[after].text),
+              giriParticipantHeader(info[after].text) == nil {
+            titleBlock.append(after)
+            after += 1
+        }
+        let joined = titleBlock.map { info[$0].text.trimmingCharacters(in: .whitespacesAndNewlines) }.joined()
+        draft.title = giriTrimmedEventPageTitle(joined)
+    }
+    let titleEnd = titleBlock.last
 
     // 項目名のある行（同じ行か次の行の値）。
     func labeledValue(_ names: String) -> String? {
@@ -1627,11 +1657,11 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
         if let groups = giriRegexGroups(#"([0-9][0-9,]*)\s*円"#, in: text).first { draft.fee = Int(groups[1].replacingOccurrences(of: ",", with: "")) }
         else if text.contains("無料") { draft.fee = 0 }
     }
-    if let host = labeledValue(#"(主催|主催者|運営)"#) {
-        draft.organizer = giriMatchRegisteredName(host, known: organizers) ?? host
-    } else if let titleIndex {
-        // 項目名がない時は、会の名前のすぐ下の短い名前（ツイプラなどの主催者の表示）。
-        let nearby = info[(titleIndex + 1)...].prefix(3).prefix { !giriIsEventPageSectionStart($0.text) }
+    // 0.30：主催は、会の名前のすぐ下の短い名前（ツイプラなどのページを作った人）を優先し、
+    // なければ「主催」の項目名の値にする。
+    var owner: String?
+    if let titleEnd {
+        let nearby = info[(titleEnd + 1)...].prefix(3).prefix { !giriIsEventPageSectionStart($0.text) }
         let following = nearby.first { line in
             let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return !giriIsEventPageNoise(text) && text.count <= 16 && giriEventPageDate(text, now: now, calendar: calendar) == nil
@@ -1639,9 +1669,17 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
         }
         if let following {
             let cleaned = giriCleanParticipantText(following.text).name
-            draft.organizer = giriMatchRegisteredName(cleaned, known: organizers) ?? cleaned
+            if !cleaned.isEmpty { owner = giriMatchRegisteredName(cleaned, known: organizers) ?? cleaned }
         }
     }
+    if let owner {
+        draft.organizer = owner
+    } else if let host = labeledValue(#"(主催|主催者|運営)"#) {
+        draft.organizer = giriMatchRegisteredName(host, known: organizers) ?? host
+    }
+    // 0.30：説明に書いてある共催（「共催：A・B」「Aさんとの共催」など）。
+    draft.coOrganizers = giriEventPageCoOrganizers(info.map(\.text), known: organizers + known)
+        .filter { playerSearchKey($0) != playerSearchKey(draft.organizer) }
 
     // 時刻：項目名つき → 「18:45〜21:00」の範囲 → 日付の行の時刻。撤収は終了が分からない時だけ。
     var times: [GiriEventPageTimes] = []
@@ -1661,6 +1699,11 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
         }
         if let room = giriRegisteredRoom(in: info.map(\.text), rooms: venueRooms[venue] ?? []) { draft.venueRoom = room }
     }
+    // 0.30：タイトルの先頭に会場名が入っているページ（ツイプラの件名など）は、会場名を外す。
+    if !draft.venue.isEmpty, draft.title.hasPrefix(draft.venue) {
+        let rest = String(draft.title.dropFirst(draft.venue.count)).trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "　")))
+        if rest.count >= 2 { draft.title = rest }
+    }
     let allText = sorted.map(\.text)
     draft.tournamentFormat = giriInferredTournamentFormat(title: draft.title + " " + head, lines: allText)
     if draft.tournamentFormat != nil && draft.meetingKind == nil { draft.meetingKind = "tournament" }
@@ -1679,6 +1722,43 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
         if !read.rule.stages.isEmpty || read.rule.knockout { draft.rule = read.rule }
     }
     return draft
+}
+
+/// 0.30：折り返したタイトルの先頭の日時（「8/30(日) 午後13時〜」など）を外す。
+func giriTrimmedEventPageTitle(_ raw: String) -> String {
+    let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    let pattern = #"^(?:[0-9０-９]{2,4}[年/／.])?[0-9０-９]{1,2}[月/／.][0-9０-９]{1,2}日?\s*(?:[(（\[［][^)）\]］]{1,3}[)）\]］])?\s*(?:(?:午前|午後|夜|昼)?\s*[0-9０-９]{1,2}(?:[:：][0-9０-９]{2}|時(?:半|[0-9０-９]{1,2}分)?)\s*(?:[〜~～\-ー]\s*(?:[0-9０-９]{1,2}(?:[:：][0-9０-９]{2}|時(?:半|[0-9０-９]{1,2}分)?))?)?)?[\s　]*"#
+    let trimmed = text.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "　")))
+    return trimmed.count >= 2 ? trimmed : text
+}
+
+/// 0.30：説明の共催。「共催：A・B」「共催 A、B」と、「Aさんとの共催」「A共催」の書き方を読む。
+func giriEventPageCoOrganizers(_ lines: [String], known: [String]) -> [String] {
+    var names: [String] = []
+    /// sentence：文の中の書き方。登録した名前か、助詞を含まない短い名前だけにする。
+    func add(_ raw: String, sentence: Bool) {
+        let parts = raw.components(separatedBy: giriTeamMemberSeparators).flatMap { $0.components(separatedBy: " と ") }
+        for part in parts {
+            var name = giriCleanParticipantText(part).name.trimmingCharacters(in: .whitespacesAndNewlines)
+            name = name.replacingOccurrences(of: #"(さん|様|氏)$"#, with: "", options: .regularExpression)
+            name = name.trimmingCharacters(in: CharacterSet(charactersIn: "「」『』【】()（）!！。. 　"))
+            guard name.count >= 2, name.count <= 20, name.range(of: #"[。、:：]"#, options: .regularExpression) == nil else { continue }
+            let registered = giriMatchRegisteredName(name, known: known)
+            if sentence && registered == nil && name.range(of: #"[はがをでにも]"#, options: .regularExpression) != nil { continue }
+            let resolved = registered ?? name
+            if !names.contains(where: { playerSearchKey($0) == playerSearchKey(resolved) }) { names.append(resolved) }
+        }
+    }
+    for line in lines {
+        let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let groups = giriRegexGroups(#"^[《【\[［〈<(（]?\s*(?:共催|共同主催)\s*[》】\]］〉>)）]?\s*[:：]?\s*(.+)$"#, in: text).first {
+            add(groups[1], sentence: false)
+        } else if let groups = giriRegexGroups(#"(?:^|[\s、。！!？?「」：:])([^\s、。！!？?「」：:]{2,20}?)(?:さん|様|氏)?(?:との|と)?(?:共催|共同主催)"#, in: text).first {
+            add(groups[1], sentence: true)
+        }
+    }
+    return names
 }
 
 /// 0.29：チーム（タッグ）の名前とメンバー。
@@ -2834,6 +2914,7 @@ func giriMergedPlayer(_ target: GiriPlayer, with candidate: GiriPlayer, oldName:
     fill(&merged.prefecture, candidate.prefecture)
     fill(&merged.iconDataBase64, candidate.iconDataBase64)
     fill(&merged.twitterUrl, candidate.twitterUrl)
+    fill(&merged.twitterName, candidate.twitterName)
     let memo = candidate.memo.trimmingCharacters(in: .whitespacesAndNewlines)
     if !memo.isEmpty && !merged.memo.contains(memo) {
         merged.memo = merged.memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? memo : merged.memo + "\n" + memo

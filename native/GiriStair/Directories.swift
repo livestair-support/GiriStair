@@ -89,6 +89,9 @@ struct GiriSiteDetail: View {
     /// 日程の設定・結果の入力は、この詳細の上に積んで開く（シートにしない）。
     @State private var route: GiriSiteRoute?
     @State private var timelineStart = Date()
+    /// 0.30：シーズンごとに日程・ルールを確認して次のシーズンを始める。
+    @State private var nextSeasonRequest: GiriSiteDeadlineRequest?
+    @State private var setupAfterNextSeason = false
 
     private var site: OnlineSite? { store.onlineSites.first { $0.id == siteID } }
     // 参加した回と、見送りにした回（見送りは参加回数・成績に数えない）。
@@ -151,6 +154,9 @@ struct GiriSiteDetail: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if let site {
                     Menu {
+                        if siteUsesSeasons(site) {
+                            Button("次のシーズンを始める", systemImage: "arrow.right.circle") { nextSeasonRequest = .nextSeason }
+                        }
                         Button(site.isPaused ? "参加を再開する" : "しばらく休む", systemImage: site.isPaused ? "play.circle" : "pause.circle") {
                             let resuming = site.isPaused
                             store.run {
@@ -174,6 +180,15 @@ struct GiriSiteDetail: View {
             store.run { try store.deleteOnlineSite(siteID); playLiveStairDeleteFeedback(); dismiss() }
         }
         .navigationDestination(item: $route) { GiriSiteRouteView(route: $0) }
+        .sheet(item: $nextSeasonRequest, onDismiss: {
+            guard setupAfterNextSeason else { return }
+            setupAfterNextSeason = false
+            route = .editor(siteID)
+        }) { request in
+            if let site {
+                NavigationStack { GiriSiteDeadlineSheet(site: site, request: request) { setupAfterNextSeason = true } }
+            }
+        }
     }
 
     private func statusPage(_ site: OnlineSite) -> some View {
