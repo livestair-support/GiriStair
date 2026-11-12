@@ -182,7 +182,7 @@ struct GiriParticipantImport: View {
             loaded = true
             if let lines {
                 // 画面の読み取りは、文字の位置から欄を分けてから確認に進む。
-                source = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }.map(\.text).joined(separator: "\n")
+                source = giriReadingOrder(lines).map(\.text).joined(separator: "\n")
                 listedCount = giriListedParticipantCount(source.components(separatedBy: .newlines))
                 candidates = giriMarkingAlreadyAdded(giriResolvingAliases(giriParticipantCandidates(lines: lines, known: knownNames), store: store),
                                                      existing: giriResolvedNames(existing, store: store))
@@ -246,18 +246,23 @@ struct GiriParticipantCandidateSections: View {
     let knownNames: [String]
     /// 0.25：ページに書いてある参加者の人数（分かる時だけ。読み取った人数と比べて出す）。
     var listedCount: Int? = nil
+    /// 0.30：タッグ・チーム戦で、チームに入っている人（参加者の欄には出さず「チーム未定」だけを出す）。
+    var assignedKeys: Set<String> = []
+    var participantsTitle: String? = nil
 
     var body: some View {
         ForEach([GiriParticipantSection.participants, .interested, .other], id: \.self) { section in
-            let indices = candidates.indices.filter { candidates[$0].section == section }
-            if !indices.isEmpty || section == .participants { candidateSection(section, indices: indices) }
+            let all = candidates.indices.filter { candidates[$0].section == section }
+            let indices = section == .participants && !assignedKeys.isEmpty ? all.filter { !assignedKeys.contains(giriOCRNameKey(candidates[$0].name)) } : all
+            if !indices.isEmpty || (section == .participants && assignedKeys.isEmpty) { candidateSection(section, indices: indices, all: all) }
         }
     }
 
-    private func candidateSection(_ section: GiriParticipantSection, indices: [Int]) -> some View {
+    private func candidateSection(_ section: GiriParticipantSection, indices: [Int], all: [Int]) -> some View {
         Section {
             HStack {
-                AppCardSectionTitle(title: section.title, systemImage: section == .participants ? "person.2" : "person.crop.circle.badge.questionmark",
+                AppCardSectionTitle(title: section == .participants ? (participantsTitle ?? section.title) : section.title,
+                                    systemImage: section == .participants ? "person.2" : "person.crop.circle.badge.questionmark",
                                     accentColor: AppSectionAccent.artist,
                                     infoTitle: section == .participants ? "読み取りについて" : nil,
                                     infoMessage: section == .participants ? "登録済みのプレイヤーと照合しています。アイコンや「…」の読み違いは直してから追加してください。" : nil)
@@ -268,7 +273,7 @@ struct GiriParticipantCandidateSections: View {
                 Text("参加者を読み取れませんでした").font(.subheadline).foregroundStyle(.secondary)
             }
             if section == .participants, let listedCount {
-                let read = indices.filter { candidates[$0].included }.count
+                let read = all.filter { candidates[$0].included }.count
                 Label(read == listedCount ? "ページの参加者\(listedCount)人と同じ人数です" : "ページには参加者\(listedCount)人と書いてあります（選んでいるのは\(read)人）",
                       systemImage: read == listedCount ? "checkmark.circle" : "exclamationmark.triangle")
                     .font(.caption)
@@ -356,6 +361,47 @@ struct GiriEventPageReview: View {
         self.onApply = onApply
     }
 
+    private var knownNames: [String] { giriParticipantKnownNames(store) }
+
+    /// 0.30：読み取った形式がタッグ・チーム戦（即席ではない）で、チームを読めた時は、チームごとに確認する。
+    private var isTeamReview: Bool {
+        draft.meetingKind == "tournament" && (draft.tournamentFormat ?? .individual) != .individual && !draft.impromptuTeams && !draft.teams.isEmpty
+    }
+
+    /// 0.30：チームのカード。チーム名の下にメンバーを1字下げて並べる（登録済み／新規も出す）。
+    private var teamCards: some View {
+        let keys = Set(knownNames.map(giriOCRNameKey))
+        return Section {
+            HStack {
+                AppCardSectionTitle(title: "チーム", systemImage: "person.3", accentColor: AppSectionAccent.artist)
+                Spacer(minLength: 8)
+                Text("\(draft.teams.count)チーム・\(draft.teams.reduce(0) { $0 + $1.members.count })人").font(.caption).foregroundStyle(.secondary)
+            }.listRowSeparator(.hidden)
+            ForEach(draft.teams) { team in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(team.name.isEmpty ? "チーム名なし" : team.name).font(.subheadline.weight(.semibold))
+                        .foregroundStyle(team.name.isEmpty ? Color.secondary : Color.primary)
+                    ForEach(Array(team.members.enumerated()), id: \.offset) { _, member in
+                        let registered = keys.contains(giriOCRNameKey(member))
+                        HStack(spacing: 6) {
+                            Text(member).font(.subheadline)
+                            Spacer(minLength: 8)
+                            Text(registered ? "登録済み" : "新規")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(registered ? AppSectionAccent.artist : Color.secondary)
+                                .padding(.horizontal, 7).padding(.vertical, 3)
+                                .background((registered ? AppSectionAccent.artist : Color.secondary).opacity(0.12))
+                                .clipShape(Capsule())
+                        }
+                        .padding(.leading, 16)
+                    }
+                }
+                .padding(.vertical, 2)
+                .swipeActions { Button("外す", role: .destructive) { draft.teams.removeAll { $0.id == team.id } } }
+            }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+    }
+
     /// 0.30：参加形式（個人戦・タッグ・チーム戦・即席タッグ・チーム戦）。タッグの読み取り（2人）は残す。
     private var formatChoice: Binding<String> {
         Binding(get: {
@@ -403,16 +449,23 @@ struct GiriEventPageReview: View {
                 if !draft.coOrganizers.isEmpty { valueRow("共催", draft.coOrganizers.joined(separator: "・")) }
                 valueRow("参加費", draft.fee.map { "\($0)円" } ?? "")
             }.appSectionCardStyle(accentColor: AppSectionAccent.live)
-            GiriParticipantCandidateSections(candidates: $draft.participants, knownNames: giriParticipantKnownNames(store), listedCount: draft.listedParticipantCount)
+            // 0.30：タッグ・チーム戦は、登録画面と同じくチームごとにメンバーを出し、チームに入っていない人を「チーム未定」に出す。
+            if isTeamReview {
+                teamCards
+                GiriParticipantCandidateSections(candidates: $draft.participants, knownNames: knownNames, listedCount: draft.listedParticipantCount,
+                                                 assignedKeys: Set(draft.teams.flatMap(\.members).map(giriOCRNameKey)), participantsTitle: "チーム未定")
+            } else {
+                GiriParticipantCandidateSections(candidates: $draft.participants, knownNames: knownNames, listedCount: draft.listedParticipantCount)
+            }
             // 0.29：説明・コメントに書いてあったチーム（タッグ）。
-            if !draft.teams.isEmpty {
+            if !isTeamReview && !draft.teams.isEmpty {
                 Section {
                     AppCardSectionTitle(title: draft.tournamentFormat == .pair ? "タッグ" : "チーム", systemImage: "person.3", accentColor: AppSectionAccent.artist)
                         .listRowSeparator(.hidden)
                     ForEach(draft.teams) { team in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(team.name).font(.subheadline.weight(.semibold))
-                            Text(team.members.joined(separator: "・")).font(.caption).foregroundStyle(.secondary)
+                            Text(team.name.isEmpty ? "チーム名なし" : team.name).font(.subheadline.weight(.semibold))
+                            Text(team.members.joined(separator: "・")).font(.caption).foregroundStyle(.secondary).padding(.leading, 16)
                         }
                         .swipeActions { Button("外す", role: .destructive) { draft.teams.removeAll { $0.id == team.id } } }
                     }

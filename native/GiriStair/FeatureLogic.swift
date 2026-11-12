@@ -1323,7 +1323,7 @@ func giriParticipantCandidates(text: String, known: [String]) -> [GiriParticipan
 /// 画面の読み取り：見出しの位置から欄（列）を分け、見出しより下・一覧の終わりより上の行だけを使う。
 /// 見出しがない画像は、上から順に全部を参加者として読む。
 func giriParticipantCandidates(lines: [GiriOCRLine], known: [String]) -> [GiriParticipantCandidate] {
-    let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }
+    let sorted = giriReadingOrder(lines)
     let allHeaders = sorted.compactMap { line in giriParticipantHeader(line.text).map { (line: line, section: $0) } }
     // 「参加者」の見出しから読む。それより上（説明文・「興味あり」「不参加」のボタンなど）は使わない。
     guard let firstHeader = allHeaders.first(where: { $0.section == .participants }) ?? allHeaders.first else {
@@ -1364,7 +1364,8 @@ func giriMergeTileLines(_ lines: [GiriOCRLine]) -> [GiriOCRLine] {
     for line in sorted {
         let key = line.text.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
         guard !key.isEmpty else { continue }
-        let tolerance = max(0.004, max(line.height, 0.001) * 0.8)
+        // 0.30：縦に長い画面では行の間が狭いので、同じ行かどうかは文字の高さで比べる。
+        let tolerance = line.height > 0 ? line.height * 0.8 : 0.004
         let duplicate = output.contains { other in
             abs(other.midY - line.midY) < tolerance && abs(other.midX - line.midX) < 0.05
                 && other.text.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression) == key
@@ -1577,7 +1578,7 @@ private func giriIsEventPageNoise(_ text: String) -> Bool {
 func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String], organizers: [String] = [],
                         venueRooms: [String: [String]] = [:], venueAddresses: [String: String] = [:],
                         now: Date = Date(), calendar: Calendar = .current) -> GiriEventPageDraft {
-    let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }
+    let sorted = giriReadingOrder(lines)
     var draft = GiriEventPageDraft()
     draft.recognizedText = sorted.map(\.text).joined(separator: "\n")
     // イベントページの参加者は「参加者」などの見出しの下だけ（見出しがなければ説明文を名前にしない）。
@@ -1617,7 +1618,8 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
         guard first.height > 0, second.height > 0 else { return false }
         let ratio = min(first.height, second.height) / max(first.height, second.height)
         let gap = abs(second.midY - first.midY)
-        return ratio >= 0.85 && gap > 0.004 && gap <= max(first.height, second.height) * 1.9
+        // 縦に長い画面では位置が画像全体に対する割合なので、同じ行かどうかも文字の高さで比べる。
+        return ratio >= 0.85 && gap > max(first.height, second.height) * 0.5 && gap <= max(first.height, second.height) * 1.9
     }
     if let titleIndex {
         var before = titleIndex - 1
@@ -1708,7 +1710,8 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     draft.tournamentFormat = giriInferredTournamentFormat(title: draft.title + " " + head, lines: allText)
     if draft.tournamentFormat != nil && draft.meetingKind == nil { draft.meetingKind = "tournament" }
     // チーム（タッグ）の名前とメンバーは、説明とコメント欄（ページ全体）から読む。
-    draft.teams = giriEventPageTeams(allText, known: known)
+    // 0.30：メンバーはページの参加者の名前にも合わせる。
+    draft.teams = giriEventPageTeams(allText, known: known, roster: draft.participants.filter { $0.section == .participants }.map(\.name))
     if !draft.teams.isEmpty && draft.tournamentFormat == nil {
         draft.tournamentFormat = draft.teams.allSatisfy { $0.members.count == 2 } ? .pair : .team
     }
@@ -1805,18 +1808,51 @@ private func giriTeamMembers(_ text: String, known: [String]) -> [String] {
 
 /// 0.29：説明・コメントに書いてあるチーム（タッグ）。
 /// 「チーム名：〇〇」（同じ行か次の行にメンバー）、「【〇〇】A・B」、「〇〇（A・B）」の書き方を読む。
-func giriEventPageTeams(_ rawLines: [String], known: [String]) -> [GiriEventPageTeam] {
+/// 0.30：番号付きの一覧（出場者の一覧）の「1. A、B（チーム名）」もチームにする（チーム名がなければ名前なし）。
+/// メンバーは登録した名前と、ページの参加者（roster）の名前に合わせる（「落合」→ 参加者の「落合博美」など、1人に決まる時だけ）。
+func giriEventPageTeams(_ rawLines: [String], known: [String], roster: [String] = []) -> [GiriEventPageTeam] {
     let lines = rawLines.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     var teams: [GiriEventPageTeam] = []
-    var seen = Set<String>()
-    func add(_ name: String, _ members: [String]) {
+    let rosterNames = roster.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    func resolve(_ raw: String) -> String {
+        let name = giriMatchRegisteredName(raw, known: known + rosterNames) ?? raw
+        let key = giriOCRNameKey(name)
+        guard key.count >= 2, !rosterNames.contains(where: { giriOCRNameKey($0) == key }) else { return name }
+        let longer = rosterNames.filter { giriOCRNameKey($0).hasPrefix(key) }
+        return longer.count == 1 ? longer[0] : name
+    }
+    func sameMember(_ first: String, _ second: String) -> Bool {
+        let a = giriOCRNameKey(first), b = giriOCRNameKey(second)
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        return a == b || (min(a.count, b.count) >= 2 && (a.hasPrefix(b) || b.hasPrefix(a)))
+    }
+    func addTeam(_ name: String, _ rawMembers: [String], requiresName: Bool) {
         let title = name.trimmingCharacters(in: CharacterSet(charactersIn: " 　「」『』【】[]：:"))
-        guard !title.isEmpty, title.count <= 24, !members.isEmpty,
-              title.range(of: #"^[①-⑳0-9０-９]"#, options: .regularExpression) == nil,
-              seen.insert(playerSearchKey(title)).inserted else { return }
+        if requiresName {
+            guard !title.isEmpty, title.count <= 24, title.range(of: #"^[①-⑳0-9０-９]"#, options: .regularExpression) == nil else { return }
+        }
+        var members: [String] = []
+        for member in rawMembers.map(resolve) where !members.contains(where: { sameMember($0, member) }) { members.append(member) }
+        guard !members.isEmpty else { return }
+        // 同じチーム名、または同じメンバーのチームは1つにまとめる（説明の一覧とコメントの両方に書いてある時）。
+        if !title.isEmpty, let index = teams.firstIndex(where: { playerSearchKey($0.name) == playerSearchKey(title) }) {
+            for member in members where !teams[index].members.contains(where: { sameMember($0, member) }) { teams[index].members.append(member) }
+            return
+        }
+        if let index = teams.firstIndex(where: { team in team.members.count == members.count && members.allSatisfy { member in team.members.contains { sameMember($0, member) } } }) {
+            if teams[index].name.isEmpty { teams[index].name = title }
+            return
+        }
         teams.append(GiriEventPageTeam(name: title, members: members))
     }
-    for (index, line) in lines.enumerated() {
+    func add(_ name: String, _ members: [String]) { addTeam(name, members, requiresName: true) }
+    // 出場者の一覧（番号付き）。段階の説明（予選・決勝・上位○名など）の一覧は使わない。
+    let entryRuns = giriNumberedRuns(lines).filter(giriIsEntryRun)
+    let entryLines = Set(entryRuns.flatMap { $0.map(\.lineIndex) })
+    for item in entryRuns.flatMap({ $0 }) {
+        if let team = giriEntryTeam(item.body) { addTeam(team.name, team.members, requiresName: false) }
+    }
+    for (index, line) in lines.enumerated() where !entryLines.contains(index) {
         // 「チーム名：〇〇」「タッグ名「〇〇」」
         if let groups = giriRegexGroups(#"(?:チーム名|タッグ名|コンビ名|ユニット名)\s*[:：]?\s*[「『【]?([^」』】\s（(]+)[」』】]?(.*)$"#, in: line).first {
             var rest = groups[2]
@@ -1843,6 +1879,56 @@ func giriEventPageTeams(_ rawLines: [String], known: [String]) -> [GiriEventPage
         }
     }
     return teams
+}
+
+/// 0.30：番号付きの項目（①・「1.」・「(1)」）。番号が戻ったら別の一覧にする。lineIndex は渡した行の位置。
+struct GiriNumberedItem: Equatable {
+    var number: Int
+    var body: String
+    var lineIndex: Int
+}
+
+func giriNumberedRuns(_ lines: [String]) -> [[GiriNumberedItem]] {
+    let circled = Array("①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳")
+    var runs: [[GiriNumberedItem]] = []
+    for (index, raw) in lines.enumerated() {
+        let line = giriHalfwidthDigits(raw).trimmingCharacters(in: .whitespaces)
+        var found: GiriNumberedItem?
+        if let first = line.first, let position = circled.firstIndex(of: first) {
+            found = GiriNumberedItem(number: position + 1, body: String(line.dropFirst()).trimmingCharacters(in: .whitespaces), lineIndex: index)
+        } else if let groups = giriRegexGroups(#"^(?:([0-9]{1,2})\s*[.．)）]|[（(]([0-9]{1,2})[）)])\s*(.+)$"#, in: line).first,
+                  let number = Int(groups[1].isEmpty ? groups[2] : groups[1]) {
+            found = GiriNumberedItem(number: number, body: groups[3], lineIndex: index)
+        }
+        guard let item = found else { continue }
+        if let last = runs.last?.last, item.number > last.number { runs[runs.count - 1].append(item) } else { runs.append([item]) }
+    }
+    return runs
+}
+
+/// 0.30：出場者の一覧の項目（「キツル、若村情無（滋賀大学）」「刺客・モモス」）。段階の名前・説明らしい時は nil。
+func giriEntryTeam(_ body: String) -> GiriEventPageTeam? {
+    let value = body.trimmingCharacters(in: .whitespaces)
+    let stageWords = #"予選|決勝|準決|回戦|ブロック|ラウンド|ステージ|本選|本戦|一次|二次|リーグ|トーナメント|お題|審査|通過|上位|[0-9０-９]+\s*(?:位|分|秒|名|人|組|問|題|票|点|円)"#
+    guard !value.isEmpty, value.range(of: stageWords, options: .regularExpression) == nil else { return nil }
+    var text = value
+    var name = ""
+    if let groups = giriRegexGroups(#"^(.+?)\s*[（(【\[]([^）)】\]]{1,24})[）)】\]]\s*$"#, in: value).first {
+        text = groups[1]
+        name = groups[2].trimmingCharacters(in: .whitespaces)
+    }
+    let parts = text.components(separatedBy: giriTeamMemberSeparators).flatMap { $0.components(separatedBy: " と ") }
+        .map { giriCleanParticipantText($0).name.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    guard !parts.isEmpty, parts.allSatisfy({ $0.count <= 14 && $0.range(of: #"[。：:！!？?]"#, options: .regularExpression) == nil }) else { return nil }
+    return GiriEventPageTeam(name: name, members: parts)
+}
+
+/// 0.30：出場者の一覧か（2人以上の項目が2つ以上あり、半分以上がそういう項目）。
+func giriIsEntryRun(_ run: [GiriNumberedItem]) -> Bool {
+    let teams = run.compactMap { giriEntryTeam($0.body) }
+    let pairs = teams.filter { $0.members.count >= 2 }.count
+    return pairs >= 2 && pairs * 2 >= run.count
 }
 
 /// 0.28：会の種類の表示名。
@@ -2459,7 +2545,7 @@ func giriVoterCountReading(lines: [GiriOCRLine]) -> Int? {
 /// イベントページの「予選：5人1組の横並び・お題3問」「決勝：上位4名でタイマン」のような説明から、
 /// 段階の骨組み（名前・形式・お題数・審査方法・通過枠）を作る。結果は入れない。
 func giriTournamentSkeleton(lines: [GiriOCRLine]) -> [ResultStage] {
-    let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }
+    let sorted = giriReadingOrder(lines)
     let names = ["予選", "本戦", "準々決勝", "準決勝", "3位決定戦", "敗者復活戦", "決勝"]
     var stages: [ResultStage] = []
     var current: Int? = nil
@@ -2851,7 +2937,7 @@ func giriBoardBlocks(lines: [GiriOCRLine], known: [String], size: Int) -> [GiriB
         guard !value.isEmpty, !giriIsParticipantNoise(value), giriBoardHeader(value) == nil else { return nil }
         return giriMatchRegisteredName(value, truncated: false, known: known) ?? value
     }
-    let sorted = lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }
+    let sorted = giriReadingOrder(lines)
     let headers = sorted.compactMap { line in giriBoardHeader(line.text).map { (line: line, name: $0) } }
     guard !headers.isEmpty else {
         return giriBoardBlocks(members: giriBracketOrder(lines).compactMap(clean), size: size)
@@ -3189,7 +3275,7 @@ func giriRuleReadingText(_ raw: String, into base: GiriRule) -> (rule: GiriRule,
         if lines.contains(where: { $0.contains("チーム戦") || $0.contains("団体戦") }) { rule.tournamentFormat = .team; found.append("チーム戦") }
         else if lines.contains(where: { $0.contains("タッグ") }) { rule.tournamentFormat = .pair; found.append("タッグ戦") }
         // 0.29：「タイマントーナメント」など1対1の勝ち抜き（生大喜利）。
-        if rule.kind == .live, lines.contains(where: { $0.contains("タイマン") && $0.contains("トーナメント") }) { rule.knockout = true; found.append("トーナメント（1対1）") }
+        if rule.kind == .live, lines.contains(where: { $0.contains("タイマン") && $0.contains("トーナメント") }) { rule.knockout = true; found.append("トーナメント") }
         // 0.29：大会全体の審査方法（段階ごとに書いていない時）。
         if rule.judging.isEmpty, let judging = lines.lazy.compactMap({ giriRuleJudgingText($0) }).first {
             rule.judging = judging
@@ -3303,9 +3389,12 @@ func giriRuleJudgingText(_ line: String) -> String? {
 func giriNumberedRuleStages(_ rawLines: [String]) -> [GiriRuleStage] {
     let lines = rawLines.map { giriHalfwidthDigits($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     let circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+    // 0.30：出場者の一覧（「1. A、B（チーム名）」）は段階にしない。
+    let entryLines = Set(giriNumberedRuns(lines).filter(giriIsEntryRun).flatMap { $0.map(\.lineIndex) })
     var stages: [GiriRuleStage] = []
     var current: Int? = nil
-    for line in lines {
+    for (index, line) in lines.enumerated() {
+        if entryLines.contains(index) { current = nil; continue }
         var header: (name: String, detail: String)? = nil
         if let first = line.first, circled.contains(first) {
             let rest = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
@@ -3360,9 +3449,29 @@ private func giriFillStageDetails(_ stage: inout GiriRuleStage, from line: Strin
 }
 
 
+/// 0.30：読み取った行を上から順に並べる（同じ行は左から）。同じ行かどうかは文字の高さの半分で決める。
+/// 縦に長い画面（ツイプラなど）では位置が画像全体に対する割合で、行の間が 0.004 より狭くなるため、
+/// 決まった幅で比べると別の行を同じ行として左右の順に並べてしまう。高さが分からない時だけ fallback を使う。
+func giriReadingOrder(_ lines: [GiriOCRLine], fallback: Double = 0.004) -> [GiriOCRLine] {
+    let byY = lines.enumerated().sorted { $0.element.midY == $1.element.midY ? $0.offset < $1.offset : $0.element.midY < $1.element.midY }.map(\.element)
+    var rows: [[GiriOCRLine]] = []
+    for line in byY {
+        if let anchor = rows.last?.first {
+            let height = max(anchor.height, line.height)
+            let tolerance = height > 0 ? height * 0.5 : fallback
+            if abs(line.midY - anchor.midY) < tolerance {
+                rows[rows.count - 1].append(line)
+                continue
+            }
+        }
+        rows.append([line])
+    }
+    return rows.flatMap { row in row.enumerated().sorted { $0.element.midX == $1.element.midX ? $0.offset < $1.offset : $0.element.midX < $1.element.midX }.map(\.element) }
+}
+
 /// 0.29：読み取った行を上から順に1つの文にする（同じ高さの行は左から）。
 func giriOCRText(_ lines: [GiriOCRLine]) -> String {
-    lines.sorted { abs($0.midY - $1.midY) < 0.004 ? $0.midX < $1.midX : $0.midY < $1.midY }.map(\.text).joined(separator: "\n")
+    giriReadingOrder(lines).map(\.text).joined(separator: "\n")
 }
 
 

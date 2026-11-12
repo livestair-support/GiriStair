@@ -275,7 +275,7 @@ struct GiriEventDetail: View {
             detailValue("会の種類", event.meetingTitle)
             if event.meetingType == .tournament {
                 detailValue("参加形式", giriTournamentFormatText(event))
-                if event.eventFormat == .live && event.knockout { detailValue("対戦形式", "トーナメント（1対1）") }
+                if event.eventFormat == .live && event.knockout { detailValue("対戦形式", "トーナメント") }
                 if !event.judging.isEmpty { detailValue("審査方法", event.judging) }
             }
             if let kind = event.battleKind, event.meetingType != .tournament {

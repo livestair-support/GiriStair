@@ -672,7 +672,9 @@ struct GiriEventEditor: View {
                 value.coOrganizers.append(name)
             }
         }
-        if value.meetingType == .tournament && value.tournamentFormat != .individual && !page.teams.isEmpty && (replace || value.teams.allSatisfy { $0.members.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } }) {
+        // 0.30：自分だけを入れた「自分のチーム」しかない時も、読み取ったチームに置き換える。
+        if value.meetingType == .tournament && value.tournamentFormat != .individual && !page.teams.isEmpty
+            && (replace || value.teams.allSatisfy { $0.members.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.preferences.isSelf($0) } && $0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
             value.teams = page.teams.map { team in
                 GiriTeam(name: team.name, members: team.members, isMine: team.members.contains { store.preferences.isSelf($0) })
             }
@@ -763,7 +765,7 @@ struct GiriEventEditor: View {
                 if isLive {
                     Picker(selection: $draft.knockout) {
                         Text("横並び・その他").tag(false)
-                        Text("トーナメント（1対1）").tag(true)
+                        Text("トーナメント").tag(true)
                     } label: { GiriEditorLabel("対戦形式") }.pickerStyle(.menu).tint(.primary)
                 }
             }
@@ -960,6 +962,7 @@ struct GiriEventEditor: View {
                         TextField(draft.teams[index].id == draft.myTeamId ? "自分のチーム名" : "チーム名", text: $draft.teams[index].name)
                     }
                     ForEach(draft.teams[index].members.indices, id: \.self) { memberIndex in
+                        // 0.30：チーム名と並ぶと読みにくいので、メンバーは1字下げる。
                         HStack {
                             GiriEditorPlayerField(title: "メンバー\(memberIndex + 1)", text: teamMemberBinding(team: index, member: memberIndex), compact: true,
                                                   priorityNames: draft.impromptuTeams ? unassignedNames : [])
@@ -970,6 +973,7 @@ struct GiriEventEditor: View {
                                 } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
                             }
                         }
+                        .padding(.leading, 16)
                     }
                     if fixedTeamSize == nil {
                         Button { draft.teams[index].members.append("") } label: { Label("メンバーを追加", systemImage: "plus.circle") }.tint(accentActionColor)
