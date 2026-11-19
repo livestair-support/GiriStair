@@ -196,6 +196,8 @@ struct GiriResultEntry: View {
     @State private var pastingArticle = false
     @State private var articleText = ""
     @State private var liveReview: GiriLiveResultReviewData?
+    /// 0.31：記事のルールから作ったルール（保存する時にルール一覧へ登録してこの大会に使う）。
+    @State private var pendingRule: GiriRule?
     @State private var leave = false
     @State private var originalResult = TournamentResult()
     @State private var originalPlacement: Int?
@@ -223,7 +225,7 @@ struct GiriResultEntry: View {
 
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
-    private var changed: Bool { result != originalResult || placement != originalPlacement || standings != originalStandings || answerNotes != originalAnswerNotes || tournamentTitle != originalTitle || boards != originalBoards || !pendingPromptNotes.isEmpty }
+    private var changed: Bool { result != originalResult || placement != originalPlacement || standings != originalStandings || answerNotes != originalAnswerNotes || tournamentTitle != originalTitle || boards != originalBoards || !pendingPromptNotes.isEmpty || pendingRule != nil }
     private var stageIndex: Int? { result.stages.firstIndex { $0.id == selectedID } }
 
     var body: some View {
@@ -469,12 +471,16 @@ struct GiriResultEntry: View {
             store.errorMessage = "結果（予選・決勝などの見出しと点、優勝など）を読み取れませんでした。結果の書いてある部分を選んでください。"
             return
         }
-        liveReview = GiriLiveResultReviewData(reading: reading, text: text)
+        // ルールは大会の形式に合わせる（ネット短考・スプシ系はネットの大会のルール、生大喜利は生大喜利のルール）。
+        var rule = giriLiveResultRule(reading, name: tournamentTitle.isEmpty ? (event?.title ?? "") : tournamentTitle)
+        if event?.eventFormat.isOnline == true { rule?.kind = .online }
+        liveReview = GiriLiveResultReviewData(reading: reading, text: text, rule: rule, hasRule: event?.ruleID != nil)
     }
 
     /// 0.31：記事から読み取った結果を入れる。入力済みの欄は変えない（新しい段階は足す）。お題は保存する時に足す。
     private func applyLiveResult(_ selection: GiriLiveResultSelection) {
         guard let event else { return }
+        let live = event.eventFormat == .live
         var stageIDs: [String: String] = [:]
         for stage in result.stages where stage.roundId == nil { stageIDs[playerSearchKey(stage.name)] = stageIDs[playerSearchKey(stage.name)] ?? stage.id }
         for item in selection.selfResults {
@@ -487,19 +493,38 @@ struct GiriResultEntry: View {
                 stage.votesPerPrompt = true
                 stage.promptCount = item.scores.count
             }
-            var laps = giriNormalizedLaps(stage, lapCount: max(1, stage.laps.count))
-            var lap = laps[0]
-            if lap.group.isEmpty { lap.group = item.block }
-            if lap.opponents.isEmpty { lap.opponents = item.opponents }
-            if lap.points.allSatisfy({ $0 == nil }) { lap.points = item.scores.count > 1 && stage.votesPerPrompt ? item.scores.map { Optional($0) } : [item.total] }
-            if lap.placement == nil { lap.placement = item.placement }
-            if lap.others.isEmpty { lap.others = item.others.map { StageOtherScore(name: $0.name, points: $0.total) } }
-            laps[0] = lap
-            stage.laps = laps
-            stage.laps = giriNormalizedLaps(stage, lapCount: laps.count)
+            if live {
+                // 生大喜利は周ごとの記録（1周目）に入れる。
+                var laps = giriNormalizedLaps(stage, lapCount: max(1, stage.laps.count))
+                var lap = laps[0]
+                if lap.group.isEmpty { lap.group = item.block }
+                if lap.opponents.isEmpty { lap.opponents = item.opponents }
+                if lap.points.allSatisfy({ $0 == nil }) { lap.points = item.scores.count > 1 && stage.votesPerPrompt ? item.scores.map { Optional($0) } : [item.total] }
+                if lap.placement == nil { lap.placement = item.placement }
+                if lap.others.isEmpty { lap.others = item.others.map { StageOtherScore(name: $0.name, points: $0.total) } }
+                laps[0] = lap
+                stage.laps = laps
+                stage.laps = giriNormalizedLaps(stage, lapCount: laps.count)
+            } else {
+                // スプシ系・ネット短考は段階の記録に入れる。
+                if stage.group.isEmpty { stage.group = item.block }
+                if stage.opponents.isEmpty { stage.opponents = item.opponents }
+                if stage.points == nil { stage.points = item.total }
+                if stage.placement == nil { stage.placement = item.placement }
+            }
             if let index { result.stages[index] = stage } else { result.stages.append(stage) }
             stageIDs[key] = stage.id
         }
+        // 0.31：記事のルールから、段階の形式・お題の数・審査方法・通過枠を入れる（入れていない欄だけ）。
+        for ruleStage in selection.ruleStages {
+            guard let index = result.stages.firstIndex(where: { $0.roundId == nil && playerSearchKey($0.name) == playerSearchKey(ruleStage.name) }) else { continue }
+            if result.stages[index].lineup.isEmpty { result.stages[index].lineup = ruleStage.lineup }
+            if result.stages[index].judging.isEmpty { result.stages[index].judging = ruleStage.judging }
+            if result.stages[index].promptCount == nil { result.stages[index].promptCount = ruleStage.promptCount }
+            if result.stages[index].advanceCount == nil { result.stages[index].advanceCount = ruleStage.advanceCount }
+            if live { result.stages[index].laps = giriNormalizedLaps(result.stages[index], lapCount: max(1, result.stages[index].laps.count)) }
+        }
+        if let rule = selection.rule { pendingRule = rule }
         for board in selection.boards {
             guard let stageID = stageIDs[playerSearchKey(board.stage)], !board.blocks.isEmpty else { continue }
             if let index = boards.firstIndex(where: { $0.id == stageID }) {
@@ -753,8 +778,9 @@ struct GiriResultEntry: View {
                     .buttonStyle(.plain)
             }
             if wide.isEmpty && rounds.isEmpty { skeletonReadRow(event) }
-            // 0.31：生大喜利の結果の記事（note など）から、自分の結果・優勝など・組み合わせ・お題を読む。
-            if !event.eventFormat.hasOnlineRounds { articleReadRows(event) }
+            // 0.31：生大喜利・スプシ系・ネット短考の結果の記事（note など）から、ルール・自分の結果・優勝など・組み合わせ・お題を読む。
+            // ネット長考の結果画面はルールまで書かれないので、回ごとの結果画面の読み取りを使う。
+            if event.eventFormat != .onlineLong { articleReadRows(event) }
             // 0.23：大会に選んだルールの段階を入れる。
             if wide.isEmpty && rounds.isEmpty, let rule = event.ruleID.flatMap({ store.rule($0) }), !rule.stages.isEmpty {
                 Button { applyRuleStages(rule) } label: {
@@ -1172,6 +1198,11 @@ struct GiriResultEntry: View {
             let promptKeys = Set(store.notes.filter { $0.eventId == eventID }.map { giriResultKey($0.prompt) })
             let newPrompts = pendingPromptNotes.filter { !promptKeys.contains(giriResultKey($0.prompt)) }
             let notes = mergedAnswerResults() + newPrompts
+            // 0.31：記事のルールをルール一覧に登録して、この大会のルールにする（ルールを選んでいない時だけ）。
+            if let rule = pendingRule {
+                try store.saveRule(rule)
+                if event.ruleID == nil { event.ruleID = rule.id }
+            }
             try store.saveResult(event: event, notes: notes)
             navigation.markResultEntry(eventID, unsaved: false)
             playLiveStairSaveFeedback()
@@ -1188,6 +1219,7 @@ struct GiriResultEntry: View {
             originalTitle = tournamentTitle
             originalBoards = boards
             pendingPromptNotes = []
+            pendingRule = nil
             if !closeAfterSave { editingStageID = nil }
             if let question { nextStageQuestion = question }
             else if closeAfterSave { dismiss() }
@@ -2617,6 +2649,10 @@ struct GiriLiveResultReviewData: Identifiable {
     let id = UUID().uuidString
     var reading: GiriLiveResultReading
     var text: String
+    /// 0.31：記事のルールから作ったルール（読めなければ nil）。
+    var rule: GiriRule? = nil
+    /// この大会にもうルールを選んでいるか（登録は選んでいない時だけ最初からオン）。
+    var hasRule = false
 }
 
 /// 0.31：確認画面で選んだ、入れる内容。
@@ -2625,6 +2661,10 @@ struct GiriLiveResultSelection {
     var standings: [GiriLiveStanding] = []
     var boards: [(stage: String, blocks: [GiriBoardBlock])] = []
     var prompts: [(stage: String, prompt: GiriLivePrompt)] = []
+    /// 0.31：段階に入れるルール（形式・お題の数・審査方法・通過枠）。
+    var ruleStages: [GiriRuleStage] = []
+    /// 0.31：ルール一覧に登録してこの大会に使うルール。
+    var rule: GiriRule?
 }
 
 /// 0.31：結果の記事の読み取りの確認（自分の結果・優勝など・組み合わせ・自分の出た組のお題）。
@@ -2639,11 +2679,25 @@ struct GiriLiveResultReviewSheet: View {
     @State private var useStandings = true
     @State private var useBoards = true
     @State private var prompts: [GiriLiveReviewPrompt] = []
+    @State private var useRuleStages = true
+    @State private var registerRule = false
 
     private var boards: [(stage: String, blocks: [GiriBoardBlock])] { giriLiveResultBoards(review.reading) }
 
     var body: some View {
         Form {
+            // 0.31：記事の「ルール」から読んだ段階ごとの形式・お題の数・審査方法・通過枠。
+            if let rule = review.rule {
+                Section {
+                    AppCardSectionTitle(title: "ルール", systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.ticket,
+                                        infoTitle: "ルールについて",
+                                        infoMessage: "記事のルールの書き方から読んだ段階ごとの形式などです。入っていない欄だけに入れます。")
+                        .listRowSeparator(.hidden)
+                    GiriRuleDetailRows(rule: rule)
+                    Toggle("段階の形式・お題の数・審査方法を入れる", isOn: $useRuleStages).tint(AppSectionAccent.ticket)
+                    Toggle("ルール一覧に登録してこの大会に使う", isOn: $registerRule).tint(AppSectionAccent.ticket)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+            }
             Section {
                 AppCardSectionTitle(title: "自分の結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket,
                                     infoTitle: "自分の結果について",
@@ -2731,6 +2785,7 @@ struct GiriLiveResultReviewSheet: View {
     private func load() {
         guard !loaded else { return }
         loaded = true
+        registerRule = !review.hasRule
         selfResults = giriLiveSelfResults(review.reading, isSelf: store.preferences.isSelf)
         let mine = Set(selfResults.map(\.blockID))
         prompts = review.reading.blocks.filter { mine.contains($0.id) }.flatMap { block in
@@ -2755,6 +2810,10 @@ struct GiriLiveResultReviewSheet: View {
         if useBoards {
             let stages = Set(selfResults.map { playerSearchKey($0.stage) })
             selection.boards = boards.filter { stages.contains(playerSearchKey($0.stage)) }
+        }
+        if let rule = review.rule {
+            if useRuleStages { selection.ruleStages = rule.stages }
+            if registerRule { selection.rule = rule }
         }
         selection.prompts = prompts.filter { $0.included && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map { ($0.stage, GiriLivePrompt(text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines), author: $0.author)) }

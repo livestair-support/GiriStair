@@ -3790,6 +3790,13 @@ struct GiriLiveStanding: Equatable {
 struct GiriLiveResultReading: Equatable {
     var blocks: [GiriLiveResultBlock] = []
     var standings: [GiriLiveStanding] = []
+    /// 0.31：段階ごとの「ルール」の行（書いてある順）。
+    var stageRules: [(stage: String, lines: [String])] = []
+
+    static func == (lhs: GiriLiveResultReading, rhs: GiriLiveResultReading) -> Bool {
+        lhs.blocks == rhs.blocks && lhs.standings == rhs.standings
+            && lhs.stageRules.map(\.stage) == rhs.stageRules.map(\.stage) && lhs.stageRules.map(\.lines) == rhs.stageRules.map(\.lines)
+    }
 }
 
 /// 「女帝（ポニーテール）（金庫番、三十六度倶楽部）」→ 名前「女帝（ポニーテール）」、メンバー「金庫番」「三十六度倶楽部」。
@@ -3828,6 +3835,8 @@ func giriLiveResultReading(text: String) -> GiriLiveResultReading {
     var pendingNames: [String] = []
     var resultsStarted = false
     var finished = false
+    /// 0.31：「・ルール」の見出しの後、ルールらしい行が続く間。
+    var readingRules = false
     let stageWords = #"(予選|本戦|本選|決勝|準決勝|準々決勝|敗者復活戦?|敗者復活|エキシビション|3位決定戦|[0-9]+回戦)"#
     let blockWords = #"([A-Za-zα-ωΑ-Ω0-9]{1,2})\s*(ブロック|組)"#
 
@@ -3893,15 +3902,34 @@ func giriLiveResultReading(text: String) -> GiriLiveResultReading {
             continue
         }
         if finished { continue }
+        // 0.31：段階のルール（「・ルール」の見出しの下のルールらしい行）。お題などルールでない行が来たら終わる。
+        if compact.range(of: #"^[・■●◆▼【\[]*ルール[】\]]*[:：]?$"#, options: .regularExpression) != nil {
+            readingRules = true
+            continue
+        }
         // 段階の見出し（「予選」「予選Aブロック」「決勝」）。ルールの文の中の「決勝進出」などは見出しにしない。
         if compact.count <= 16, let groups = giriRegexGroups("^[・■●◆▼【\\[]*" + stageWords + "(?:" + blockWords + ")?[】\\]]*$", in: compact).first {
+            readingRules = false
             stage = groups[1]
             startBlock(stage, groups[2].isEmpty ? "" : groups[2] + groups[3])
             continue
         }
         if compact.count <= 12, let groups = giriRegexGroups("^[・■●◆▼【\\[]*" + blockWords + "[】\\]]*$", in: compact).first {
+            readingRules = false
             startBlock(stage, groups[1] + groups[2])
             continue
+        }
+        if readingRules {
+            // ルールの行か、前のルールの行の折り返し（短い続き）。
+            let previous = reading.stageRules.first { $0.stage == stage }?.lines.last ?? ""
+            // 折り返しの続きは、前の行が長い（行の端で折り返した）時だけ。短いお題を続きにしない。
+            let continues = previous.count >= 14 && compact.count <= 10 && previous.range(of: #"[。）)]$"#, options: .regularExpression) == nil
+            if giriIsRuleLine(line) || continues {
+                if let index = reading.stageRules.firstIndex(where: { $0.stage == stage }) { reading.stageRules[index].lines.append(line) }
+                else { reading.stageRules.append((stage, [line])) }
+                continue
+            }
+            readingRules = false
         }
         guard let block = current else { continue }
         // 点の行（「5+0+4=9票」「ソトノトス 10+2+11=23pt」「ぐるぐる 9pt」）。
@@ -3986,11 +4014,53 @@ func giriLivePrompts(_ lines: [String]) -> [GiriLivePrompt] {
     return prompts
 }
 
+/// 0.31：記事の段階ごとのルールから、段階の形式・お題の数・審査方法・通過枠を読む（分からない所は空）。
+/// 「3タッグ×3ブロック」「3分2題」「拍手投票」「上位2名」「最も高かったタッグが本戦進出」などの書き方を使う。
+func giriLiveStageRules(_ reading: GiriLiveResultReading) -> [GiriRuleStage] {
+    var order: [String] = []
+    for item in reading.stageRules where !order.contains(item.stage) && !item.stage.isEmpty { order.append(item.stage) }
+    for block in reading.blocks where !order.contains(block.stage) { order.append(block.stage) }
+    return order.filter { !$0.contains("エキシビション") }.compactMap { name in
+        let lines = reading.stageRules.first { $0.stage == name }?.lines ?? []
+        guard !lines.isEmpty else { return nil }
+        var stage = GiriRuleStage(name: name, kind: giriInferredStageKind(name).rawValue)
+        for line in lines {
+            let text = giriHalfwidthDigits(line).trimmingCharacters(in: CharacterSet(charactersIn: "・ 　"))
+            if stage.lineup.isEmpty, text.range(of: #"^[(（]?[0-9]+\s*(?:タッグ|人|組|チーム)|[×x✕]\s*[0-9]+\s*ブロック"#, options: .regularExpression) != nil {
+                stage.lineup = text
+            }
+            if stage.promptCount == nil, let groups = giriRegexGroups(#"[0-9]+\s*分\s*[×x✕]?\s*([0-9]+)\s*(?:題|問)"#, in: text).first ?? giriRegexGroups(#"(?:お題)?\s*([0-9]+)\s*(?:題|問)"#, in: text).first,
+               let count = Int(groups[1]) {
+                stage.promptCount = count
+            }
+            if stage.advanceCount == nil, text.range(of: #"(最も|いちばん|一番)(高かった|多かった|多い|高い).*(進出|通過|勝ち抜け)"#, options: .regularExpression) != nil {
+                stage.advanceCount = 1
+                if text.contains("ブロック") || lines.contains(where: { $0.contains("ブロック") }) { stage.advanceNote = "各組上位1" }
+            }
+            if stage.judging.isEmpty, text.contains("振り分け") { stage.judging = "票の振り分け" + (text.contains("審査員") ? "（審査員）" : "") }
+            giriFillStageDetails(&stage, from: text)
+        }
+        let hasDetails = !stage.lineup.isEmpty || !stage.judging.isEmpty || stage.promptCount != nil || stage.advanceCount != nil
+        return hasDetails ? stage : nil
+    }
+}
+
+/// 0.31：記事のルールから作る大会のルール（段階ごとの形式など）。読めなければ nil。
+func giriLiveResultRule(_ reading: GiriLiveResultReading, name: String) -> GiriRule? {
+    let stages = giriLiveStageRules(reading)
+    guard !stages.isEmpty else { return nil }
+    var rule = GiriRule(kind: .live, scope: .tournament)
+    rule.name = name.isEmpty ? "読み取ったルール" : name
+    rule.stages = stages
+    rule.judging = stages.first { !$0.judging.isEmpty }?.judging ?? ""
+    return rule
+}
+
 /// ルールの説明らしい行（お題にしない）。
 private func giriIsRuleLine(_ raw: String) -> Bool {
     let text = raw.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
     if text.count <= 3 || text.hasPrefix("・") || text.hasPrefix("※") { return true }
-    if text.range(of: #"^[0-9]+(タッグ|人|組|チーム)"#, options: .regularExpression) != nil { return true }
+    if text.range(of: #"^[(（]?[0-9]+(タッグ|人|組|チーム)|[×x✕][0-9]+ブロック"#, options: .regularExpression) != nil { return true }
     return text.range(of: #"ルール|審査|進出|振り分け|題（残り|題\(残り|敗退|ストレート|[0-9]+分[×x✕][0-9]|[0-9]+分[0-9]+題|題終了|おじゃま枠|表記|満票|獲得点数|ブロック分け|勝敗なし"#, options: .regularExpression) != nil
 }
 

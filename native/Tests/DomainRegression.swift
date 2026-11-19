@@ -2508,6 +2508,46 @@ struct DomainRegression {
             try check(teamName.name == "架空団（ねこ）" && teamName.members == ["はるか", "たろう"] && giriLiveResultName("じろう（架空団）").members.isEmpty,
                       "team names keep their own brackets and members come from the last brackets")
 
+            // 記事の「ルール」から段階ごとの形式・お題の数・審査方法・通過枠を読む。
+            let ruled = """
+            予選
+            ・ルール
+            （3タッグ + 架空枠）×6ブロック
+            3分3題（残り10秒で指名を止めタッグで一答）
+            1題終了ごとに審査員によるタッグ単位での1票
+            振り分け審査
+            3題合計が最も高かったタッグが本戦進出
+            Aブロック
+            架空のお題
+            （お題提供：はるか）
+            架空団（はるか、たろう）
+            0+1+2=3票
+            ねこ組（じろう、さぶろう）
+            1+0+0=1票
+            決勝
+            ・ルール
+            3タッグ
+            3分2題（残り10秒で指名を止めタッグで一答）
+            2題終了後、観客全員によるタッグ単位での拍手
+            投票
+            架空の決勝のお題
+            （お題作成：たろう）
+            架空団（はるか、たろう）
+            ねこ組（じろう、さぶろう）
+            優勝
+            ：架空団（はるか、たろう）
+            """
+            let ruledReading = giriLiveResultReading(text: ruled)
+            let ruledRule = giriLiveResultRule(ruledReading, name: "架空杯")
+            try check(ruledRule?.stages.map(\.name) == ["予選", "決勝"] && ruledRule?.stages[0].lineup == "（3タッグ + 架空枠）×6ブロック"
+                      && ruledRule?.stages[0].promptCount == 3 && ruledRule?.stages[0].advanceCount == 1 && ruledRule?.stages[0].advanceNote == "各組上位1"
+                      && ruledRule?.stages[0].judging == "票の振り分け" && ruledRule?.stages[1].lineup == "3タッグ" && ruledRule?.stages[1].promptCount == 2
+                      && ruledRule?.stages[1].judging == "拍手", "stage rules come from the rule lines of each stage")
+            try check(ruledReading.blocks.last?.prompts.map(\.text) == ["架空の決勝のお題"] && ruledReading.blocks.last?.prompts.first?.author == "たろう"
+                      && ruledReading.blocks.last?.entries.map(\.name) == ["架空団", "ねこ組"],
+                      "rule lines are not read as prompts and finals without points keep their teams")
+            try check(giriLiveSelfResults(ruledReading, isSelf: { $0 == "たろう" }).map(\.outcome) == [.advanced, .champion], "team members count as the player")
+
             try check(giriEventPageNeedsTools(["持ち物：ペン、スケッチブック"]) == true && giriEventPageNeedsTools(["スケッチブックとペンをご持参ください"]) == true
                       && giriEventPageNeedsTools(["持ち物：なし"]) == false && giriEventPageNeedsTools(["架空の会"]) == nil, "the tools needed are read from the page")
             var toolEvent = GiriEvent(title: "道具の会")
