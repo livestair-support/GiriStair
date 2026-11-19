@@ -118,6 +118,17 @@ extension GiriEvent {
     }
 }
 
+/// 0.31：結果画面の点の内訳（その点を入れた人数）。
+struct GiriPointCount: Codable, Equatable {
+    var points: Int
+    var count: Int
+}
+
+/// 「4点×3人・3点×29人」
+func giriPointCountsText(_ counts: [GiriPointCount]) -> String {
+    counts.map { "\($0.points)点×\($0.count)人" }.joined(separator: "・")
+}
+
 struct AnswerRecord: Codable, Equatable, Identifiable {
     var id: String = UUID().uuidString
     var text: String = ""
@@ -138,6 +149,8 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
     var isTeammate: Bool = false
     /// 0.28：チーム戦の大会で出した回答（原案が空ならチームの回答として誰の成績にもしない）。
     var isTeamAnswer: Bool = false
+    /// 0.31：結果画面の点の内訳（「4点 3人・3点 29人」など）。ある時だけ書く。
+    var pointCounts: [GiriPointCount] = []
 
     init(id: String = UUID().uuidString, text: String = "", isSubmitted: Bool = false, placement: Int? = nil, points: Double? = nil, voterCount: Int? = nil, maxPointsPerVoter: Int = 1, memo: String = "", answerer: String = "", mark: String = "") {
         self.id = id; self.text = text; self.isSubmitted = isSubmitted
@@ -145,7 +158,7 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
         self.maxPointsPerVoter = maxPointsPerVoter; self.memo = memo; self.answerer = answerer; self.mark = mark
     }
 
-    private enum CodingKeys: String, CodingKey { case id, text, isSubmitted, placement, points, voterCount, maxPointsPerVoter, memo, answerer, mark, drafter, isTeammate, isTeamAnswer }
+    private enum CodingKeys: String, CodingKey { case id, text, isSubmitted, placement, points, voterCount, maxPointsPerVoter, memo, answerer, mark, drafter, isTeammate, isTeamAnswer, pointCounts }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
@@ -161,6 +174,7 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
         drafter = try c.decodeIfPresent(String.self, forKey: .drafter) ?? ""
         isTeammate = try c.decodeIfPresent(Bool.self, forKey: .isTeammate) ?? false
         isTeamAnswer = try c.decodeIfPresent(Bool.self, forKey: .isTeamAnswer) ?? false
+        pointCounts = try c.decodeIfPresent([GiriPointCount].self, forKey: .pointCounts) ?? []
         try validate()
     }
     func encode(to encoder: Encoder) throws {
@@ -179,6 +193,7 @@ struct AnswerRecord: Codable, Equatable, Identifiable {
         if !drafter.isEmpty { try c.encode(drafter, forKey: .drafter) }
         if isTeammate { try c.encode(true, forKey: .isTeammate) }
         if isTeamAnswer { try c.encode(true, forKey: .isTeamAnswer) }
+        if !pointCounts.isEmpty { try c.encode(pointCounts, forKey: .pointCounts) }
     }
     private var trimmedDrafter: String { drafter.trimmingCharacters(in: .whitespacesAndNewlines) }
     /// 0.28：自分の成績に数える回答。チーム戦の回答は、原案に自分を選んだ時だけ。
@@ -1406,6 +1421,8 @@ struct GiriEventPageDraft: Equatable, Identifiable {
     var impromptuTeams = false
     /// 0.30.1：チームの人数（タッグは2人、「3人1組」などから）。分からなければ nil。
     var teamSize: Int? = nil
+    /// 0.31：道具（ペン・スケッチブックなど）を持っていく必要があるか。分からなければ nil。
+    var needsTools: Bool? = nil
     /// 0.29：説明やコメントに書いてあるチーム（タッグ）の名前とメンバー。
     var teams: [GiriEventPageTeam] = []
     /// 0.29：説明に書いてある大会のルール（段階など）。読めなければ nil。
@@ -1708,6 +1725,8 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
     // 0.29：会の種類は、会の名前とページの上の方（タイトルのまわり）の書き方から推す。
     let head = info.prefix(10).map(\.text).joined(separator: " ")
     draft.meetingKind = giriInferredMeetingKind(title: draft.title + " " + head, text: info.map(\.text).joined(separator: "\n"))
+    // 0.31：持ち物（道具がいるか）。
+    draft.needsTools = giriEventPageNeedsTools(info.map(\.text))
     // 0.29：会場は1つなので、登録した会場の名前（なければ住所）がページのどこかにあれば、それを使う。
     if let venue = giriRegisteredVenue(in: info.map(\.text), venues: venues, addresses: venueAddresses) {
         if playerSearchKey(venue) != playerSearchKey(draft.venue) {
@@ -2612,7 +2631,7 @@ struct GiriAnswerResultReading: Equatable {
     var points: Double? = nil
 }
 
-private func giriResultKey(_ text: String) -> String {
+func giriResultKey(_ text: String) -> String {
     giriHalfwidthAlphanumerics(text).replacingOccurrences(of: #"[\s　、。,.・!！?？「」『』（）()]"#, with: "", options: .regularExpression)
 }
 
@@ -3619,4 +3638,437 @@ func giriRegisteredRoom(in lines: [String], rooms: [String]) -> String? {
     let text = playerSearchKey(giriHalfwidthDigits(lines.joined(separator: " ")))
     return rooms.filter { playerSearchKey(giriHalfwidthDigits($0)).count >= 2 && text.contains(playerSearchKey(giriHalfwidthDigits($0))) }
         .max { $0.count < $1.count }
+}
+
+// MARK: - 0.31 結果の読み取り（ネットの結果画面・生大喜利の結果の記事）
+
+/// ネットの結果画面の1つの回答（順位・得点・作者・回答・点の内訳）。
+struct GiriNetResultEntry: Equatable, Identifiable {
+    var id = UUID().uuidString
+    var placement: Int?
+    var points: Double?
+    var author: String
+    var text: String
+    var pointCounts: [GiriPointCount] = []
+}
+
+struct GiriNetResultPage: Equatable {
+    var prompt = ""
+    var submissionCount: Int?
+    var voterCount: Int?
+    var entries: [GiriNetResultEntry] = []
+}
+
+/// 「〇〇さんの作品」の行（作者）。前に付いた「[No.0]」「4点1 3点3」などは外す。
+private func giriNetResultAuthor(_ raw: String) -> String? {
+    let text = giriHalfwidthAlphanumerics(raw)
+    guard let range = text.range(of: #"さんの(?:作品|回答)"#, options: .regularExpression) else { return nil }
+    var name = String(text[..<range.lowerBound])
+    name = name.replacingOccurrences(of: #"\[?\s*No\.?\s*[0-9]+\s*\]?"#, with: " ", options: [.regularExpression, .caseInsensitive])
+    name = name.replacingOccurrences(of: #"[0-9]+\s*点\s*[0-9]+"#, with: " ", options: .regularExpression)
+    name = name.replacingOccurrences(of: #"^[0-9]+\s*位"#, with: " ", options: .regularExpression)
+    name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    return name.isEmpty ? nil : name
+}
+
+/// 点の内訳（「4点 3」「3点29」）。合計の「169点 (1.28)」は内訳にしない。
+private func giriNetPointCounts(_ raw: String) -> [GiriPointCount] {
+    let text = giriHalfwidthAlphanumerics(raw)
+    var counts: [GiriPointCount] = []
+    for groups in giriRegexGroups(#"(?<![0-9.])([1-9])\s*点\s*([0-9]{1,4})(?![0-9.]*\))"#, in: text) {
+        guard let points = Int(groups[1]), let count = Int(groups[2]) else { continue }
+        counts.append(GiriPointCount(points: points, count: count))
+    }
+    return counts
+}
+
+/// ネットの結果画面（回答ごとに「〇〇さんの作品」と順位・得点が並ぶ画面）を読む。
+/// サイトごとの決まった位置は使わず、作者の行を区切りにして、その前後の順位・得点・回答・内訳を集める。
+func giriNetResultPage(lines: [GiriOCRLine]) -> GiriNetResultPage {
+    let sorted = giriReadingOrder(lines)
+    var page = GiriNetResultPage()
+    for line in sorted {
+        let text = giriHalfwidthAlphanumerics(line.text).replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+        if page.submissionCount == nil, let groups = giriRegexGroups(#"投稿(?:数|件数)[:：]?([0-9]+)"#, in: text).first { page.submissionCount = Int(groups[1]) }
+        if page.voterCount == nil, let groups = giriRegexGroups(#"投票(?:者数|人数|数)[:：]?([0-9]+)"#, in: text).first { page.voterCount = Int(groups[1]) }
+    }
+    if page.voterCount == nil { page.voterCount = giriVoterCountReading(lines: lines) }
+    let anchors = sorted.indices.filter { giriNetResultAuthor(sorted[$0].text) != nil }
+    // お題：「お題」の見出しの下から、最初の回答の前まで。
+    if let header = sorted.firstIndex(where: { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == "お題" }) {
+        let end = anchors.first ?? sorted.count
+        let body = sorted[(header + 1)..<max(header + 1, end)].map(\.text).filter { line in
+            let value = giriHalfwidthAlphanumerics(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            return !value.isEmpty && value.range(of: #"^(順位|得点|投票|作品|[0-9]+\s*位|[0-9]+)$"#, options: .regularExpression) == nil
+        }
+        page.prompt = body.joined()
+    }
+    for (order, index) in anchors.enumerated() {
+        let anchor = sorted[index]
+        guard let author = giriNetResultAuthor(anchor.text) else { continue }
+        let lift = max(anchor.height * 1.5, 0.004)
+        let top = anchor.midY - lift
+        let bottom = order + 1 < anchors.count ? sorted[anchors[order + 1]].midY - max(sorted[anchors[order + 1]].height * 1.5, 0.004) : .infinity
+        let region = sorted.enumerated().filter { $0.element.midY >= top && $0.element.midY < bottom }
+        var entry = GiriNetResultEntry(placement: nil, points: nil, author: author, text: "")
+        entry.pointCounts = giriNetPointCounts(anchor.text)
+        var numbers: [(x: Double, value: Int)] = []
+        var answer: [String] = []
+        for (position, line) in region {
+            let value = giriHalfwidthAlphanumerics(line.text).trimmingCharacters(in: .whitespacesAndNewlines)
+            let compact = value.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+            if position == index || compact.isEmpty { continue }
+            if let number = Int(compact) { numbers.append((line.midX, number)); continue }
+            if entry.placement == nil, let groups = giriRegexGroups(#"^([0-9]+)位$"#, in: compact).first { entry.placement = Int(groups[1]); continue }
+            let counts = giriNetPointCounts(value)
+            let total = giriRegexGroups(#"^([0-9]+(?:\.[0-9]+)?)点(?:[(（]|$)"#, in: compact).first
+            if total != nil || counts.count >= 2 {
+                if entry.points == nil, let total { entry.points = Double(total[1]) }
+                if entry.pointCounts.isEmpty { entry.pointCounts = counts }
+                continue
+            }
+            // 回答は作者の行より下の行（左の順位・得点の欄は除く）。
+            if line.midY > anchor.midY + anchor.height * 0.5, (line.minX ?? 1) >= (anchor.minX ?? 0) - 0.05 { answer.append(value) }
+        }
+        // 順位・得点が数字だけの欄（表の形の結果）は、左から順位・得点。
+        let ordered = numbers.sorted { $0.x < $1.x }
+        if entry.placement == nil, let first = ordered.first { entry.placement = first.value }
+        if entry.points == nil, ordered.count >= 2 { entry.points = Double(ordered[1].value) }
+        if entry.points == nil, !entry.pointCounts.isEmpty { entry.points = Double(entry.pointCounts.reduce(0) { $0 + $1.points * $1.count }) }
+        entry.text = answer.joined()
+        page.entries.append(entry)
+    }
+    return page
+}
+
+/// 自分の回答（出した回答の文か、作者が自分）の位置。見つからなければ nil。
+func giriNetResultOwnEntry(_ page: GiriNetResultPage, answers: [String], isSelf: (String) -> Bool) -> Int? {
+    let keys = answers.map(giriResultKey).filter { $0.count >= 4 }
+    if let index = page.entries.firstIndex(where: { entry in
+        let key = giriResultKey(entry.text)
+        guard key.count >= 4 else { return false }
+        return keys.contains { own in
+            own == key || (min(own.count, key.count) >= 8 && (own.hasPrefix(String(key.prefix(8))) || key.hasPrefix(String(own.prefix(8)))))
+                || giriNameSimilarity(own, key) >= 0.85
+        }
+    }) { return index }
+    return page.entries.firstIndex { isSelf($0.author) }
+}
+
+/// 生大喜利の結果の記事の1組（チーム・タッグは名前とメンバー）と点。
+struct GiriLiveResultEntry: Equatable, Identifiable {
+    var id = UUID().uuidString
+    var name: String
+    var members: [String] = []
+    /// お題ごとの点（「5+0+4=9票」の 5・0・4）。合計だけの時は空。
+    var scores: [Double] = []
+    var total: Double?
+    var allNames: [String] { [name] + members }
+}
+
+struct GiriLivePrompt: Equatable, Identifiable {
+    var id = UUID().uuidString
+    var text: String
+    var author: String = ""
+}
+
+struct GiriLiveResultBlock: Equatable, Identifiable {
+    var id = UUID().uuidString
+    var stage: String
+    var block: String
+    var prompts: [GiriLivePrompt] = []
+    var entries: [GiriLiveResultEntry] = []
+    var title: String { [stage, block].filter { !$0.isEmpty }.joined(separator: " ") }
+}
+
+struct GiriLiveStanding: Equatable {
+    var placement: Int
+    var name: String
+    var members: [String] = []
+}
+
+struct GiriLiveResultReading: Equatable {
+    var blocks: [GiriLiveResultBlock] = []
+    var standings: [GiriLiveStanding] = []
+}
+
+/// 「女帝（ポニーテール）（金庫番、三十六度倶楽部）」→ 名前「女帝（ポニーテール）」、メンバー「金庫番」「三十六度倶楽部」。
+/// メンバーは「、」「→」で分ける（「虫・電気」のような名前の中の「・」では分けない）。
+func giriLiveResultName(_ raw: String) -> (name: String, members: [String]) {
+    let text = raw.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "　：:")))
+    guard let groups = giriRegexGroups(#"^(.+?)\s*[（(]([^（）()]+)[）)]\s*$"#, in: text).first,
+          groups[2].contains("、") || groups[2].contains("→") || groups[2].contains(",") else {
+        // 「平田（いいねスクールバス）」のような1人（チーム名）はそのまま名前にする。
+        return (text, [])
+    }
+    // いちばん後ろの括弧がメンバー。それより前は名前（「女帝（ポニーテール）」）。
+    let whole = text
+    guard let open = whole.range(of: #"[（(][^（）()]+[）)]\s*$"#, options: .regularExpression) else { return (text, []) }
+    let name = String(whole[..<open.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    let inner = String(whole[open]).trimmingCharacters(in: CharacterSet(charactersIn: "（）() 　"))
+    let members = inner.components(separatedBy: CharacterSet(charactersIn: "、,，→")).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    return (name.isEmpty ? text : name, members)
+}
+
+private func giriParenBalance(_ text: String) -> Int {
+    text.filter { "（(".contains($0) }.count - text.filter { "）)".contains($0) }.count
+}
+
+/// 生大喜利の結果の記事（note など）の文から、段階・ブロックごとのお題・点と、優勝などを読む。
+/// 書き方は人それぞれなので、段階・ブロックの見出し、「1+7+9=17pt」「9票」のような点の行、
+/// お題の提供・作成の書き方、「優勝：〇〇」だけを手がかりにする。
+func giriLiveResultReading(text: String) -> GiriLiveResultReading {
+    let lines = text.components(separatedBy: .newlines)
+        .map { giriHalfwidthAlphanumerics($0).trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "　"))) }
+        .filter { !$0.isEmpty }
+    var reading = GiriLiveResultReading()
+    var stage = ""
+    var current: Int? = nil
+    var buffer: [String] = []
+    var pendingNames: [String] = []
+    var resultsStarted = false
+    var finished = false
+    let stageWords = #"(予選|本戦|本選|決勝|準決勝|準々決勝|敗者復活戦?|敗者復活|エキシビション|3位決定戦|[0-9]+回戦)"#
+    let blockWords = #"([A-Za-zα-ωΑ-Ω0-9]{1,2})\s*(ブロック|組)"#
+
+    func flush() {
+        guard let index = current else { buffer = []; pendingNames = []; return }
+        if !resultsStarted {
+            // 点のない組（決勝で拍手審査だけの時など）：後ろの「チーム名（メンバー、メンバー）」の行。
+            var names: [String] = []
+            while let last = buffer.last {
+                var line = last
+                var used = 1
+                if giriParenBalance(line) < 0, buffer.count >= 2 { line = buffer[buffer.count - 2] + line; used = 2 }
+                guard giriLiveResultName(line).members.count >= 2 else { break }
+                names.insert(line, at: 0)
+                buffer.removeLast(used)
+            }
+            for name in names {
+                let parsed = giriLiveResultName(name)
+                reading.blocks[index].entries.append(GiriLiveResultEntry(name: parsed.name, members: parsed.members))
+            }
+            reading.blocks[index].prompts.append(contentsOf: giriLivePrompts(buffer))
+        }
+        buffer = []
+        pendingNames = []
+    }
+    func startBlock(_ stageName: String, _ blockName: String) {
+        flush()
+        resultsStarted = false
+        if let index = reading.blocks.firstIndex(where: { $0.stage == stageName && $0.block == blockName && $0.entries.isEmpty }) {
+            // 目次などで先に出た同じ見出しは、中身を入れ直す。
+            reading.blocks[index].prompts = []
+            current = index
+        } else {
+            reading.blocks.append(GiriLiveResultBlock(stage: stageName, block: blockName))
+            current = reading.blocks.count - 1
+        }
+    }
+    func takeName() -> String? {
+        if !pendingNames.isEmpty { return pendingNames.removeFirst() }
+        guard var name = buffer.popLast() else { return nil }
+        while giriParenBalance(name) < 0, let previous = buffer.popLast() { name = previous + name }
+        return name
+    }
+
+    var index = 0
+    while index < lines.count {
+        let line = lines[index]
+        let compact = line.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+        index += 1
+        // 優勝・準優勝など（値が次の行の時もある）。
+        if let groups = giriRegexGroups(#"^(優勝|準優勝|第?([0-9]+)位)\s*(?:[:：]\s*(.*)|)$"#, in: line).first {
+            var value = groups[3].trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty, index < lines.count { value = lines[index].trimmingCharacters(in: CharacterSet(charactersIn: "：: 　")); index += 1 }
+            while giriParenBalance(value) > 0, index < lines.count { value += lines[index]; index += 1 }
+            let placement = groups[1] == "優勝" ? 1 : groups[1] == "準優勝" ? 2 : Int(groups[2]) ?? 0
+            let parsed = giriLiveResultName(value)
+            if placement > 0, !parsed.name.isEmpty, parsed.name.count <= 40,
+               !reading.standings.contains(where: { playerSearchKey($0.name) == playerSearchKey(parsed.name) && $0.placement == placement }) {
+                reading.standings.append(GiriLiveStanding(placement: placement, name: parsed.name, members: parsed.members))
+            }
+            flush()
+            finished = true
+            continue
+        }
+        if finished { continue }
+        // 段階の見出し（「予選」「予選Aブロック」「決勝」）。ルールの文の中の「決勝進出」などは見出しにしない。
+        if compact.count <= 16, let groups = giriRegexGroups("^[・■●◆▼【\\[]*" + stageWords + "(?:" + blockWords + ")?[】\\]]*$", in: compact).first {
+            stage = groups[1]
+            startBlock(stage, groups[2].isEmpty ? "" : groups[2] + groups[3])
+            continue
+        }
+        if compact.count <= 12, let groups = giriRegexGroups("^[・■●◆▼【\\[]*" + blockWords + "[】\\]]*$", in: compact).first {
+            startBlock(stage, groups[1] + groups[2])
+            continue
+        }
+        guard let block = current else { continue }
+        // 点の行（「5+0+4=9票」「ソトノトス 10+2+11=23pt」「ぐるぐる 9pt」）。
+        if let groups = giriRegexGroups(#"^(.*?)\s*((?:[0-9]+(?:\.[0-9]+)?\s*\+\s*)+[0-9]+(?:\.[0-9]+)?\s*=\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:pt|PT|Pt|票|点|ポイント|P)$"#, in: line).first,
+           let total = Double(groups[3]) {
+            var name = groups[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !resultsStarted {
+                // 名前がこの行にない時は、前の行が名前。それより前はお題。
+                // 名前のない点の行が続く時（2列の表で名前が先に並ぶ）は、その数だけ前の行を名前にする。
+                if name.isEmpty {
+                    var following = 0
+                    while index + following < lines.count,
+                          lines[index + following].range(of: #"^((?:[0-9]+(?:\.[0-9]+)?\s*\+\s*)+[0-9]+(?:\.[0-9]+)?\s*=\s*)?[0-9]+(?:\.[0-9]+)?\s*(?:pt|PT|Pt|票|点|ポイント|P)$"#, options: .regularExpression) != nil {
+                        following += 1
+                    }
+                    var names: [String] = []
+                    for _ in 0...following {
+                        guard let taken = takeName() else { break }
+                        names.insert(taken, at: 0)
+                    }
+                    pendingNames = names
+                    if !pendingNames.isEmpty { name = pendingNames.removeFirst() }
+                }
+                reading.blocks[block].prompts.append(contentsOf: giriLivePrompts(buffer))
+                buffer = []
+                resultsStarted = true
+            } else if name.isEmpty, let taken = takeName() {
+                name = taken
+            }
+            guard !name.isEmpty else { continue }
+            let scores = groups[2].components(separatedBy: CharacterSet(charactersIn: "+=")).compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            let parsed = giriLiveResultName(name)
+            reading.blocks[block].entries.append(GiriLiveResultEntry(name: parsed.name, members: parsed.members, scores: scores, total: total))
+            continue
+        }
+        // 写真・リンク・☆などは使わない。
+        if compact.range(of: #"^(参考画像|画像|[☆★]+|pic\.twitter.*|https?://.*|—.*|#.*)$"#, options: .regularExpression) != nil { continue }
+        if resultsStarted {
+            // 点より前に名前だけが並ぶ書き方（2列の表など）：順に名前として持っておく。
+            if let last = pendingNames.last, giriParenBalance(last) > 0 { pendingNames[pendingNames.count - 1] = last + line }
+            else { pendingNames.append(line) }
+        } else {
+            buffer.append(line)
+        }
+    }
+    flush()
+    reading.blocks = reading.blocks.filter { !$0.entries.isEmpty || !$0.prompts.isEmpty }
+    // 目次やルールだけの段階（組も点もない）は使わない。
+    reading.blocks = reading.blocks.filter { !$0.entries.isEmpty }
+    return reading
+}
+
+/// 点の行より前の行から、お題を分ける。「（お題提供：〇〇）」「（お題作成：〇〇）」はその前のお題の作者、
+/// 「画像提供：〇〇」は次のお題の始まり、「（３）」のような短い印で終わる行はそのお題の終わり。ルールの文は使わない。
+func giriLivePrompts(_ lines: [String]) -> [GiriLivePrompt] {
+    var prompts: [GiriLivePrompt] = []
+    var segment: [String] = []
+    func close(author: String = "") {
+        var body = segment
+        segment = []
+        // 先頭のルールの行（「・ルール」「3タッグ」「3分2題（…）」など）は外す。
+        while let first = body.first, giriIsRuleLine(first) { body.removeFirst() }
+        let text = body.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count >= 4, !giriIsRuleLine(text) || text.count > 60 else { return }
+        prompts.append(GiriLivePrompt(text: text, author: author))
+    }
+    for line in lines {
+        let compact = line.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+        if let groups = giriRegexGroups(#"^[（(]?(?:お題提供|お題作成|作題|出題)[:：](.+?)[）)]?$"#, in: compact).first {
+            let author = groups[1].replacingOccurrences(of: #"[（(].*$"#, with: "", options: .regularExpression)
+            close(author: author)
+            continue
+        }
+        if compact.range(of: #"^画像提供[:：]"#, options: .regularExpression) != nil { close(); continue }
+        segment.append(line)
+        if compact.range(of: #"[（(][^（）()]{1,2}[）)]$"#, options: .regularExpression) != nil, compact.count > 4 {
+            segment[segment.count - 1] = line.replacingOccurrences(of: #"\s*[（(][^（）()]{1,2}[）)]\s*$"#, with: "", options: .regularExpression)
+            close()
+        }
+    }
+    close()
+    return prompts
+}
+
+/// ルールの説明らしい行（お題にしない）。
+private func giriIsRuleLine(_ raw: String) -> Bool {
+    let text = raw.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+    if text.count <= 3 || text.hasPrefix("・") || text.hasPrefix("※") { return true }
+    if text.range(of: #"^[0-9]+(タッグ|人|組|チーム)"#, options: .regularExpression) != nil { return true }
+    return text.range(of: #"ルール|審査|進出|振り分け|題（残り|題\(残り|敗退|ストレート|[0-9]+分[×x✕][0-9]|[0-9]+分[0-9]+題|題終了|おじゃま枠|表記|満票|獲得点数|ブロック分け|勝敗なし"#, options: .regularExpression) != nil
+}
+
+/// 自分の出た組の結果（段階・ブロック、組の中の順位、点、通過など）。
+struct GiriLiveSelfResult: Equatable, Identifiable {
+    var id: String { blockID }
+    var blockID: String
+    var stage: String
+    var block: String
+    var placement: Int?
+    var total: Double?
+    var scores: [Double]
+    var outcome: TournamentOutcome
+    var opponents: [String]
+    var others: [(name: String, total: Double?)]
+    var prompts: [GiriLivePrompt]
+
+    static func == (lhs: GiriLiveSelfResult, rhs: GiriLiveSelfResult) -> Bool {
+        lhs.blockID == rhs.blockID && lhs.placement == rhs.placement && lhs.total == rhs.total && lhs.outcome == rhs.outcome
+    }
+}
+
+private func giriLiveEntryMatches(_ entry: GiriLiveResultEntry, _ isSelf: (String) -> Bool) -> Bool {
+    entry.allNames.contains(where: isSelf)
+}
+
+/// 自分（自分のチーム）の出た組ごとの結果。通過は「あとの段階にも出ているか」で決め、
+/// 決勝は優勝・準優勝の書き方から決める。エキシビションは数えない。
+func giriLiveSelfResults(_ reading: GiriLiveResultReading, isSelf: (String) -> Bool) -> [GiriLiveSelfResult] {
+    let blocks = reading.blocks.filter { !$0.stage.contains("エキシビション") }
+    var stageOrder: [String] = []
+    for block in blocks where !stageOrder.contains(block.stage) { stageOrder.append(block.stage) }
+    var output: [GiriLiveSelfResult] = []
+    for block in blocks {
+        guard let mine = block.entries.first(where: { giriLiveEntryMatches($0, isSelf) }) else { continue }
+        let placement = mine.total.map { total in 1 + block.entries.filter { ($0.total ?? -1) > total }.count }
+        let stagePosition = stageOrder.firstIndex(of: block.stage) ?? 0
+        let later = stageOrder.dropFirst(stagePosition + 1)
+        let nextAppearance = later.first { stage in blocks.contains { $0.stage == stage && $0.entries.contains { giriLiveEntryMatches($0, isSelf) } } }
+        var outcome: TournamentOutcome = .unrecorded
+        if giriInferredStageKind(block.stage) == .final {
+            if reading.standings.contains(where: { $0.placement == 1 && ([$0.name] + $0.members).contains(where: isSelf) }) { outcome = .champion }
+            else if reading.standings.contains(where: { $0.placement == 2 && ([$0.name] + $0.members).contains(where: isSelf) }) { outcome = .runnerUp }
+        } else if let nextAppearance {
+            outcome = giriInferredStageKind(nextAppearance) == .repechage && giriInferredStageKind(block.stage) != .repechage ? .eliminated : .advanced
+        } else if !later.isEmpty {
+            outcome = .eliminated
+        }
+        output.append(GiriLiveSelfResult(blockID: block.id, stage: block.stage, block: block.block, placement: placement, total: mine.total,
+                                         scores: mine.scores, outcome: outcome,
+                                         opponents: block.entries.filter { $0.id != mine.id }.map(\.name),
+                                         others: block.entries.filter { $0.id != mine.id }.map { ($0.name, $0.total) },
+                                         prompts: block.prompts))
+    }
+    return output
+}
+
+/// 段階ごとの組み合わせ（ブロックごとの組と、あとの段階にも出た勝ち上がり）。
+func giriLiveResultBoards(_ reading: GiriLiveResultReading) -> [(stage: String, blocks: [GiriBoardBlock])] {
+    let blocks = reading.blocks.filter { !$0.stage.contains("エキシビション") }
+    var stageOrder: [String] = []
+    for block in blocks where !stageOrder.contains(block.stage) { stageOrder.append(block.stage) }
+    return stageOrder.enumerated().map { position, stage in
+        let laterNames = Set(blocks.filter { stageOrder.dropFirst(position + 1).contains($0.stage) }.flatMap { $0.entries.map { playerSearchKey($0.name) } })
+        let winnersFromStandings = Set(reading.standings.filter { $0.placement == 1 }.map { playerSearchKey($0.name) })
+        let boardBlocks = blocks.filter { $0.stage == stage }.map { block in
+            GiriBoardBlock(name: block.block.isEmpty ? stage : block.block, members: block.entries.map(\.name),
+                           winners: block.entries.map(\.name).filter { laterNames.contains(playerSearchKey($0)) || winnersFromStandings.contains(playerSearchKey($0)) })
+        }
+        return (stage, boardBlocks)
+    }
+}
+
+/// 0.31：イベントページの持ち物（道具がいるか）。分からなければ nil。
+func giriEventPageNeedsTools(_ lines: [String]) -> Bool? {
+    let text = lines.joined(separator: "\n")
+    if text.range(of: #"(持ち物|道具|持参物)\s*[:：]?\s*(なし|不要|特になし|ありません)"#, options: .regularExpression) != nil { return false }
+    if text.range(of: #"(ペン|マーカー|スケッチブック|スケブ|フリップ|ボード|筆記用具|道具|紙)[^\n]{0,20}(持参|お持ち|持ってき|ご用意|必要|必須|持ち込)"#, options: .regularExpression) != nil { return true }
+    if text.range(of: #"(持ち物|持参物)\s*[:：]\s*\S+"#, options: .regularExpression) != nil { return true }
+    return nil
 }

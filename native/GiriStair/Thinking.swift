@@ -1493,7 +1493,14 @@ struct GiriThoughtEditor: View {
                     Section {
                         AppCardSectionTitle(title: isLong ? "採用した回答の結果" : "出した回答の結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket)
                             .listRowSeparator(.hidden)
-                        GiriAnswerResultFields(records: $ownAnswers, teammates: teammates)
+                        // 0.31：結果画面から読み取ったほかの人の回答は、ツボ（他人の回答）に移す（同じ回答は足さない）。
+                        GiriAnswerResultFields(records: Binding(get: { ownAnswers }, set: { value in
+                            ownAnswers = value.filter(\.isOwn)
+                            for record in value where !record.isOwn {
+                                let key = giriResultKey(record.text)
+                                if !otherAnswers.contains(where: { $0.id == record.id || giriResultKey($0.text) == key }) { otherAnswers.append(record) }
+                            }
+                        }), teammates: teammates)
                     }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
                 }
                 if !isNewNote {
@@ -2031,6 +2038,8 @@ struct GiriAnswerResultFields: View {
     @Binding var records: [AnswerRecord]
     /// 0.28：チーム戦のメンバー（自分を除く）。いる時は、出した回答の原案と、メンバーの回答の結果も入れる。
     var teammates: [String] = []
+    /// 0.31：結果画面から読めた自分の回答の結果（大会の回の結果にも入れる）。
+    var onOwnResult: ((AnswerRecord) -> Void)? = nil
     /// 0.15：結果のページのスクリーンショットから、出した回答の順位・得点・投票人数を読む。
     @State private var resultPhoto: PhotosPickerItem?
     @State private var readingResult = false
@@ -2057,6 +2066,10 @@ struct GiriAnswerResultFields: View {
                 GiriIntegerField(title: "投票人数（任意）", value: recordBinding(record.id).voterCount, suffix: "人")
                 if let value = record.pointsPerVoter {
                     LabeledContent("1人あたり", value: giriScoreText(value))
+                }
+                // 0.31：結果画面の点の内訳（何点に何人）。
+                if !record.pointCounts.isEmpty {
+                    LabeledContent("内訳", value: giriPointCountsText(record.pointCounts))
                 }
                 if !teammates.isEmpty {
                     // 0.28：チームで出した回答の原案（成績は原案の人に数える）。
@@ -2096,6 +2109,9 @@ struct GiriAnswerResultFields: View {
             do {
                 guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
                 let lines = try await GiriParticipantOCR.recognizeLines(data)
+                // 0.31：回答ごとに「〇〇さんの作品」と順位・得点が並ぶ結果画面は、全部の回答を読み、
+                // 自分の回答の結果と内訳を入れて、ほかの人の回答と得点も残す。
+                if readFullPage(lines) { return }
                 let voters = giriVoterCountReading(lines: lines)
                 var found = 0
                 for index in records.indices where records[index].isOwn && records[index].isSubmitted {
@@ -2108,6 +2124,36 @@ struct GiriAnswerResultFields: View {
                 if found == 0 { store.errorMessage = "結果の画像から、出した回答が見つかりませんでした。回答の文が写っている画面を選んでください。" }
             } catch { store.errorMessage = error.localizedDescription }
         }
+    }
+
+    /// 0.31：結果画面を回答ごとに読めた時は true（自分の回答が見つからない時は false にして、以前の読み方にする）。
+    private func readFullPage(_ lines: [GiriOCRLine]) -> Bool {
+        let page = giriNetResultPage(lines: lines)
+        let own = records.indices.filter { records[$0].isOwn && records[$0].isSubmitted }
+        guard page.entries.count >= 2,
+              let entryIndex = giriNetResultOwnEntry(page, answers: own.map { records[$0].text }, isSelf: store.preferences.isSelf) else { return false }
+        let entry = page.entries[entryIndex]
+        let entryKey = giriResultKey(entry.text)
+        let target = own.first { index in
+            let key = giriResultKey(records[index].text)
+            return !key.isEmpty && (key == entryKey || key.hasPrefix(String(entryKey.prefix(8))) || entryKey.hasPrefix(String(key.prefix(8))))
+        } ?? (own.count == 1 ? own.first : nil)
+        guard let target else { return false }
+        if records[target].placement == nil { records[target].placement = entry.placement }
+        if records[target].points == nil { records[target].points = entry.points }
+        if records[target].voterCount == nil { records[target].voterCount = page.voterCount }
+        if records[target].pointCounts.isEmpty { records[target].pointCounts = entry.pointCounts }
+        onOwnResult?(records[target])
+        // ほかの人の回答（同じ回答はもう一度足さない）。
+        for (index, other) in page.entries.enumerated() where index != entryIndex {
+            let key = giriResultKey(other.text)
+            guard key.count >= 2, !records.contains(where: { giriResultKey($0.text) == key }) else { continue }
+            var record = AnswerRecord(text: other.text, placement: other.placement, points: other.points, voterCount: page.voterCount,
+                                      answerer: other.author.isEmpty ? "回答者不明" : other.author)
+            record.pointCounts = other.pointCounts
+            records.append(record)
+        }
+        return true
     }
 
     private func recordBinding(_ id: String) -> Binding<AnswerRecord> {

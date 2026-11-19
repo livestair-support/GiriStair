@@ -184,6 +184,18 @@ struct GiriResultEntry: View {
     @State private var existing = Set<String>()
     @State private var loaded = false
     @State private var votingOnlyQuestion = false
+    /// 0.31：保存したら結果の画面を閉じるか（段階の画面の保存は閉じずに一覧へ戻る）。
+    @State private var closeAfterSave = true
+    /// 0.31：通過した後、次の段階（ネットは次の回）を足すかの確認。
+    @State private var nextStageQuestion: GiriNextStageQuestion?
+    /// 0.31：記事から読み取って、保存する時に足すお題。
+    @State private var pendingPromptNotes: [ThoughtNote] = []
+    /// 0.31：生大喜利の結果の記事（note など）の読み取り。
+    @State private var articlePhotos: [PhotosPickerItem] = []
+    @State private var readingArticle = false
+    @State private var pastingArticle = false
+    @State private var articleText = ""
+    @State private var liveReview: GiriLiveResultReviewData?
     @State private var leave = false
     @State private var originalResult = TournamentResult()
     @State private var originalPlacement: Int?
@@ -211,7 +223,7 @@ struct GiriResultEntry: View {
 
 
     private var event: GiriEvent? { store.events.first { $0.id == eventID } }
-    private var changed: Bool { result != originalResult || placement != originalPlacement || standings != originalStandings || answerNotes != originalAnswerNotes || tournamentTitle != originalTitle || boards != originalBoards }
+    private var changed: Bool { result != originalResult || placement != originalPlacement || standings != originalStandings || answerNotes != originalAnswerNotes || tournamentTitle != originalTitle || boards != originalBoards || !pendingPromptNotes.isEmpty }
     private var stageIndex: Int? { result.stages.firstIndex { $0.id == selectedID } }
 
     var body: some View {
@@ -244,7 +256,7 @@ struct GiriResultEntry: View {
             ToolbarItem(placement: .topBarLeading) {
                 if changed { Button { leave = true } label: { Image(systemName: "chevron.left") }.accessibilityLabel("戻る") }
             }
-            ToolbarItem(placement: .confirmationAction) { Button("保存", action: requestSave).disabled(event == nil) }
+            ToolbarItem(placement: .confirmationAction) { Button("保存") { requestSave(closing: true) }.disabled(event == nil) }
         }
         .onAppear { if !loaded { load() } }
         .onChange(of: changed) { _, value in navigation.markResultEntry(eventID, unsaved: value) }
@@ -259,9 +271,16 @@ struct GiriResultEntry: View {
                                     existing.remove(id)
                                     result.stages.removeAll { $0.id == id }
                                     editingStageID = nil
-                                })
+                                },
+                                // 0.31：段階・回の画面でも保存できる。保存したら段階の一覧に戻る。
+                                onSave: { requestSave(closing: false) })
             }
         }
+        .confirmationDialog(nextStageQuestion?.title ?? "", isPresented: Binding(get: { nextStageQuestion != nil }, set: { if !$0 { nextStageQuestion = nil } }),
+                            titleVisibility: .visible, presenting: nextStageQuestion) { question in
+            Button("追加する") { addNextStage(question) }
+            Button("あとで", role: .cancel) { if closeAfterSave { dismiss() } }
+        } message: { question in Text(question.message) }
         .alert("以後の投稿・投票", isPresented: $votingOnlyQuestion) {
             Button("そのまま") { save(votingOnly: false) }
             Button("投票だけにする") { save(votingOnly: true) }
@@ -271,7 +290,35 @@ struct GiriResultEntry: View {
             navigation.markResultEntry(eventID, unsaved: false)
             dismiss()
         }
-        .sheet(item: $nextDraft, onDismiss: { if resultSaved { dismiss() } }) { action in
+        .sheet(item: $liveReview) { review in
+            NavigationStack { GiriLiveResultReviewSheet(review: review) { selection in applyLiveResult(selection) } }
+        }
+        .sheet(isPresented: $pastingArticle) {
+            NavigationStack {
+                Form {
+                    Section {
+                        AppCardSectionTitle(title: "結果の記事", systemImage: "doc.text", accentColor: AppSectionAccent.scan,
+                                            infoTitle: "貼り付けについて",
+                                            infoMessage: "noteなどの結果の記事の文をそのまま貼り付けます。段階・ブロックの見出しと点の行から読み取ります。")
+                            .listRowSeparator(.hidden)
+                        TextField("記事の文", text: $articleText, axis: .vertical).lineLimit(8...30)
+                    }.appSectionCardStyle(accentColor: AppSectionAccent.scan)
+                }
+                .appEditorFormStyle()
+                .navigationTitle("記事を貼り付け").navigationBarTitleDisplayMode(.inline)
+                .giriNavigationBarStyle()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { pastingArticle = false } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("読み取る") {
+                            pastingArticle = false
+                            readArticle(articleText)
+                        }.disabled(articleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }
+        }
+        .sheet(item: $nextDraft, onDismiss: { if resultSaved && closeAfterSave { dismiss() } }) { action in
             NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
         }
     }
@@ -381,6 +428,97 @@ struct GiriResultEntry: View {
         stage.laps = giriNormalizedLaps(stage, lapCount: 1)
         result.stages.append(stage)
         existing.insert(stage.id)
+    }
+
+    /// 0.31：結果の記事の読み取り（画面の画像はいくつでも・文の貼り付け）。
+    @ViewBuilder private func articleReadRows(_ event: GiriEvent) -> some View {
+        PhotosPicker(selection: $articlePhotos, maxSelectionCount: 20, matching: .images, photoLibrary: .shared()) {
+            VStack(alignment: .leading, spacing: 3) {
+                Label(readingArticle ? "読み取り中" : "結果の記事を画像から読み取る", systemImage: "text.viewfinder")
+                Text("noteなどの結果の記事の画面から、自分の結果・優勝など・組み合わせ・お題を読みます。").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(readingArticle)
+        .tint(accentActionColor)
+        .onChange(of: articlePhotos) { _, items in readArticlePhotos(items) }
+        Button { articleText = ""; pastingArticle = true } label: {
+            Label("結果の記事の文を貼り付けて読み取る", systemImage: "doc.on.clipboard")
+        }
+        .tint(accentActionColor)
+    }
+
+    private func readArticlePhotos(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
+        readingArticle = true
+        Task {
+            defer { readingArticle = false; articlePhotos = [] }
+            do {
+                var texts: [String] = []
+                for item in items {
+                    guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
+                    texts.append(giriOCRText(try await GiriParticipantOCR.recognizeLines(data)))
+                }
+                readArticle(texts.joined(separator: "\n"))
+            } catch { store.errorMessage = error.localizedDescription }
+        }
+    }
+
+    private func readArticle(_ text: String) {
+        let reading = giriLiveResultReading(text: text)
+        guard !reading.blocks.isEmpty || !reading.standings.isEmpty else {
+            store.errorMessage = "結果（予選・決勝などの見出しと点、優勝など）を読み取れませんでした。結果の書いてある部分を選んでください。"
+            return
+        }
+        liveReview = GiriLiveResultReviewData(reading: reading, text: text)
+    }
+
+    /// 0.31：記事から読み取った結果を入れる。入力済みの欄は変えない（新しい段階は足す）。お題は保存する時に足す。
+    private func applyLiveResult(_ selection: GiriLiveResultSelection) {
+        guard let event else { return }
+        var stageIDs: [String: String] = [:]
+        for stage in result.stages where stage.roundId == nil { stageIDs[playerSearchKey(stage.name)] = stageIDs[playerSearchKey(stage.name)] ?? stage.id }
+        for item in selection.selfResults {
+            let key = playerSearchKey(item.stage)
+            let index = result.stages.firstIndex { $0.roundId == nil && playerSearchKey($0.name) == key }
+            var stage = index.map { result.stages[$0] } ?? ResultStage()
+            if index == nil { stage.name = item.stage }
+            if stage.outcome == .unrecorded { stage.outcome = item.outcome }
+            if item.scores.count > 1 && stage.promptCount == nil {
+                stage.votesPerPrompt = true
+                stage.promptCount = item.scores.count
+            }
+            var laps = giriNormalizedLaps(stage, lapCount: max(1, stage.laps.count))
+            var lap = laps[0]
+            if lap.group.isEmpty { lap.group = item.block }
+            if lap.opponents.isEmpty { lap.opponents = item.opponents }
+            if lap.points.allSatisfy({ $0 == nil }) { lap.points = item.scores.count > 1 && stage.votesPerPrompt ? item.scores.map { Optional($0) } : [item.total] }
+            if lap.placement == nil { lap.placement = item.placement }
+            if lap.others.isEmpty { lap.others = item.others.map { StageOtherScore(name: $0.name, points: $0.total) } }
+            laps[0] = lap
+            stage.laps = laps
+            stage.laps = giriNormalizedLaps(stage, lapCount: laps.count)
+            if let index { result.stages[index] = stage } else { result.stages.append(stage) }
+            stageIDs[key] = stage.id
+        }
+        for board in selection.boards {
+            guard let stageID = stageIDs[playerSearchKey(board.stage)], !board.blocks.isEmpty else { continue }
+            if let index = boards.firstIndex(where: { $0.id == stageID }) {
+                if boards[index].blocks.isEmpty { boards[index].blocks = board.blocks }
+            } else {
+                boards.append(GiriStageBoard(id: stageID, blocks: board.blocks))
+            }
+        }
+        for standing in selection.standings where !standings.contains(where: { $0.placement == standing.placement && (playerSearchKey($0.teamName) == playerSearchKey(standing.name) || $0.playerNames.contains { playerSearchKey($0) == playerSearchKey(standing.name) }) }) {
+            standings.append(TournamentStanding(placement: standing.placement, playerNames: standing.members.isEmpty ? [standing.name] : standing.members,
+                                                teamName: standing.members.isEmpty ? "" : standing.name))
+        }
+        for item in selection.prompts {
+            for var note in giriBulkPromptNotes(text: item.prompt.text, eventID: eventID, resultStageID: stageIDs[playerSearchKey(item.stage)],
+                                                format: event.eventFormat, participates: true) {
+                note.promptAuthor = item.prompt.author
+                if !pendingPromptNotes.contains(where: { giriResultKey($0.prompt) == giriResultKey(note.prompt) }) { pendingPromptNotes.append(note) }
+            }
+        }
     }
 
     /// 0.15：段階がまだない時だけ、大会の仕組みの画像から骨組みを作る。
@@ -615,6 +753,8 @@ struct GiriResultEntry: View {
                     .buttonStyle(.plain)
             }
             if wide.isEmpty && rounds.isEmpty { skeletonReadRow(event) }
+            // 0.31：生大喜利の結果の記事（note など）から、自分の結果・優勝など・組み合わせ・お題を読む。
+            if !event.eventFormat.hasOnlineRounds { articleReadRows(event) }
             // 0.23：大会に選んだルールの段階を入れる。
             if wide.isEmpty && rounds.isEmpty, let rule = event.ruleID.flatMap({ store.rule($0) }), !rule.stages.isEmpty {
                 Button { applyRuleStages(rule) } label: {
@@ -982,7 +1122,8 @@ struct GiriResultEntry: View {
         loaded = true
     }
 
-    private func requestSave() {
+    private func requestSave(closing: Bool) {
+        closeAfterSave = closing
         guard let event else { return }
         let wasEliminated = event.tournamentResult?.outcome == .eliminated
         let oldStageIDs = Set((event.tournamentResult?.stages ?? []).filter { $0.outcome == .eliminated }.map(\.id))
@@ -1027,14 +1168,29 @@ struct GiriResultEntry: View {
                 event.rounds = rounds
             }
             syncRoundResultsToAnswers()
-            let notes = mergedAnswerResults()
+            // 0.31：記事から読み取ったお題（同じお題はもう一度足さない）も保存する。
+            let promptKeys = Set(store.notes.filter { $0.eventId == eventID }.map { giriResultKey($0.prompt) })
+            let newPrompts = pendingPromptNotes.filter { !promptKeys.contains(giriResultKey($0.prompt)) }
+            let notes = mergedAnswerResults() + newPrompts
             try store.saveResult(event: event, notes: notes)
             navigation.markResultEntry(eventID, unsaved: false)
             playLiveStairSaveFeedback()
             resultSaved = true
-            // 通過したら、そのまま次の段階（1回目に全N回を入れた段階は次の回）の入力を開く。保存するまで追加しない。
-            if shouldOfferNextRound(event) { nextDraft = giriNextRoundIsParallel(event.effectiveRounds) ? .sameStage : .nextStage }
-            else { dismiss() }
+            // 0.31：通過したら、次の段階（1回目に全N回を入れた段階は次の回）を足すか聞いてから開く。保存するまで追加しない。
+            let question: GiriNextStageQuestion? = shouldOfferNextRound(event) ? .online(sameStage: giriNextRoundIsParallel(event.effectiveRounds))
+                : liveNextStageName(event).map { GiriNextStageQuestion.live(name: $0) }
+            // 保存した内容を、この画面の「変更なし」の状態にする（段階の画面から保存した時は、続けて入力できる）。
+            existing = Set(saved.stages.map(\.id))
+            originalResult = result
+            originalPlacement = placement
+            originalStandings = standings
+            originalAnswerNotes = answerNotes
+            originalTitle = tournamentTitle
+            originalBoards = boards
+            pendingPromptNotes = []
+            if !closeAfterSave { editingStageID = nil }
+            if let question { nextStageQuestion = question }
+            else if closeAfterSave { dismiss() }
         } catch { store.errorMessage = error.localizedDescription }
     }
 
@@ -1071,11 +1227,40 @@ struct GiriResultEntry: View {
                 records[index].voterCount = changed.voterCount
                 records[index].maxPointsPerVoter = changed.maxPointsPerVoter
                 records[index].memo = changed.memo
+                records[index].pointCounts = changed.pointCounts
             }
+            // 0.31：結果画面から読み取ったほかの人の回答を足す。
+            let known = Set(records.map(\.id))
+            records.append(contentsOf: edited.answerRecords.filter { !known.contains($0.id) && !$0.isOwn })
             current.answerRecords = records
             current.usesAnswerRecords = true
             current.updatedAt = Date()
             return current
+        }
+    }
+
+    /// 0.31：生大喜利の大会で通過した段階が最後の段階の時、次の段階の名前（予選の後は本戦など）。決勝は nil。
+    private func liveNextStageName(_ event: GiriEvent) -> String? {
+        guard !event.eventFormat.hasOnlineRounds, event.meetingType == .tournament else { return nil }
+        let wide = result.stages.filter { $0.roundId == nil }
+        guard let advanced = wide.last(where: { stage in
+            stage.outcome == .advanced && originalResult.stages.first(where: { $0.id == stage.id })?.outcome != .advanced
+        }), advanced.id == wide.last?.id, advanced.effectiveKind != .final else { return nil }
+        return giriEditorNextStage(advanced.name, live: true)
+    }
+
+    /// 0.31：次の段階を足して開く。ネットは日程を自動で入れた次の回の入力（確認して保存する）、生大喜利は結果の一覧に足して開く。
+    private func addNextStage(_ question: GiriNextStageQuestion) {
+        switch question {
+        case .online(let sameStage):
+            nextDraft = sameStage ? .sameStage : .nextStage
+        case .live(let name):
+            var next = ResultStage()
+            next.name = name
+            next.laps = giriNormalizedLaps(next, lapCount: 1)
+            result.stages.append(next)
+            closeAfterSave = false
+            editingStageID = next.id
         }
     }
 
@@ -1112,6 +1297,8 @@ struct GiriStageEditor: View {
     /// この大会で入力済みの名前（自分以外）。対戦相手の候補に先に出す。
     var namePriority: [String] = []
     let onDelete: () -> Void
+    /// 0.31：この画面の保存（結果全体を保存して段階の一覧に戻る）。
+    var onSave: (() -> Void)? = nil
     @State private var deleting = false
 
     private var isStageWide: Bool { stage.roundId == nil }
@@ -1202,7 +1389,14 @@ struct GiriStageEditor: View {
                             .font(.subheadline.weight(.semibold)).lineLimit(4)
                         // 0.17：画像のお題は画像も出す。
                         if !answerNotes[index].imageDataBase64.isEmpty { GiriThoughtImage(base64: answerNotes[index].imageDataBase64) }
-                        GiriAnswerResultFields(records: $answerNotes[index].answerRecords, teammates: previewTeammates)
+                        GiriAnswerResultFields(records: $answerNotes[index].answerRecords, teammates: previewTeammates,
+                                               onOwnResult: { record in
+                                                   // 0.31：結果画面から読めた自分の結果を、この回の結果にも入れる（入れていない欄だけ）。
+                                                   guard !isStageWide else { return }
+                                                   if stage.placement == nil { stage.placement = record.placement }
+                                                   if stage.points == nil { stage.points = record.points }
+                                                   if stage.voterCount == nil { stage.voterCount = record.voterCount }
+                                               })
                     }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
                 }
             }
@@ -1218,6 +1412,11 @@ struct GiriStageEditor: View {
         .navigationTitle(stage.name.isEmpty ? "段階" : stage.name)
         .navigationBarTitleDisplayMode(.inline)
         .giriNavigationBarStyle()
+        .toolbar {
+            if let onSave {
+                ToolbarItem(placement: .confirmationAction) { Button("保存", action: onSave).fontWeight(.bold) }
+            }
+        }
         .giriDeleteAlert(isStageWide ? "段階の記録を削除しますか？" : "この回の記録を削除しますか？", isPresented: $deleting,
                          message: "「\(stage.name)」の結果を削除します。お題と回答は残ります。保存すると確定します。") {
             // 親の editingStageID を外すと、この画面は自動で閉じる（dismiss を重ねない）。
@@ -1226,8 +1425,8 @@ struct GiriStageEditor: View {
     }
 
     /// 段階の結果の選択肢（決勝は優勝・準優勝など、それ以外は通過・敗退）。以前の版で選んだ値も残す。
+    /// 0.31：回の結果も段階と同じく、決勝の回だけ優勝・準優勝を出す。
     private var outcomeChoices: [TournamentOutcome] {
-        guard isStageWide else { return [.unrecorded, .advanced, .eliminated, .champion, .runnerUp, .placed, .other] }
         var values = giriStageOutcomeChoices(stage.effectiveKind)
         if !values.contains(stage.outcome) { values.append(stage.outcome) }
         return values
@@ -2383,4 +2582,193 @@ struct GiriKumiteResultEditor: View {
             dismiss()
         }
     }
+}
+
+
+/// 0.31：通過した後に次の段階を足すかの確認。
+enum GiriNextStageQuestion: Identifiable, Equatable {
+    /// ネット大喜利：次の回（sameStage は同じ段階の次の回）。日程を自動で入れた入力を開く。
+    case online(sameStage: Bool)
+    /// 生大喜利：結果の一覧に次の段階を足す。
+    case live(name: String)
+    var id: String {
+        switch self {
+        case .online(let sameStage): return sameStage ? "online-same" : "online-next"
+        case .live(let name): return "live-" + name
+        }
+    }
+    var title: String {
+        switch self {
+        case .online(let sameStage): return sameStage ? "同じ段階の次の回を追加しますか？" : "次の段階を追加しますか？"
+        case .live(let name): return "「\(name)」を追加しますか？"
+        }
+    }
+    var message: String {
+        switch self {
+        case .online: return "日程は前の回から自動で入れます。確認してから保存してください。"
+        case .live: return "結果の一覧に足して、そのまま入力を開きます。"
+        }
+    }
+}
+
+
+/// 0.31：記事の読み取り結果（確認画面に渡す）。
+struct GiriLiveResultReviewData: Identifiable {
+    let id = UUID().uuidString
+    var reading: GiriLiveResultReading
+    var text: String
+}
+
+/// 0.31：確認画面で選んだ、入れる内容。
+struct GiriLiveResultSelection {
+    var selfResults: [GiriLiveSelfResult] = []
+    var standings: [GiriLiveStanding] = []
+    var boards: [(stage: String, blocks: [GiriBoardBlock])] = []
+    var prompts: [(stage: String, prompt: GiriLivePrompt)] = []
+}
+
+/// 0.31：結果の記事の読み取りの確認（自分の結果・優勝など・組み合わせ・自分の出た組のお題）。
+struct GiriLiveResultReviewSheet: View {
+    @EnvironmentObject private var store: GiriStore
+    @Environment(\.dismiss) private var dismiss
+    let review: GiriLiveResultReviewData
+    let onApply: (GiriLiveResultSelection) -> Void
+    @State private var loaded = false
+    @State private var selfResults: [GiriLiveSelfResult] = []
+    @State private var useSelf = true
+    @State private var useStandings = true
+    @State private var useBoards = true
+    @State private var prompts: [GiriLiveReviewPrompt] = []
+
+    private var boards: [(stage: String, blocks: [GiriBoardBlock])] { giriLiveResultBoards(review.reading) }
+
+    var body: some View {
+        Form {
+            Section {
+                AppCardSectionTitle(title: "自分の結果", systemImage: "trophy", accentColor: AppSectionAccent.ticket,
+                                    infoTitle: "自分の結果について",
+                                    infoMessage: "自分（設定の名前・別名義）が出た組の点と組の中の順位です。通過はあとの段階にも出ているかで決めます。")
+                    .listRowSeparator(.hidden)
+                if selfResults.isEmpty {
+                    Text("記事の中に自分の名前が見つかりませんでした。").font(.subheadline).foregroundStyle(.secondary)
+                } else {
+                    Toggle("自分の結果を入れる", isOn: $useSelf).tint(AppSectionAccent.ticket)
+                    ForEach(selfResults) { item in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text([item.stage, item.block].filter { !$0.isEmpty }.joined(separator: " ")).font(.subheadline.weight(.semibold))
+                            Text(selfResultText(item)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
+            if !review.reading.standings.isEmpty {
+                Section {
+                    AppCardSectionTitle(title: "上位成績", systemImage: "medal", accentColor: AppSectionAccent.favorite).listRowSeparator(.hidden)
+                    Toggle("上位成績を入れる", isOn: $useStandings).tint(AppSectionAccent.favorite)
+                    ForEach(Array(review.reading.standings.enumerated()), id: \.offset) { _, standing in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text((standing.placement == 1 ? "優勝" : standing.placement == 2 ? "準優勝" : "\(standing.placement)位") + "　" + standing.name)
+                                .font(.subheadline)
+                            if !standing.members.isEmpty {
+                                Text(standing.members.joined(separator: "・")).font(.caption).foregroundStyle(.secondary).padding(.leading, 16)
+                            }
+                        }
+                    }
+                }.appSectionCardStyle(accentColor: AppSectionAccent.favorite)
+            }
+            if !boards.isEmpty {
+                Section {
+                    AppCardSectionTitle(title: "組み合わせ", systemImage: "rectangle.split.3x1", accentColor: AppSectionAccent.artist,
+                                        infoTitle: "組み合わせについて",
+                                        infoMessage: "自分が出た段階だけ、ブロックごとの組と勝ち上がりを入れます。")
+                        .listRowSeparator(.hidden)
+                    Toggle("組み合わせを入れる", isOn: $useBoards).tint(AppSectionAccent.artist)
+                    ForEach(Array(boards.enumerated()), id: \.offset) { _, board in
+                        Text(board.stage + "　" + "\(board.blocks.count)ブロック・\(board.blocks.reduce(0) { $0 + $1.members.count })組")
+                            .font(.subheadline)
+                    }
+                }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+            }
+            if !prompts.isEmpty {
+                Section {
+                    AppCardSectionTitle(title: "お題（自分の出た組）", systemImage: "text.bubble", accentColor: AppSectionAccent.memo,
+                                        infoTitle: "お題について",
+                                        infoMessage: "選んだお題をお題/回答に足します。折り返しでつながったお題は直してから足してください。")
+                        .listRowSeparator(.hidden)
+                    ForEach($prompts) { $prompt in
+                        HStack(alignment: .top, spacing: 10) {
+                            Button { prompt.included.toggle() } label: {
+                                Image(systemName: prompt.included ? "checkmark.circle.fill" : "circle")
+                                    .font(.title3)
+                                    .foregroundStyle(prompt.included ? accentActionColor : Color.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                            VStack(alignment: .leading, spacing: 2) {
+                                TextField("お題", text: $prompt.text, axis: .vertical).lineLimit(1...6)
+                                Text([prompt.stage, prompt.block, prompt.author.isEmpty ? "" : "作題：" + prompt.author].filter { !$0.isEmpty }.joined(separator: "・"))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+            }
+            Section {
+                DisclosureGroup("読み取った原文") {
+                    Text(review.text).font(.footnote.monospaced()).textSelection(.enabled).padding(.vertical, 6)
+                }
+            }.appSectionCardStyle(accentColor: AppSectionAccent.scan)
+        }
+        .appEditorFormStyle()
+        .navigationTitle("結果の記事").navigationBarTitleDisplayMode(.inline)
+        .giriNavigationBarStyle()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) { Button("反映", action: apply).fontWeight(.bold) }
+        }
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        guard !loaded else { return }
+        loaded = true
+        selfResults = giriLiveSelfResults(review.reading, isSelf: store.preferences.isSelf)
+        let mine = Set(selfResults.map(\.blockID))
+        prompts = review.reading.blocks.filter { mine.contains($0.id) }.flatMap { block in
+            block.prompts.map { GiriLiveReviewPrompt(stage: block.stage, block: block.block, text: $0.text, author: $0.author) }
+        }
+    }
+
+    private func selfResultText(_ item: GiriLiveSelfResult) -> String {
+        var parts: [String] = []
+        func plain(_ value: Double) -> String { value == value.rounded() ? String(Int(value)) : String(value) }
+        if let total = item.total { parts.append((item.scores.count > 1 ? item.scores.map(plain).joined(separator: "+") + "=" + plain(total) : plain(total)) + "点") }
+        if let placement = item.placement { parts.append("組の\(placement)位") }
+        if item.outcome != .unrecorded { parts.append(item.outcome.title) }
+        if !item.opponents.isEmpty { parts.append("相手：" + item.opponents.joined(separator: "・")) }
+        return parts.joined(separator: "　")
+    }
+
+    private func apply() {
+        var selection = GiriLiveResultSelection()
+        if useSelf { selection.selfResults = selfResults }
+        if useStandings { selection.standings = review.reading.standings }
+        if useBoards {
+            let stages = Set(selfResults.map { playerSearchKey($0.stage) })
+            selection.boards = boards.filter { stages.contains(playerSearchKey($0.stage)) }
+        }
+        selection.prompts = prompts.filter { $0.included && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { ($0.stage, GiriLivePrompt(text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines), author: $0.author)) }
+        onApply(selection)
+        playLiveStairSaveFeedback()
+        dismiss()
+    }
+}
+
+struct GiriLiveReviewPrompt: Identifiable, Equatable {
+    var id = UUID().uuidString
+    var stage: String
+    var block: String
+    var text: String
+    var author: String
+    var included = true
 }

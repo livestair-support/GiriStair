@@ -647,6 +647,8 @@ struct GiriEventEditor: View {
         value.venueRoom = Self.merged(value.venueRoom, page.venueRoom, replace: replace)
         value.organizer = Self.merged(value.organizer, page.organizer, replace: replace)
         if let fee = page.fee, replace || value.entryFee == nil { value.entryFee = fee }
+        // 0.31：持ち物（道具がいるか）。読めた時だけ。
+        if value.eventFormat == .live, let tools = page.needsTools, replace || !value.needsTools { value.needsTools = tools }
         // 0.28：会の種類は、新しく登録する時（まだ通常のまま）か置き換える時だけ入れる。
         // 0.29：確認画面で選び直した種類（通常を含む）を入れる。
         if replace || (event == nil && value.meetingType == .casual && !value.isProject && !value.isKumite && !value.isLiveShow) {
@@ -797,6 +799,11 @@ struct GiriEventEditor: View {
                     // 参加費は生大喜利だけ（スプシ系・ネットは参加費なし）。
                     if draft.eventFormat == .live || draft.entryFee != nil {
                         GiriEntryFeeField(value: $draft.entryFee)
+                    }
+                    // 0.31：生大喜利で道具（ペン・スケッチブックなど）を持っていく必要があるか。
+                    if draft.eventFormat == .live {
+                        Toggle(isOn: $draft.needsTools) { GiriEditorLabel("道具を持っていく") }
+                            .tint(AppSectionAccent.live)
                     }
                 }
                 // イベントページ・サイトのURL（どの形式でも入れられる）。

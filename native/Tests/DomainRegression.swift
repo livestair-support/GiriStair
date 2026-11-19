@@ -2423,6 +2423,102 @@ struct DomainRegression {
                       "every listed participant gets a team, so the team count matches the participants")
         }
 
+        // 0.31 result reading: net result screens, live result articles, tools and point breakdowns (fictional names only).
+        do {
+            func at(_ text: String, x: Double, y: Double, left: Double) -> GiriOCRLine { GiriOCRLine(text: text, midX: x, midY: y, height: 0.01, minX: left) }
+            let listPage = [at("投稿数：3", x: 0.2, y: 0.05, left: 0.1), at("投票数：20", x: 0.2, y: 0.07, left: 0.1), at("お題", x: 0.1, y: 0.12, left: 0.05),
+                            at("架空のお題です", x: 0.3, y: 0.15, left: 0.1),
+                            at("1位", x: 0.06, y: 0.30, left: 0.02), at("はるかさんの作品", x: 0.4, y: 0.30, left: 0.1), at("最初の回答です", x: 0.4, y: 0.32, left: 0.1),
+                            at("50点 (2.5) 4点 5 3点 10", x: 0.4, y: 0.34, left: 0.1),
+                            at("2位", x: 0.06, y: 0.40, left: 0.02), at("たろうさんの作品", x: 0.4, y: 0.40, left: 0.1), at("二番目の回答", x: 0.4, y: 0.42, left: 0.1),
+                            at("30点 (1.5) 4点 2 3点 4 2点 5", x: 0.4, y: 0.44, left: 0.1),
+                            at("3位", x: 0.06, y: 0.50, left: 0.02), at("じろうさんの作品", x: 0.4, y: 0.50, left: 0.1), at("三番目の回答", x: 0.4, y: 0.52, left: 0.1),
+                            at("10点 (0.5) 2点 5", x: 0.4, y: 0.54, left: 0.1)]
+            let net = giriNetResultPage(lines: listPage)
+            try check(net.submissionCount == 3 && net.voterCount == 20 && net.prompt == "架空のお題です" && net.entries.count == 3, "a net result page gives its counts, prompt and every answer")
+            try check(net.entries.map(\.placement) == [1, 2, 3] && net.entries.map(\.points) == [50, 30, 10] && net.entries.map(\.author) == ["はるか", "たろう", "じろう"]
+                      && net.entries.map(\.text) == ["最初の回答です", "二番目の回答", "三番目の回答"]
+                      && net.entries[0].pointCounts == [GiriPointCount(points: 4, count: 5), GiriPointCount(points: 3, count: 10)],
+                      "each answer has its rank, points, author, text and point breakdown")
+            try check(giriNetResultOwnEntry(net, answers: ["二番目の回答"], isSelf: { _ in false }) == 1 && giriNetResultOwnEntry(net, answers: [], isSelf: { $0 == "じろう" }) == 2,
+                      "the own answer is found by its text or by the author")
+            let tablePage = [at("1", x: 0.05, y: 0.30, left: 0.04), at("39", x: 0.12, y: 0.30, left: 0.10), at("[No.0] 4点1 3点3 2点8 はるかさんの作品", x: 0.5, y: 0.295, left: 0.2),
+                             at("最初の回答", x: 0.4, y: 0.31, left: 0.2),
+                             at("2", x: 0.05, y: 0.35, left: 0.04), at("36", x: 0.12, y: 0.35, left: 0.10), at("[No.11] 4点0 3点4 2点7 たろうさんの作品", x: 0.5, y: 0.345, left: 0.2),
+                             at("二番目の回答", x: 0.4, y: 0.36, left: 0.2)]
+            let table = giriNetResultPage(lines: tablePage)
+            try check(table.entries.map(\.placement) == [1, 2] && table.entries.map(\.points) == [39, 36] && table.entries.map(\.author) == ["はるか", "たろう"]
+                      && table.entries[0].text == "最初の回答" && table.entries[0].pointCounts == [GiriPointCount(points: 4, count: 1), GiriPointCount(points: 3, count: 3), GiriPointCount(points: 2, count: 8)],
+                      "table-shaped results read rank and points from the left columns")
+
+            var record = AnswerRecord(text: "回答")
+            let plainRecord = try JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any] ?? [:]
+            try check(plainRecord["pointCounts"] == nil, "answers without a breakdown keep the older JSON shape")
+            record.pointCounts = [GiriPointCount(points: 4, count: 3)]
+            try check(try JSONDecoder().decode(AnswerRecord.self, from: JSONEncoder().encode(record)).pointCounts == record.pointCounts && giriPointCountsText(record.pointCounts) == "4点×3人",
+                      "point breakdowns roundtrip")
+
+            let article = """
+            架空の大会 結果まとめ
+            予選
+            予選Aブロック
+            画像提供：はるか
+            架空のお題その一（３）
+            画像提供：たろう
+            架空のお題その二（家）
+            はるか
+            4+7+1=12pt
+            たろう 10+2+11=23pt
+            じろう
+            1+0+8=9pt
+            予選Bブロック
+            架空のお題その三
+            （お題提供：はるか）
+            さぶろう
+            しろう
+            4+0+6=10pt
+            5+0+1=6pt
+            本戦
+            本戦Aブロック
+            架空の本戦のお題（３）
+            たろう
+            9+4=13pt
+            さぶろう 2+1=3pt
+            決勝
+            架空の決勝のお題（家）
+            たろう
+            10pt
+            優勝
+            たろう
+            """
+            let live = giriLiveResultReading(text: article)
+            try check(live.blocks.map(\.title) == ["予選 Aブロック", "予選 Bブロック", "本戦 Aブロック", "決勝"], "stages and blocks come from headings")
+            try check(live.blocks[0].prompts.map(\.text) == ["架空のお題その一", "架空のお題その二"] && live.blocks[1].prompts.first?.author == "はるか",
+                      "prompts are split by image credits and short marks, and prompt credits give the author")
+            try check(live.blocks[0].entries.map(\.name) == ["はるか", "たろう", "じろう"] && live.blocks[0].entries[1].scores == [10, 2, 11] && live.blocks[0].entries[1].total == 23
+                      && live.blocks[1].entries.map(\.name) == ["さぶろう", "しろう"] && live.blocks[1].entries.map(\.total) == [10, 6],
+                      "score lines with names before, on the line or in a column are read in order")
+            try check(live.standings == [GiriLiveStanding(placement: 1, name: "たろう")], "the winner is read")
+            let mine = giriLiveSelfResults(live, isSelf: { $0 == "たろう" })
+            try check(mine.map(\.outcome) == [.advanced, .advanced, .champion] && mine.map(\.placement) == [1, 1, 1] && mine[0].opponents == ["はるか", "じろう"],
+                      "own results advance when the player appears in a later stage and the final follows the winner")
+            let liveBoards = giriLiveResultBoards(live)
+            try check(liveBoards.first?.stage == "予選" && liveBoards.first?.blocks.map(\.winners) == [["たろう"], ["さぶろう"]], "boards mark the players who appear later as winners")
+            let teamName = giriLiveResultName("架空団（ねこ）（はるか、たろう）")
+            try check(teamName.name == "架空団（ねこ）" && teamName.members == ["はるか", "たろう"] && giriLiveResultName("じろう（架空団）").members.isEmpty,
+                      "team names keep their own brackets and members come from the last brackets")
+
+            try check(giriEventPageNeedsTools(["持ち物：ペン、スケッチブック"]) == true && giriEventPageNeedsTools(["スケッチブックとペンをご持参ください"]) == true
+                      && giriEventPageNeedsTools(["持ち物：なし"]) == false && giriEventPageNeedsTools(["架空の会"]) == nil, "the tools needed are read from the page")
+            var toolEvent = GiriEvent(title: "道具の会")
+            let plainTools = try JSONSerialization.jsonObject(with: JSONEncoder().encode(toolEvent)) as? [String: Any] ?? [:]
+            try check(plainTools["needsTools"] == nil, "events without tools keep the older JSON shape")
+            toolEvent.needsTools = true
+            try check(try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(toolEvent)).needsTools, "the tools choice roundtrips")
+            try check(!giriStageOutcomeChoices(giriInferredStageKind("予選3回戦")).contains(.champion) && giriStageOutcomeChoices(giriInferredStageKind("決勝")).contains(.champion),
+                      "only finals offer a championship")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

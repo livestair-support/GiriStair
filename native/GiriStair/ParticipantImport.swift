@@ -456,6 +456,9 @@ struct GiriEventPageReview: View {
                 // 0.30：説明に書いてあった共催。
                 if !draft.coOrganizers.isEmpty { valueRow("共催", draft.coOrganizers.joined(separator: "・")) }
                 valueRow("参加費", draft.fee.map { "\($0)円" } ?? "")
+                // 0.31：持ち物（道具を持っていくか）。
+                Toggle(isOn: Binding(get: { draft.needsTools == true }, set: { draft.needsTools = $0 })) { reviewLabel("道具を持っていく") }
+                    .tint(AppSectionAccent.live)
             }.appSectionCardStyle(accentColor: AppSectionAccent.live)
             // 0.30：タッグ・チーム戦は、登録画面と同じくチームごとにメンバーを出し、チームに入っていない人を「チーム未定」に出す。
             if isTeamReview {
