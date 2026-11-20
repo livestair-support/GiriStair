@@ -2591,7 +2591,7 @@ struct DomainRegression {
 
             try check(giriNextStageCandidates(after: "予選1回戦", rule: flowRule, existing: ["予選1回戦"], live: false) == ["予選2回戦", "準々決勝", "準決勝", "決勝"],
                       "the next round of the flow comes first, then later stages")
-            try check(giriNextStageCandidates(after: "予選3回戦", rule: flowRule, existing: ["予選1回戦", "予選2回戦", "予選3回戦"], live: false)== ["準決勝", "予選4回戦", "準々決勝", "決勝"],
+            try check(giriNextStageCandidates(after: "予選3回戦", rule: flowRule, existing: ["予選1回戦", "予選2回戦", "予選3回戦"], live: false) == ["準決勝", "予選4回戦", "準々決勝", "決勝"],
                       "after the last round of a stage the next stage comes first and an extra round stays possible")
             try check(giriNextStageCandidates(after: "予選4回戦", rule: flowRule, existing: [], live: false) == ["予選5回戦", "準々決勝", "準決勝", "決勝"],
                       "names that differ from the rule continue and offer the later rule stages")
