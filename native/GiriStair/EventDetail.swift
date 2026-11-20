@@ -12,6 +12,10 @@ struct GiriEventDetail: View {
     @State private var promptRoundID: String?
     @State private var showCycleEditor = false
     @State private var nextDraft: GiriRoundDraftAction?
+    /// 0.33：ネットの大会で、開いた時に勝ち上がったかを聞く回と、その後の次の段階の選び方。
+    @State private var advanceRoundID: String?
+    @State private var askedAdvance = false
+    @State private var nextStageQuestion: GiriNextStageQuestion?
     /// 0.14：この会の中に足した大会（その編集を開く）。
     @State private var newTournamentID: String?
     /// 0.17：畳む／開くを切り替えた段階（ネット大喜利の回）。
@@ -61,14 +65,19 @@ struct GiriEventDetail: View {
                     thoughtsLink(event)
                     if event.eventFormat.hasOnlineRounds {
                         // 0.17：新しい段階を上に。各段階は畳める（いちばん新しい段階だけ開いておく）。
-                        ForEach(Array(event.effectiveRounds.reversed())) { round in
-                            roundSection(event, round: round)
+                        // 0.33：敗退した後の、結果もお題・回答もない回（勝ち進んでいない回）は出さない。
+                        let visible = visibleRounds(event)
+                        ForEach(Array(visible.reversed())) { round in
+                            roundSection(event, round: round, isNewest: visible.last?.id == round.id)
                         }
-                        if event.meetingType == .tournament {
-                            // 1回目に「全N回」を入れた段階は次の回、それ以外は次の段階を追加する。
+                        if event.meetingType == .tournament && canAddNextStage(event, visible: visible) {
+                            // 1回目に「全N回」を入れた段階は次の回、それ以外は次の段階を候補から選んで追加する。
                             let parallel = giriNextRoundIsParallel(event.effectiveRounds)
                             Section {
-                                Button { nextDraft = parallel ? .sameStage : .nextStage } label: {
+                                Button {
+                                    if parallel { nextDraft = .sameStage }
+                                    else { nextStageQuestion = giriOnlineNextStageQuestion(event, rule: event.ruleID.flatMap { store.rule($0) }, allowSameStage: false) }
+                                } label: {
                                     Label(parallel ? "同じ段階の次の回を追加" : "次の段階を追加", systemImage: "plus.circle")
                                 }
                             }.appEventDetailCardStyle(accentColor: AppSectionAccent.artist)
@@ -138,11 +147,53 @@ struct GiriEventDetail: View {
             if let event { GiriCalendarEventEditor(event: event) { addingToCalendar = false }.ignoresSafeArea() }
         }
         .sheet(item: $nextDraft) { action in
-            NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
+            NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action.isSameStage, presetName: action.name) }
         }
         .navigationDestination(item: $newTournamentID) { id in
             if let child = store.events.first(where: { $0.id == id }) { GiriEventEditor(event: child) }
         }
+        .modifier(GiriAdvanceDialogs(advanceRoundID: $advanceRoundID, nextStageQuestion: $nextStageQuestion, nextDraft: $nextDraft,
+                                     title: advanceTitle,
+                                     onAnswer: { id, advanced in answerAdvance(id, advanced: advanced) },
+                                     onEnter: { id in navigation.openResultEntry(eventID, roundID: id) }))
+    }
+
+    /// 0.33：勝ち進んだところまでの回（敗退の後の、結果もお題・回答もない回は出さない）。
+    private func visibleRounds(_ event: GiriEvent) -> [EventRound] {
+        let noted = Set(store.notes.filter { $0.eventId == event.id }.compactMap(\.roundId))
+        return giriReachedRounds(event, notedRoundIDs: noted)
+    }
+
+    /// 0.33：次の段階を足せるか。最終結果を入れた後と、最後の回で敗退した後は出さない。
+    private func canAddNextStage(_ event: GiriEvent, visible: [EventRound]) -> Bool {
+        guard !event.hasFinalResult else { return false }
+        guard let last = visible.last else { return true }
+        let stages = event.tournamentResult?.stages ?? []
+        return !stages.contains { stage in
+            stage.outcome == .eliminated && (stage.roundId == last.id || (stage.roundId == nil && stage.stageId == last.effectiveStageId))
+        }
+    }
+
+    private var advanceTitle: String {
+        guard let id = advanceRoundID, let round = event?.effectiveRounds.first(where: { $0.id == id }) else { return "勝ち上がりましたか？" }
+        return "「\(roundTitle(round))」は勝ち上がりましたか？"
+    }
+
+    /// 0.33：勝ち上がった・敗退したを結果に入れて保存する。勝ち上がった時は、次の段階を候補から選んで開く。
+    private func answerAdvance(_ roundID: String, advanced: Bool) {
+        guard let current = store.events.first(where: { $0.id == eventID }) else { return }
+        let updated = giriRecordingAdvance(current, roundID: roundID, advanced: advanced)
+        do {
+            try store.saveResult(event: updated, notes: [])
+            playLiveStairSaveFeedback()
+        } catch {
+            store.errorMessage = error.localizedDescription
+            return
+        }
+        guard advanced else { return }
+        let question = giriOnlineNextStageQuestion(updated, rule: updated.ruleID.flatMap { store.rule($0) })
+        // 確認を閉じてから、次の段階の選び方を出す。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { nextStageQuestion = question }
     }
 
     /// 0.25：会の中の小さな企画の結果。押すと直せる。戦績・集計には入れない。
@@ -602,9 +653,8 @@ struct GiriEventDetail: View {
         }.appEventDetailCardStyle(accentColor: AppSectionAccent.memo)
     }
 
-    private func roundSection(_ event: GiriEvent, round: EventRound) -> some View {
-        let isNewest = event.effectiveRounds.last?.id == round.id
-        return Section {
+    private func roundSection(_ event: GiriEvent, round: EventRound, isNewest: Bool) -> some View {
+        Section {
             Button {
                 withAnimation { toggleRound(round.id, newest: isNewest) }
             } label: {
@@ -702,6 +752,16 @@ struct GiriEventDetail: View {
         guard let event, event.isActualParticipant, event.isSelfPlayer else { return }
         guard event.meetingType == .tournament || event.onlineSiteId != nil else { return }
         let now = Date()
+        // 0.33：ネットの大会は、準決勝までの最後の回の投票が終わったら、開いた時に勝ち上がったかを聞く（答えるまで次の段階は足さない）。
+        if !askedAdvance, let round = giriAdvanceQuestionRound(event, now: now) {
+            askedAdvance = true
+            do {
+                // 同じ回の「結果を入力しますか？」は出さない。
+                try store.markResultPrompted(eventID: eventID, key: "round:" + round.id)
+                advanceRoundID = round.id
+            } catch { store.errorMessage = error.localizedDescription }
+            return
+        }
         if event.eventFormat.hasOnlineRounds && !event.effectiveRounds.isEmpty {
             let finished = event.effectiveRounds.filter { round in
                 guard let end = round.votingEnd, end <= now else { return false }
@@ -802,4 +862,39 @@ private func giriDetailDate(_ day: Date) -> String {
 
 private func giriDetailTime(_ date: Date?) -> String {
     GiriDateText.time(date)
+}
+
+/// 0.33：ネットの大会の「勝ち上がりましたか？」と、次の段階の選び方（詳細の本体の式を短くするため分ける）。
+struct GiriAdvanceDialogs: ViewModifier {
+    @Binding var advanceRoundID: String?
+    @Binding var nextStageQuestion: GiriNextStageQuestion?
+    @Binding var nextDraft: GiriRoundDraftAction?
+    let title: String
+    let onAnswer: (String, Bool) -> Void
+    let onEnter: (String) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(title, isPresented: Binding(get: { advanceRoundID != nil }, set: { if !$0 { advanceRoundID = nil } }),
+                                titleVisibility: .visible, presenting: advanceRoundID) { id in
+                Button("勝ち上がった") { onAnswer(id, true) }
+                Button("敗退した") { onAnswer(id, false) }
+                Button("結果を入力する") { onEnter(id) }
+                Button("あとで", role: .cancel) {}
+            } message: { _ in
+                Text("勝ち上がった時は、次の段階を選んで日程を入れます。敗退した時は、最終結果も入れます。")
+            }
+            .confirmationDialog(nextStageQuestion?.title ?? "", isPresented: Binding(get: { nextStageQuestion != nil }, set: { if !$0 { nextStageQuestion = nil } }),
+                                titleVisibility: .visible, presenting: nextStageQuestion) { question in
+                if question.sameStage {
+                    Button("追加する") { nextDraft = GiriRoundDraftAction.sameStage }
+                } else {
+                    ForEach(question.candidates, id: \.self) { name in
+                        Button(name) { nextDraft = GiriRoundDraftAction.named(name) }
+                    }
+                    Button("ほかの名前で追加") { nextDraft = GiriRoundDraftAction.nextStage }
+                }
+                Button("あとで", role: .cancel) {}
+            } message: { question in Text(question.message) }
+    }
 }

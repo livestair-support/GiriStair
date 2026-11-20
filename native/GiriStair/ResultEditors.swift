@@ -282,7 +282,15 @@ struct GiriResultEntry: View {
         }
         .confirmationDialog(nextStageQuestion?.title ?? "", isPresented: Binding(get: { nextStageQuestion != nil }, set: { if !$0 { nextStageQuestion = nil } }),
                             titleVisibility: .visible, presenting: nextStageQuestion) { question in
-            Button("追加する") { addNextStage(question) }
+            // 0.33：次の段階は、ルールの流れ・名前の続きの候補から選ぶ（何回戦から準々決勝か分からない大会もあるため）。
+            if question.sameStage {
+                Button("追加する") { addNextStage(question, name: nil) }
+            } else {
+                ForEach(question.candidates, id: \.self) { name in
+                    Button(name) { addNextStage(question, name: name) }
+                }
+                Button("ほかの名前で追加") { addNextStage(question, name: nil) }
+            }
             Button("あとで", role: .cancel) { if closeAfterSave { dismiss() } }
         } message: { question in Text(question.message) }
         .alert("以後の投稿・投票", isPresented: $votingOnlyQuestion) {
@@ -327,7 +335,7 @@ struct GiriResultEntry: View {
             // 0.32：足した回を、結果の一覧にも出す。
             if let event { addRoundStages(event) }
         }) { action in
-            NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
+            NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action.isSameStage, presetName: action.name) }
         }
     }
 
@@ -754,14 +762,16 @@ struct GiriResultEntry: View {
 
     /// 段階（予選・本戦…）を上から並べ、ネットの各回はその段階の下に出す。
     private func stageListSection(_ event: GiriEvent) -> some View {
-        let wide = orderedWide(event)
+        let allWide = orderedWide(event)
         let rounds = result.stages.filter { $0.roundId != nil }
+        // 0.33：敗退した後の、結果のない段階（勝ち進んでいない段階）は出さない（記録もしない）。
+        let wide = giriReachedStages(allWide, rounds: rounds)
         return Section {
             AppCardSectionTitle(title: "段階の結果", systemImage: "list.number", accentColor: AppSectionAccent.ticket,
                                 infoTitle: "段階の結果について",
                                 infoMessage: "予選・本戦などの段階ごとに、形式・審査方法と通過／敗退・順位を残します。周ごとの点を入れると合計が出て、決勝の結果や敗退は最終結果にも自動で入ります。")
                 .listRowSeparator(.hidden)
-            if wide.isEmpty && rounds.isEmpty {
+            if allWide.isEmpty && rounds.isEmpty {
                 Text("段階がまだありません").font(.subheadline).foregroundStyle(.secondary)
             }
             ForEach(wide) { stage in
@@ -792,16 +802,16 @@ struct GiriResultEntry: View {
                 .tint(accentActionColor)
             }
             // 段階に結び付かない旧データの回
-            ForEach(rounds.filter { round in round.stageId == nil || !wide.contains { $0.stageId == round.stageId } }) { round in
+            ForEach(rounds.filter { round in round.stageId == nil || !allWide.contains { $0.stageId == round.stageId } }) { round in
                 Button { editingStageID = round.id } label: { stageRow(round, nested: true) }
                     .buttonStyle(.plain)
             }
-            if wide.isEmpty && rounds.isEmpty { skeletonReadRow(event) }
+            if allWide.isEmpty && rounds.isEmpty { skeletonReadRow(event) }
             // 0.31：生大喜利・スプシ系・ネット短考の結果の記事（note など）から、ルール・自分の結果・優勝など・組み合わせ・お題を読む。
             // ネット長考の結果画面はルールまで書かれないので、回ごとの結果画面の読み取りを使う。
             if event.eventFormat != .onlineLong { articleReadRows(event) }
             // 0.23：大会に選んだルールの段階を入れる。
-            if wide.isEmpty && rounds.isEmpty, let rule = event.ruleID.flatMap({ store.rule($0) }), !rule.stages.isEmpty {
+            if allWide.isEmpty && rounds.isEmpty, let rule = event.ruleID.flatMap({ store.rule($0) }), !rule.stages.isEmpty {
                 Button { applyRuleStages(rule) } label: {
                     VStack(alignment: .leading, spacing: 3) {
                         Label("ルールの段階を入れる", systemImage: "list.bullet.rectangle")
@@ -811,7 +821,7 @@ struct GiriResultEntry: View {
                 }
                 .tint(accentActionColor)
             }
-            if wide.isEmpty && rounds.isEmpty, let source = giriStageTemplateSource(for: event, in: store.events) {
+            if allWide.isEmpty && rounds.isEmpty, let source = giriStageTemplateSource(for: event, in: store.events) {
                 Button { applyTemplate(from: source) } label: {
                     VStack(alignment: .leading, spacing: 3) {
                         Label("前回の段階を使う", systemImage: "square.on.square")
@@ -823,22 +833,12 @@ struct GiriResultEntry: View {
             if bracket(event).count >= 2 {
                 bracketRow(event, hasStages: !wide.isEmpty)
             }
-            // 0.32：ルールの流れで、大会の日程にまだない回があれば足す（今ある回・結果はそのまま）。
-            let missing = missingFlowRounds(event)
-            if !missing.isEmpty {
-                Button { addMissingFlowRounds() } label: {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Label("ルールの流れで足りない回を足す", systemImage: "list.bullet.rectangle")
-                        Text(missing.map(\.name).joined(separator: "・")).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                    }
-                }
-                .tint(accentActionColor)
-            }
             Button {
                 // 0.32：ネット・スプシ系で日程のある大会は、段階を日程の回として足す（日付を前の回から入れて確認して保存する）。
+                // 0.33：足す段階は、ルールの流れ・名前の続きの候補から選ぶ。
                 if event.eventFormat.hasOnlineRounds && !event.effectiveRounds.isEmpty {
                     closeAfterSave = false
-                    nextDraft = .nextStage
+                    nextStageQuestion = onlineNextQuestion(event, allowSameStage: false)
                     return
                 }
                 var stage = ResultStage()
@@ -1142,14 +1142,12 @@ struct GiriResultEntry: View {
         originalTitle = event.title
         existing = Set(result.stages.map(\.id))
         addRoundStages(event)
-        // 0.32：生大喜利などは、大会のルールの流れのうちまだない段階を正しい順に出す（記録を入れるまで保存しない）。
-        if !event.eventFormat.hasOnlineRounds, let rule = event.ruleID.flatMap({ store.rule($0) }), !rule.stages.isEmpty {
-            result.stages = giriAddingRuleStages(rule, to: result.stages).map { stage in
-                guard !existing.contains(stage.id), stage.laps.isEmpty else { return stage }
-                var value = stage
-                value.laps = giriNormalizedLaps(value, lapCount: 1)
-                return value
-            }
+        // 0.33：生大喜利などは、段階がまだない時だけ、大会のルールの最初の段階を出す（記録を入れるまで保存しない）。
+        // 先の段階は通過した時に足す（勝ち進んでいない段階は出さない）。
+        if !event.eventFormat.hasOnlineRounds, result.stages.isEmpty, let rule = event.ruleID.flatMap({ store.rule($0) }),
+           var first = giriAddingRuleStages(rule, to: []).first {
+            first.laps = giriNormalizedLaps(first, lapCount: 1)
+            result.stages = [first]
         }
         selectedID = result.stages.first(where: { $0.id == initialStageID })?.id ?? result.stages.first(where: { $0.roundId == initialRoundID && initialRoundID != nil })?.id ?? result.stages.first?.id ?? ""
         // 詳細の「この回の結果」などから開いた時は、その段階・回の入力をそのまま開く。
@@ -1196,27 +1194,6 @@ struct GiriResultEntry: View {
                 prompt.stageId = round.effectiveStageId
                 result.stages.append(prompt)
             }
-        }
-    }
-
-    /// 0.32：ネット・スプシ系の大会で、ルールの流れにあって日程にまだない回（日程つき）。
-    private func missingFlowRounds(_ event: GiriEvent) -> [EventRound] {
-        guard event.eventFormat.hasOnlineRounds, let rule = event.ruleID.flatMap({ store.rule($0) }), !rule.stages.isEmpty else { return [] }
-        var preview = event
-        giriApplyRule(rule, to: &preview)
-        let ids = Set(event.effectiveRounds.map(\.id))
-        return preview.effectiveRounds.filter { !ids.contains($0.id) }
-    }
-
-    /// 0.32：ルールの流れの足りない回を大会の日程に足し（保存する）、結果の一覧にも出す。
-    private func addMissingFlowRounds() {
-        guard var current = event, let rule = current.ruleID.flatMap({ store.rule($0) }) else { return }
-        giriApplyRule(rule, to: &current)
-        store.run {
-            try giriEditorValidate(current)
-            try store.saveEvent(current)
-            addRoundStages(current)
-            playLiveStairSaveFeedback()
         }
     }
 
@@ -1298,8 +1275,7 @@ struct GiriResultEntry: View {
             playLiveStairSaveFeedback()
             resultSaved = true
             // 0.31：通過したら、次の段階（1回目に全N回を入れた段階は次の回）を足すか聞いてから開く。保存するまで追加しない。
-            let question: GiriNextStageQuestion? = shouldOfferNextRound(event) ? .online(sameStage: giriNextRoundIsParallel(event.effectiveRounds))
-                : liveNextStageName(event).map { GiriNextStageQuestion.live(name: $0) }
+            let question: GiriNextStageQuestion? = shouldOfferNextRound(event) ? onlineNextQuestion(event) : liveNextQuestion(event)
             // 保存した内容を、この画面の「変更なし」の状態にする（段階の画面から保存した時は、続けて入力できる）。
             existing = Set(saved.stages.map(\.id))
             originalResult = result
@@ -1361,29 +1337,44 @@ struct GiriResultEntry: View {
         }
     }
 
-    /// 0.31：生大喜利の大会で通過した段階が最後の段階の時、次の段階の名前（予選の後は本戦など）。決勝は nil。
-    private func liveNextStageName(_ event: GiriEvent) -> String? {
+    /// 0.31：生大喜利の大会で通過した段階が最後の段階の時、次の段階の候補（予選の後は本戦など）。決勝は nil。
+    /// 0.33：ルールの流れ・名前の続きの候補から選ぶ。
+    private func liveNextQuestion(_ event: GiriEvent) -> GiriNextStageQuestion? {
         guard !event.eventFormat.hasOnlineRounds, event.meetingType == .tournament else { return nil }
         let wide = result.stages.filter { $0.roundId == nil }
         guard let advanced = wide.last(where: { stage in
             stage.outcome == .advanced && originalResult.stages.first(where: { $0.id == stage.id })?.outcome != .advanced
         }), advanced.id == wide.last?.id, advanced.effectiveKind != .final else { return nil }
-        return giriEditorNextStage(advanced.name, live: true)
+        let candidates = giriNextStageCandidates(after: advanced.name, rule: event.ruleID.flatMap { store.rule($0) },
+                                                 existing: wide.map(\.name), live: true)
+        return GiriNextStageQuestion(online: false, fallbackName: giriEditorNextStage(advanced.name, live: true), candidates: candidates)
+    }
+
+    /// 0.33：ネットの次の段階（1回目に全N回を入れた段階は同じ段階の次の回）。段階は候補から選ぶ。
+    private func onlineNextQuestion(_ event: GiriEvent, allowSameStage: Bool = true) -> GiriNextStageQuestion {
+        giriOnlineNextStageQuestion(event, rule: event.ruleID.flatMap { store.rule($0) }, allowSameStage: allowSameStage)
     }
 
     /// 0.31：次の段階を足して開く。ネットは日程を自動で入れた次の回の入力（確認して保存する）、生大喜利は結果の一覧に足して開く。
-    private func addNextStage(_ question: GiriNextStageQuestion) {
-        switch question {
-        case .online(let sameStage):
-            nextDraft = sameStage ? .sameStage : .nextStage
-        case .live(let name):
-            var next = ResultStage()
-            next.name = name
-            next.laps = giriNormalizedLaps(next, lapCount: 1)
-            result.stages.append(next)
-            closeAfterSave = false
-            editingStageID = next.id
+    /// 0.33：`name` は候補から選んだ段階の名前（nil は自動の名前で開いて、入力で直す）。
+    private func addNextStage(_ question: GiriNextStageQuestion, name: String?) {
+        if question.online {
+            if question.sameStage { nextDraft = GiriRoundDraftAction.sameStage }
+            else if let name = name { nextDraft = GiriRoundDraftAction.named(name) }
+            else { nextDraft = GiriRoundDraftAction.nextStage }
+            return
         }
+        let rule = event?.ruleID.flatMap { store.rule($0) }
+        let chosen = name ?? question.fallbackName
+        // ルールにある段階は、形式・審査方法・お題の数・勝ち抜けも入れる。
+        let chosenKey = playerSearchKey(chosen)
+        let ruleStage: ResultStage? = rule.flatMap { value in giriAddingRuleStages(value, to: []).first(where: { playerSearchKey($0.name) == chosenKey }) }
+        var next = ruleStage ?? ResultStage()
+        next.name = chosen
+        next.laps = giriNormalizedLaps(next, lapCount: 1)
+        result.stages.append(next)
+        closeAfterSave = false
+        editingStageID = next.id
     }
 
     private func shouldOfferNextRound(_ event: GiriEvent) -> Bool {
@@ -1752,9 +1743,14 @@ struct GiriNamesField: View {
 }
 
 /// A future period remains a draft until the user explicitly saves it.
-enum GiriRoundDraftAction: String, Identifiable {
-    case nextStage, sameStage
-    var id: String { rawValue }
+/// 次の回の入力の開き方（同じ段階の次の回か、次の段階か）。0.33：次の段階は選んだ名前で開ける。
+struct GiriRoundDraftAction: Identifiable, Equatable {
+    var isSameStage = false
+    var name: String? = nil
+    var id: String { (isSameStage ? "same|" : "next|") + (name ?? "") }
+    static let nextStage = GiriRoundDraftAction()
+    static let sameStage = GiriRoundDraftAction(isSameStage: true)
+    static func named(_ name: String) -> GiriRoundDraftAction { GiriRoundDraftAction(name: name) }
 }
 
 struct GiriNextRoundEditor: View {
@@ -1762,6 +1758,8 @@ struct GiriNextRoundEditor: View {
     @Environment(\.dismiss) private var dismiss
     let eventID: String
     var sameStage = false
+    /// 0.33：候補から選んだ次の段階の名前。
+    var presetName: String? = nil
     @State private var round = EventRound()
     @State private var original: EventRound?
     @State private var automatic: Set<String> = ["submissionEnd", "votingStart", "votingEnd"]
@@ -1796,6 +1794,7 @@ struct GiriNextRoundEditor: View {
         .onAppear {
             guard !loaded, let event else { return }
             round = nextEventRound(rounds: event.effectiveRounds, preferences: store.preferences, sameStage: sameStage, tournament: event.meetingType == .tournament, referenceDate: event.eventDate ?? Date())
+            if !sameStage, let presetName, !presetName.isEmpty { round.name = presetName }
             original = round
             loaded = true
         }
@@ -2722,32 +2721,33 @@ struct GiriKumiteResultEditor: View {
 }
 
 
-/// 0.31：通過した後に次の段階を足すかの確認。
-enum GiriNextStageQuestion: Identifiable, Equatable {
-    /// ネット大喜利：次の回（sameStage は同じ段階の次の回）。日程を自動で入れた入力を開く。
-    case online(sameStage: Bool)
-    /// 生大喜利：結果の一覧に次の段階を足す。
-    case live(name: String)
-    var id: String {
-        switch self {
-        case .online(let sameStage): return sameStage ? "online-same" : "online-next"
-        case .live(let name): return "live-" + name
-        }
-    }
-    var title: String {
-        switch self {
-        case .online(let sameStage): return sameStage ? "同じ段階の次の回を追加しますか？" : "次の段階を追加しますか？"
-        case .live(let name): return "「\(name)」を追加しますか？"
-        }
-    }
+/// 0.31：通過した後に次の段階を足すかの確認。0.33：次の段階は候補（ルールの流れ・名前の続き）から選ぶ。
+struct GiriNextStageQuestion: Identifiable, Equatable {
+    /// ネット・スプシ系：日程を自動で入れた次の回の入力を開く。生大喜利：結果の一覧に足して開く。
+    var online: Bool
+    /// 同じ段階の次の回（1回目に「全N回」を入れた段階）。
+    var sameStage = false
+    /// 「ほかの名前で追加」の時の名前（足した後で直せる）。
+    var fallbackName = ""
+    var candidates: [String] = []
+    var id: String { "\(online)|\(sameStage)|" + candidates.joined(separator: "|") }
+    var title: String { sameStage ? "同じ段階の次の回を追加しますか？" : "次の段階を追加しますか？" }
     var message: String {
-        switch self {
-        case .online: return "日程は前の回から自動で入れます。確認してから保存してください。"
-        case .live: return "結果の一覧に足して、そのまま入力を開きます。"
-        }
+        if sameStage { return "日程は前の回から自動で入れます。確認してから保存してください。" }
+        return online ? "進んだ段階を選んでください。日程は前の回から自動で入れるので、確認してから保存します。"
+            : "進んだ段階を選んでください。結果の一覧に足して、そのまま入力を開きます。"
     }
 }
 
+
+/// 0.33：ネットの大会の次の回の確認（1回目に全N回を入れた段階は同じ段階の次の回、それ以外は次の段階の候補）。
+func giriOnlineNextStageQuestion(_ event: GiriEvent, rule: GiriRule?, allowSameStage: Bool = true) -> GiriNextStageQuestion {
+    let rounds = event.effectiveRounds
+    if allowSameStage && giriNextRoundIsParallel(rounds) { return GiriNextStageQuestion(online: true, sameStage: true) }
+    let last = rounds.last?.name ?? ""
+    let candidates = giriNextStageCandidates(after: last, rule: rule, existing: rounds.map(\.name), live: false)
+    return GiriNextStageQuestion(online: true, fallbackName: nextStageName(last), candidates: candidates)
+}
 
 /// 0.31：記事の読み取り結果（確認画面に渡す）。
 struct GiriLiveResultReviewData: Identifiable {
