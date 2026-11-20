@@ -10,17 +10,33 @@ import threading
 import time
 
 
-def main():
+def pick_device():
+    """The newest iOS runtime's first iPhone; the same device for the early boot and the test run."""
     data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "--json"]))
     runtimes = sorted(data["devices"], key=lambda x: tuple(map(int, re.findall(r"\d+", x))), reverse=True)
     device = next((d for runtime in runtimes if "iOS" in runtime for d in data["devices"][runtime]
                    if d.get("isAvailable") and d["name"].startswith("iPhone")), None)
     if device is None:
         raise RuntimeError("No available iPhone simulator for native UI regression")
+    return device
+
+
+def boot_in_background():
+    """Start booting the simulator while the app is being built (the boot takes over a minute)."""
+    device = pick_device()
+    print("Booting the UI regression simulator early:", device["name"], device["udid"], flush=True)
+    if device["state"] == "Shutdown":
+        subprocess.Popen(["xcrun", "simctl", "boot", device["udid"]], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def main():
+    device = pick_device()
     print("Native UI regression simulator:", device["name"], device["udid"], flush=True)
-    if device["state"] != "Booted":
-        subprocess.run(["xcrun", "simctl", "boot", device["udid"]], check=True, timeout=120)
-    subprocess.run(["xcrun", "simctl", "bootstatus", device["udid"], "-b"], check=True, timeout=180)
+    if device["state"] == "Shutdown":
+        subprocess.run(["xcrun", "simctl", "boot", device["udid"]], check=False, timeout=120)
+    # "-b" also boots a device that is not booted yet; it waits for a boot started earlier.
+    subprocess.run(["xcrun", "simctl", "bootstatus", device["udid"], "-b"], check=True, timeout=240)
     log = Path("build/native/uitest.log")
     log.parent.mkdir(parents=True, exist_ok=True)
     selectors = os.environ.get("GIRI_UI_TESTS", "GiriStairUITests").split(",")
@@ -30,7 +46,9 @@ def main():
                "-derivedDataPath", "build/native/DerivedData", "-parallel-testing-enabled", "NO",
                "-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", allowance,
                "-maximum-test-execution-time-allowance", "300",
-               *["-only-testing:" + selector for selector in selectors], "CODE_SIGNING_ALLOWED=NO", "test"]
+               *["-only-testing:" + selector for selector in selectors], "CODE_SIGNING_ALLOWED=NO",
+               # The workflow builds the app and the UI tests once (build-for-testing); reuse them.
+               "test-without-building" if os.environ.get("GIRI_UI_PREBUILT") == "1" else "test"]
     with log.open("w") as output:
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    start_new_session=True, text=True, encoding="utf-8", errors="replace")
@@ -90,4 +108,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if "--boot" in sys.argv[1:]:
+        boot_in_background()
+    else:
+        main()

@@ -200,6 +200,13 @@ struct GiriResultEntry: View {
     @State private var pendingRule: GiriRule?
     /// 0.32：ルールの勝ち抜けから自動で入れた通過・敗退（手で選び直した記録は自動で変えない）。
     @State private var autoOutcomeIDs: Set<String> = []
+    /// 0.34：結果入力の画面で新しく作るルール。
+    @State private var creatingRule: GiriRule?
+    /// 0.34：ネット長考の結果の画面の読み取り（お題から回を探す）。
+    @State private var netResultPhoto: PhotosPickerItem?
+    @State private var readingNetResult = false
+    /// 0.34：同じ回・まだ進んでいない回の整理。
+    @State private var cleanupRequest: GiriRoundCleanupRequest?
     @State private var leave = false
     @State private var originalResult = TournamentResult()
     @State private var originalPlacement: Int?
@@ -235,6 +242,9 @@ struct GiriResultEntry: View {
             if let event {
                 eventSection(event)
                 if event.isSelfPlayer {
+                    // 0.34：ルール（段階の形）と結果の読み取り・段階の結果を分ける。
+                    ruleSection(event)
+                    readingSection(event)
                     stageListSection(event)
                     finalSection(event)
                 } else {
@@ -344,6 +354,154 @@ struct GiriResultEntry: View {
         content
             .navigationDestination(item: $boardStageID) { id in boardEditor(id) }
             .onChange(of: boards) { _, _ in applyBoardsToStages() }
+            .sheet(item: $creatingRule) { rule in
+                NavigationStack { GiriRuleEditor(rule: rule, isNew: true) { saved in setRule(saved.id, saved: saved) } }
+            }
+            .sheet(item: $cleanupRequest) { request in
+                NavigationStack { GiriRoundCleanupSheet(items: request.items) { selected in applyCleanup(selected) } }
+            }
+    }
+
+    /// 0.34：ルール（段階の形・勝ち抜け）。結果の段階とは同じ名前（「2回戦」と「予選2回戦」も）でつながる。
+    private func ruleSection(_ event: GiriEvent) -> some View {
+        let rule = event.ruleID.flatMap { store.rule($0) }
+        return Section {
+            AppCardSectionTitle(title: "ルール", systemImage: "list.bullet.rectangle", accentColor: AppSectionAccent.memo,
+                                infoTitle: "ルールについて",
+                                infoMessage: "大会の段階（予選・決勝など）の形式・勝ち抜けです。結果の段階と同じ名前（「2回戦」と「予選2回戦」も）でつながり、通過・敗退を自動で入れます。")
+                .listRowSeparator(.hidden)
+            HStack(spacing: 8) {
+                GiriEditorLabel("ルール")
+                Spacer(minLength: 8)
+                GiriRuleMenuPicker(kind: event.eventFormat.isOnline ? .online : .live, scope: .tournament, selectedID: event.ruleID,
+                                   onSelect: { setRule($0) }, onCreate: { creatingRule = giriRule(from: event) })
+            }
+            if let rule {
+                Text(giriRuleFlowSummary(rule)).font(.caption).foregroundStyle(.secondary)
+                NavigationLink("ルールを見る・直す") { GiriRuleEditor(rule: rule) }.tint(accentActionColor)
+            }
+            if let pendingRule {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("読み取ったルール：" + pendingRule.displayName).font(.subheadline.weight(.semibold))
+                    Text(giriRuleFlowSummary(pendingRule)).font(.caption).foregroundStyle(.secondary)
+                    Text(rule == nil ? "保存すると、ルール一覧に登録してこの大会のルールにします。" : "保存すると、ルール一覧に登録します（この大会のルールは今のままです）。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Button("読み取ったルールを使わない", role: .destructive) { self.pendingRule = nil }
+                    .buttonStyle(.borderless).font(.subheadline)
+            }
+            skeletonReadRow(event)
+            // 段階をまだ保存していない時だけ（自動で出したルールの最初の段階は置き換える）。
+            if !result.stages.contains(where: { $0.roundId != nil || existing.contains($0.id) || $0.hasResultEntry }),
+               let source = giriStageTemplateSource(for: event, in: store.events) {
+                Button { applyTemplate(from: source) } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label("前回の段階を使う", systemImage: "square.on.square")
+                        Text(templateCaption(source)).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .tint(accentActionColor)
+            }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
+    }
+
+    /// 0.34：結果の読み取り（段階の結果の上にいつも出す）。記事はルールと結果をまとめて読む。ネット長考は結果の画面をお題から回に入れる。
+    private func readingSection(_ event: GiriEvent) -> some View {
+        let long = event.eventFormat == .onlineLong
+        return Section {
+            AppCardSectionTitle(title: "結果を読み取る", systemImage: "text.viewfinder", accentColor: AppSectionAccent.scan,
+                                infoTitle: "読み取りについて",
+                                infoMessage: long ? "サイトの結果の画面のスクショから、その回の順位・得点・投票人数・投稿数と回答を読みます。回はお題から探します。"
+                                                  : "noteなどの結果の記事から、ルール（段階・形式・勝ち抜け）と結果をまとめて読みます。段階は同じ名前でそろえます。")
+                .listRowSeparator(.hidden)
+            if long {
+                PhotosPicker(selection: $netResultPhoto, matching: .images, photoLibrary: .shared()) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label(readingNetResult ? "読み取り中" : "結果のスクショから読み取る", systemImage: "text.viewfinder")
+                        Text("回答を入れていなくても読めます。読んだ回の入力を開きます。").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(readingNetResult)
+                .tint(accentActionColor)
+                .onChange(of: netResultPhoto) { _, item in readNetResult(item, event: event) }
+            } else {
+                articleReadRows(event)
+            }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.scan)
+    }
+
+    /// 0.34：大会のルールを選び直す（すぐ保存する）。段階の形式などは、同じ段階の空欄に入れる。
+    private func setRule(_ id: String?, saved: GiriRule? = nil) {
+        guard var current = event else { return }
+        let rule = id.flatMap { saved ?? store.rule($0) }
+        if let rule { giriApplyRule(rule, to: &current) } else { current.ruleID = nil }
+        store.run {
+            try store.saveEvent(current)
+            if let rule { alignStages(with: rule) }
+            playLiveStairSaveFeedback()
+        }
+    }
+
+    /// 0.34：ルールの段階の形式・審査方法・お題の数・勝ち抜けを、同じ段階の結果の空欄に入れる。段階がまだない生大喜利は最初の段階を出す。
+    private func alignStages(with rule: GiriRule) {
+        let live = !(event?.eventFormat.hasOnlineRounds ?? false)
+        if live, !result.stages.contains(where: { $0.roundId == nil }), var first = giriAddingRuleStages(rule, to: []).first {
+            first.laps = giriNormalizedLaps(first, lapCount: 1)
+            result.stages.append(first)
+            return
+        }
+        for index in result.stages.indices where result.stages[index].roundId == nil {
+            guard let ruleStage = giriRuleStage(for: result.stages[index].name, in: rule) else { continue }
+            let filled = giriFillingStage(result.stages[index], from: ruleStage)
+            if filled != result.stages[index] { result.stages[index] = filled }
+        }
+    }
+
+    /// 0.34：ネット長考の結果の画面を、お題から探した回に入れて、その回の入力を開く。
+    private func readNetResult(_ item: PhotosPickerItem?, event: GiriEvent) {
+        guard let item else { return }
+        readingNetResult = true
+        Task {
+            defer { readingNetResult = false; netResultPhoto = nil }
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
+                let page = giriNetResultPage(lines: try await GiriParticipantOCR.recognizeLines(data))
+                guard !page.entries.isEmpty || page.submissionCount != nil else {
+                    store.errorMessage = "結果（順位・得点・回答）を読み取れませんでした。結果の画面を選んでください。"
+                    return
+                }
+                guard let round = giriNetResultRound(page, event: event, notes: answerNotes, results: result.stages),
+                      let index = result.stages.firstIndex(where: { $0.roundId == round.id }) else {
+                    store.errorMessage = "どの回の結果か分かりませんでした。回を開いて読み取ってください。"
+                    return
+                }
+                let noteIndices = answerNotes.indices.filter { answerNotes[$0].eventId == event.id && answerNotes[$0].roundId == round.id }
+                let applied = giriApplyingNetResult(page, stage: result.stages[index], notes: noteIndices.map { answerNotes[$0] }, eventID: event.id,
+                                                    roundID: round.id, format: event.eventFormat, fallbackTitle: round.name, isSelf: store.preferences.isSelf)
+                result.stages[index] = applied.stage
+                for (offset, noteIndex) in noteIndices.enumerated() { answerNotes[noteIndex] = applied.notes[offset] }
+                if applied.notes.count > noteIndices.count { answerNotes.append(contentsOf: applied.notes[noteIndices.count...]) }
+                if !applied.foundOwn { store.errorMessage = "自分の回答が見つからなかったので、投稿数・投票人数とほかの人の回答だけ入れました。" }
+                playLiveStairSaveFeedback()
+                closeAfterSave = false
+                editingStageID = result.stages[index].id
+            } catch { store.errorMessage = error.localizedDescription }
+        }
+    }
+
+    /// 0.34：同じ回をまとめ、名前をそろえ、まだ進んでいない回を消す（すぐ保存する）。
+    private func applyCleanup(_ items: [GiriRoundCleanupItem]) {
+        guard let current = event, !items.isEmpty else { return }
+        let before = current.rounds
+        let updated = giriApplyingRoundCleanup(items, to: current)
+        store.run {
+            try giriEditorValidate(updated)
+            try store.saveEvent(updated)
+            result.stages = giriApplyingRoundCleanup(items, to: result.stages, rounds: before)
+            originalResult.stages = giriApplyingRoundCleanup(items, to: originalResult.stages, rounds: before)
+            existing = existing.filter { id in result.stages.contains { $0.id == id } }
+            playLiveStairSaveFeedback()
+        }
     }
 
     @ViewBuilder private func boardEditor(_ stageID: String) -> some View {
@@ -451,7 +609,7 @@ struct GiriResultEntry: View {
         PhotosPicker(selection: $articlePhotos, maxSelectionCount: 20, matching: .images, photoLibrary: .shared()) {
             VStack(alignment: .leading, spacing: 3) {
                 Label(readingArticle ? "読み取り中" : "結果の記事を画像から読み取る", systemImage: "text.viewfinder")
-                Text("noteなどの結果の記事の画面から、自分の結果・優勝など・組み合わせ・お題を読みます。").font(.caption).foregroundStyle(.secondary)
+                Text("noteなどの記事の画面から、ルールと自分の結果・優勝など・組み合わせ・お題をまとめて読みます。").font(.caption).foregroundStyle(.secondary)
             }
         }
         .disabled(readingArticle)
@@ -499,7 +657,8 @@ struct GiriResultEntry: View {
         for stage in result.stages where stage.roundId == nil { stageIDs[playerSearchKey(stage.name)] = stageIDs[playerSearchKey(stage.name)] ?? stage.id }
         for item in selection.selfResults {
             let key = playerSearchKey(item.stage)
-            let index = result.stages.firstIndex { $0.roundId == nil && playerSearchKey($0.name) == key }
+            // 0.34：段階は同じ名前（「2回戦」と「予選2回戦」も）でそろえる。
+            let index = result.stages.firstIndex { $0.roundId == nil && giriSameStageName($0.name, item.stage) }
             var stage = index.map { result.stages[$0] } ?? ResultStage()
             if index == nil { stage.name = item.stage }
             if stage.outcome == .unrecorded { stage.outcome = item.outcome }
@@ -531,7 +690,7 @@ struct GiriResultEntry: View {
         }
         // 0.31：記事のルールから、段階の形式・お題の数・審査方法・通過枠を入れる（入れていない欄だけ）。
         for ruleStage in selection.ruleStages {
-            guard let index = result.stages.firstIndex(where: { $0.roundId == nil && playerSearchKey($0.name) == playerSearchKey(ruleStage.name) }) else { continue }
+            guard let index = result.stages.firstIndex(where: { $0.roundId == nil && giriSameStageName($0.name, ruleStage.name) }) else { continue }
             if result.stages[index].lineup.isEmpty { result.stages[index].lineup = ruleStage.lineup }
             if result.stages[index].judging.isEmpty { result.stages[index].judging = ruleStage.judging }
             if result.stages[index].promptCount == nil { result.stages[index].promptCount = ruleStage.promptCount }
@@ -560,12 +719,12 @@ struct GiriResultEntry: View {
         }
     }
 
-    /// 0.15：段階がまだない時だけ、大会の仕組みの画像から骨組みを作る。
+    /// 0.15：大会の仕組みの画像から骨組みを作る。0.34：ルールの欄に出し、読んだ段階はルールにする。
     private func skeletonReadRow(_ event: GiriEvent) -> some View {
         PhotosPicker(selection: $skeletonPhoto, matching: .images, photoLibrary: .shared()) {
             VStack(alignment: .leading, spacing: 3) {
                 Label(readingSkeleton ? "読み取り中" : "大会の仕組みを画像から読み取る", systemImage: "text.viewfinder")
-                Text("イベントページの「予選：5人1組・お題3問」などから、段階の骨組みだけを作ります。").font(.caption).foregroundStyle(.secondary)
+                Text("イベントページの「予選：5人1組・お題3問」などから、ルールの段階を読みます。").font(.caption).foregroundStyle(.secondary)
             }
         }
         .disabled(readingSkeleton)
@@ -585,13 +744,18 @@ struct GiriResultEntry: View {
                     store.errorMessage = "大会の段階（予選・決勝など）を読み取れませんでした。大会の仕組みが書いてある画面を選んでください。"
                     return
                 }
-                for var stage in stages {
-                    if stage.judging.isEmpty { stage.judging = event.judging }
-                    if stage.lineup.isEmpty && event.knockout { stage.lineup = "タイマン" }
-                    if !event.eventFormat.hasOnlineRounds { stage.laps = giriNormalizedLaps(stage, lapCount: 1) }
-                    result.stages.append(stage)
-                    existing.insert(stage.id)
+                // 0.34：読み取った段階はルールにする（保存するとルール一覧に登録）。結果の段階には同じ段階の空欄だけ入れる。
+                var rule = GiriRule(kind: event.eventFormat.isOnline ? .online : .live, scope: .tournament)
+                rule.name = tournamentTitle.isEmpty ? event.title : tournamentTitle
+                rule.tournamentFormat = event.tournamentFormat
+                rule.knockout = event.knockout
+                rule.judging = event.judging
+                rule.stages = stages.map { stage in
+                    GiriRuleStage(name: stage.name, kind: stage.kind?.rawValue, lineup: stage.lineup.isEmpty && event.knockout ? "タイマン" : stage.lineup,
+                                  judging: stage.judging.isEmpty ? event.judging : stage.judging, promptCount: stage.promptCount, advanceCount: stage.advanceCount)
                 }
+                pendingRule = rule
+                alignStages(with: rule)
                 playLiveStairSaveFeedback()
             } catch { store.errorMessage = error.localizedDescription }
         }
@@ -635,18 +799,9 @@ struct GiriResultEntry: View {
         })
     }
 
-    /// 0.23：ルールの段階（名前・種類・形式・審査方法・お題数・通過枠）を入れる。
-    private func applyRuleStages(_ rule: GiriRule) {
-        let live = event.map { !$0.eventFormat.hasOnlineRounds } ?? true
-        for var stage in giriRuleStageResults(rule) {
-            if live { stage.laps = giriNormalizedLaps(stage, lapCount: 1) }
-            result.stages.append(stage)
-            existing.insert(stage.id)
-        }
-    }
-
     /// 前回の同じ大会（同じ主催・同じ名前）の段階構成を使う。
     private func applyTemplate(from source: GiriEvent) {
+        result.stages.removeAll { $0.roundId == nil && !existing.contains($0.id) && !$0.hasResultEntry }
         for stage in giriStageTemplate(from: source) {
             result.stages.append(stage)
             existing.insert(stage.id)
@@ -806,26 +961,13 @@ struct GiriResultEntry: View {
                 Button { editingStageID = round.id } label: { stageRow(round, nested: true) }
                     .buttonStyle(.plain)
             }
-            if allWide.isEmpty && rounds.isEmpty { skeletonReadRow(event) }
-            // 0.31：生大喜利・スプシ系・ネット短考の結果の記事（note など）から、ルール・自分の結果・優勝など・組み合わせ・お題を読む。
-            // ネット長考の結果画面はルールまで書かれないので、回ごとの結果画面の読み取りを使う。
-            if event.eventFormat != .onlineLong { articleReadRows(event) }
-            // 0.23：大会に選んだルールの段階を入れる。
-            if allWide.isEmpty && rounds.isEmpty, let rule = event.ruleID.flatMap({ store.rule($0) }), !rule.stages.isEmpty {
-                Button { applyRuleStages(rule) } label: {
+            // 0.34：同じ回（「2回戦」と「予選2回戦」）が2つある時は、まとめる・名前をそろえる。
+            let cleanup = giriRoundCleanup(event, results: result.stages, notedRoundIDs: Set(store.notes.filter { $0.eventId == event.id }.compactMap(\.roundId)))
+            if !cleanup.isEmpty {
+                Button { cleanupRequest = GiriRoundCleanupRequest(items: cleanup) } label: {
                     VStack(alignment: .leading, spacing: 3) {
-                        Label("ルールの段階を入れる", systemImage: "list.bullet.rectangle")
-                        Text(rule.displayName + "：" + rule.stages.map { $0.name.isEmpty ? ($0.stageKind?.title ?? "段階") : $0.name }.joined(separator: "→"))
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                    }
-                }
-                .tint(accentActionColor)
-            }
-            if allWide.isEmpty && rounds.isEmpty, let source = giriStageTemplateSource(for: event, in: store.events) {
-                Button { applyTemplate(from: source) } label: {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Label("前回の段階を使う", systemImage: "square.on.square")
-                        Text(templateCaption(source)).font(.caption).foregroundStyle(.secondary)
+                        Label("同じ回をまとめる", systemImage: "arrow.triangle.merge")
+                        Text(cleanup.map(\.title).joined(separator: "・")).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
                 .tint(accentActionColor)
@@ -1315,8 +1457,13 @@ struct GiriResultEntry: View {
 
     private func mergedAnswerResults() -> [ThoughtNote] {
         answerNotes.compactMap { edited in
-            guard edited != originalAnswerNotes.first(where: { $0.id == edited.id }),
-                  var current = store.notes.first(where: { $0.id == edited.id }) else { return nil }
+            guard edited != originalAnswerNotes.first(where: { $0.id == edited.id }) else { return nil }
+            guard var current = store.notes.first(where: { $0.id == edited.id }) else {
+                // 0.34：結果の画面から作ったお題（まだ保存していない）。
+                var note = edited
+                note.updatedAt = Date()
+                return note
+            }
             var records = current.effectiveAnswerRecords
             for index in records.indices {
                 guard let changed = edited.answerRecords.first(where: { $0.id == records[index].id }) else { continue }
@@ -1327,9 +1474,9 @@ struct GiriResultEntry: View {
                 records[index].memo = changed.memo
                 records[index].pointCounts = changed.pointCounts
             }
-            // 0.31：結果画面から読み取ったほかの人の回答を足す。
+            // 0.31：結果画面から読み取ったほかの人の回答を足す。0.34：回答を入れていなかった時の自分の回答も足す。
             let known = Set(records.map(\.id))
-            records.append(contentsOf: edited.answerRecords.filter { !known.contains($0.id) && !$0.isOwn })
+            records.append(contentsOf: edited.answerRecords.filter { !known.contains($0.id) })
             current.answerRecords = records
             current.usesAnswerRecords = true
             current.updatedAt = Date()
@@ -1413,6 +1560,10 @@ struct GiriStageEditor: View {
     /// 0.31：この画面の保存（結果全体を保存して段階の一覧に戻る）。
     var onSave: (() -> Void)? = nil
     @State private var deleting = false
+    /// 0.34：ネットの回の結果の画面の読み取り（回答を入れていなくても読める）。
+    @State private var resultPhoto: PhotosPickerItem?
+    @State private var readingResult = false
+    @State private var readMessage: String?
 
     private var isStageWide: Bool { stage.roundId == nil }
     /// 0.28：この段階のチームのメンバー（自分を除く。入力中の段階のメンバーを使う）。
@@ -1484,6 +1635,8 @@ struct GiriStageEditor: View {
 
     var body: some View {
         Form {
+            // 0.34：ネットの回は、結果の上に結果の画面の読み取りをいつも出す。
+            if isOnline && !isStageWide { netResultSection }
             if usesLiveSections {
                 GiriLiveStageSections(event: event, stage: $stage, team: team, namePriority: namePriority)
             } else {
@@ -1503,6 +1656,7 @@ struct GiriStageEditor: View {
                         // 0.17：画像のお題は画像も出す。
                         if !answerNotes[index].imageDataBase64.isEmpty { GiriThoughtImage(base64: answerNotes[index].imageDataBase64) }
                         GiriAnswerResultFields(records: $answerNotes[index].answerRecords, teammates: previewTeammates,
+                                               showsReader: false,
                                                onOwnResult: { record, submissions in
                                                    // 0.31：結果画面から読めた自分の結果を、この回の結果にも入れる（入れていない欄だけ）。
                                                    guard !isStageWide else { return }
@@ -1536,6 +1690,49 @@ struct GiriStageEditor: View {
                          message: "「\(stage.name)」の結果を削除します。お題と回答は残ります。保存すると確定します。") {
             // 親の editingStageID を外すと、この画面は自動で閉じる（dismiss を重ねない）。
             onDelete()
+        }
+    }
+
+    /// 0.34：ネットの回の結果の画面。回答・お題がなくても、順位・得点・投票人数・投稿数と回答を読む。
+    private var netResultSection: some View {
+        Section {
+            AppCardSectionTitle(title: "結果の画面", systemImage: "text.viewfinder", accentColor: AppSectionAccent.scan,
+                                infoTitle: "結果の画面の読み取り",
+                                infoMessage: "サイトの結果の画面のスクショから、この回の順位・得点・投票人数・投稿数と、自分とほかの人の回答を読みます。回答を入れていなくても読めます。")
+                .listRowSeparator(.hidden)
+            PhotosPicker(selection: $resultPhoto, matching: .images, photoLibrary: .shared()) {
+                Label(readingResult ? "読み取り中" : "結果のスクショから読み取る", systemImage: "text.viewfinder")
+            }
+            .disabled(readingResult)
+            .tint(accentActionColor)
+            .onChange(of: resultPhoto) { _, item in readNetResult(item) }
+            if let readMessage { Text(readMessage).font(.caption).foregroundStyle(.secondary) }
+        }.appSectionCardStyle(accentColor: AppSectionAccent.scan)
+    }
+
+    private func readNetResult(_ item: PhotosPickerItem?) {
+        guard let item, let roundID = stage.roundId else { return }
+        readingResult = true
+        Task {
+            defer { readingResult = false; resultPhoto = nil }
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
+                let page = giriNetResultPage(lines: try await GiriParticipantOCR.recognizeLines(data))
+                guard !page.entries.isEmpty || page.submissionCount != nil else {
+                    store.errorMessage = "結果（順位・得点・回答）を読み取れませんでした。結果の画面を選んでください。"
+                    return
+                }
+                let indices = noteIndices
+                let applied = giriApplyingNetResult(page, stage: stage, notes: indices.map { answerNotes[$0] }, eventID: event.id, roundID: roundID,
+                                                    format: event.eventFormat, fallbackTitle: stage.name, isSelf: store.preferences.isSelf)
+                stage = applied.stage
+                for (offset, index) in indices.enumerated() { answerNotes[index] = applied.notes[offset] }
+                if applied.notes.count > indices.count { answerNotes.append(contentsOf: applied.notes[indices.count...]) }
+                readMessage = applied.foundOwn
+                    ? "自分の回答と結果を入れました。" + (applied.createdNote ? "お題も足しました（保存するとお題/回答に入ります）。" : "")
+                    : "自分の回答が見つからなかったので、投稿数・投票人数とほかの人の回答だけ入れました。"
+                playLiveStairSaveFeedback()
+            } catch { store.errorMessage = error.localizedDescription }
         }
     }
 
@@ -2720,6 +2917,61 @@ struct GiriKumiteResultEditor: View {
     }
 }
 
+
+/// 0.34：回の整理の確認（シートで開く）。
+struct GiriRoundCleanupRequest: Identifiable {
+    let id = UUID().uuidString
+    var items: [GiriRoundCleanupItem]
+}
+
+/// 0.34：同じ回をまとめる・名前をそろえる・まだ進んでいない回を消す。項目ごとに選べる。
+struct GiriRoundCleanupSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let items: [GiriRoundCleanupItem]
+    let onApply: ([GiriRoundCleanupItem]) -> Void
+    @State private var selected: Set<String> = []
+    @State private var loaded = false
+
+    var body: some View {
+        Form {
+            Section {
+                AppCardSectionTitle(title: "回の整理", systemImage: "arrow.triangle.merge", accentColor: AppSectionAccent.artist,
+                                    infoTitle: "回の整理について",
+                                    infoMessage: "同じ回が2つある時に、記録のない方を消してまとめます。結果・お題/回答は消しません。")
+                    .listRowSeparator(.hidden)
+                ForEach(items) { item in
+                    Toggle(isOn: Binding(get: { selected.contains(item.id) }, set: { on in
+                        if on { selected.insert(item.id) } else { selected.remove(item.id) }
+                    })) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(item.title).font(.subheadline.weight(.semibold))
+                            Text(item.detail).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .tint(AppSectionAccent.artist)
+                }
+            }.appSectionCardStyle(accentColor: AppSectionAccent.artist)
+        }
+        .appEditorFormStyle()
+        .navigationTitle("回の整理").navigationBarTitleDisplayMode(.inline)
+        .giriNavigationBarStyle()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("整理する") {
+                    onApply(items.filter { selected.contains($0.id) })
+                    dismiss()
+                }
+                .fontWeight(.bold).disabled(selected.isEmpty)
+            }
+        }
+        .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            selected = Set(items.map(\.id))
+        }
+    }
+}
 
 /// 0.31：通過した後に次の段階を足すかの確認。0.33：次の段階は候補（ルールの流れ・名前の続き）から選ぶ。
 struct GiriNextStageQuestion: Identifiable, Equatable {

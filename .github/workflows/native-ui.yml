@@ -1,0 +1,58 @@
+name: SwiftUI iPhone UI regression
+# Tab and format switching on a real simulator (about eight minutes). It runs in parallel with
+# native-ios.yml; pull requests do not wait for it, and a failure is fixed right away.
+on:
+  pull_request:
+    paths:
+      - 'native/**'
+      - '.ci/native*'
+      - '.github/workflows/native-ui.yml'
+  workflow_dispatch:
+concurrency:
+  group: swiftui-iphone-ui-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  native-ui:
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode with the iOS 26 SDK
+        run: python3 .ci/parity_ios.py select-xcode
+      # The simulator boot takes over a minute; it runs while the app is being built.
+      - name: Start the iPhone simulator early
+        run: python3 .ci/native_ui.py --boot
+      - name: Prepare the native SwiftUI project
+        run: |
+          command -v xcodegen >/dev/null || brew install xcodegen
+          python3 .ci/native_project.py
+          xcodegen generate --spec native/project.json
+      - name: Build the app and the UI tests once
+        run: |
+          set -euo pipefail
+          mkdir -p build/native
+          xcodebuild -project native/GiriStair.xcodeproj -scheme GiriStair -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build/native/DerivedData \
+            ARCHS=arm64 CODE_SIGNING_ALLOWED=NO build-for-testing > build/native/xcodebuild.log 2>&1 || {
+              grep -n -A3 -E "(error|fatal error): " build/native/xcodebuild.log | head -n 80 || true
+              tail -n 180 build/native/xcodebuild.log
+              exit 1
+            }
+          tail -n 5 build/native/xcodebuild.log
+      - name: Exercise native tab transitions on iPhone
+        env:
+          GIRI_UI_PREBUILT: '1'
+        run: python3 .ci/native_ui.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: swiftui-iphone-ui-log
+          path: |
+            build/native/xcodebuild.log
+            build/native/uitest.log
+            build/native/hang-*.txt
+          if-no-files-found: ignore
