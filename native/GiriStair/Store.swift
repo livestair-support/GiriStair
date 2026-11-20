@@ -817,12 +817,43 @@ final class GiriStore: ObservableObject {
         return event
     }
     @discardableResult
-    func createSiteCycle(_ siteID: String, descriptor: SiteCycleDescriptor, join: Bool = true) throws -> GiriEvent {
+    func createSiteCycle(_ siteID: String, descriptor: SiteCycleDescriptor, join: Bool = true, currentKeys: Set<String>? = nil, now: Date = Date()) throws -> GiriEvent {
         guard loaded else { throw GiriDataError.notLoaded }
         guard let site = onlineSiteById(siteID) else { throw GiriDataError.invalid("サイトが見つかりません。") }
+        // 0.33：日程や今の回の番号を直した後は、前の日程で作った同じ回の記録をこの回につなぎ直す（同じ回の記録を2つ作らない）。
+        if !events.contains(where: { $0.onlineSiteId == siteID && $0.cycleKey == descriptor.cycleKey }) {
+            let keys = currentKeys ?? Set(siteCycleDescriptors(site, around: now).map(\.cycleKey))
+            if var moved = siteRelinkCandidate(descriptor, events: events.filter { $0.onlineSiteId == siteID }, currentKeys: keys, now: now) {
+                moved.cycleKey = descriptor.cycleKey
+                // 日付を直していない、まだ終わっていない回は、新しい日程にする（回のIDはそのまま）。
+                let movedEnd = moved.rounds.compactMap { $0.votingEnd ?? $0.submissionEnd }.max() ?? .distantPast
+                if !moved.siteScheduleCustomized, movedEnd > now, let first = moved.rounds.first, moved.rounds.count == 1 {
+                    var round = descriptor.round
+                    round.id = first.id; round.stageId = first.stageId ?? first.id
+                    round.submissionEnabled = first.submissionEnabled
+                    moved.rounds = [round]
+                }
+                try saveEvent(moved)
+            }
+        }
         if var event = events.first(where: { $0.onlineSiteId == siteID && $0.cycleKey == descriptor.cycleKey }) {
             // A saved participation and its edited dates/results are snapshots.
-            guard !event.isActualParticipant else { return event }
+            // 0.33：ただし、まだ結果を入れていない回は、今の回の番号を直した時に番号を合わせる。
+            if event.isActualParticipant {
+                if descriptor.kind == .regular, event.sitePeriodKind == .regular, let number = descriptor.cycleNumber,
+                   event.siteCycleNumber != number, !event.hasCycleResult,
+                   siteSameSeason(event.siteSeasonID, event.siteSeason, descriptor.seasonID, descriptor.seasonName) {
+                    let oldName = event.siteCycleNumber.map { "第\($0)回" }
+                    event.siteCycleNumber = number
+                    event.rounds = event.rounds.map { round in
+                        var value = round
+                        if oldName != nil && value.name == oldName { value.name = "第\(number)回"; value.promptNumber = number }
+                        return value
+                    }
+                    try saveEvent(event)
+                }
+                return event
+            }
             if !event.isInterested && event.status != .canceled && !event.siteScheduleCustomized {
                 let previousRoundID = event.effectiveRounds.first?.id
                 var round = descriptor.round
@@ -871,11 +902,55 @@ final class GiriStore: ObservableObject {
     func ensureCurrentSiteCycles(now: Date = Date()) throws {
         for site in onlineSites where !site.isPaused {
             if site.cycleSettings != nil {
-                for descriptor in siteCycleDescriptors(site, around: now) {
-                    try createSiteCycle(site.id, descriptor: descriptor, join: false)
+                let descriptors = siteCycleDescriptors(site, around: now)
+                let keys = Set(descriptors.map(\.cycleKey))
+                for descriptor in descriptors {
+                    try createSiteCycle(site.id, descriptor: descriptor, join: false, currentKeys: keys, now: now)
                 }
+                try removeDuplicateSiteCycles(site.id, currentKeys: keys)
             } else if site.recurrence == .weekly {
                 for offset in -1...1 { try createSiteCycle(site.id, weekOf: now, weekOffset: offset, join: false) }
+            }
+        }
+    }
+    /// 0.33：同じサイトの同じ回（1時間以内に始まる通常の回）の記録が2つある時、中身のない方を消す（参加・見送りの記録は「最近削除した会」へ）。
+    /// 残すのは、お題/回答・結果・メモがある記録、参加・見送りを決めた記録、今の日程の回とつながっている記録、古い記録の順。
+    /// どちらにもお題/回答・結果・メモがある時は、どちらも残す。残す記録は今の日程の回につなぐ。
+    func removeDuplicateSiteCycles(_ siteID: String, currentKeys: Set<String>) throws {
+        let siteMemo = onlineSiteById(siteID)?.memo ?? ""
+        let cycles = events.filter { $0.onlineSiteId == siteID && $0.sitePeriodKind == .regular && !($0.cycleKey ?? "").hasPrefix("special:") }
+        func start(_ event: GiriEvent) -> Date? { event.effectiveRounds.first.flatMap { $0.submissionStart ?? $0.votingStart } }
+        func hasContent(_ event: GiriEvent) -> Bool {
+            event.hasCycleResult || notes.contains { $0.eventId == event.id } || event.status == .canceled
+                || (!event.memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && event.memo != siteMemo)
+        }
+        func decided(_ event: GiriEvent) -> Bool { event.isActualParticipant || event.siteSkipped }
+        func current(_ event: GiriEvent) -> Bool { currentKeys.contains(event.cycleKey ?? "") }
+        var removed = Set<String>()
+        for (index, first) in cycles.enumerated() where !removed.contains(first.id) {
+            guard let firstStart = start(first) else { continue }
+            for second in cycles[(index + 1)...] where !removed.contains(second.id) {
+                guard let secondStart = start(second), abs(firstStart.timeIntervalSince(secondStart)) < 3600 else { continue }
+                if let a = first.siteCycleNumber, let b = second.siteCycleNumber, a != b { continue }
+                let keepFirst: Bool
+                if hasContent(first) != hasContent(second) { keepFirst = hasContent(first) }
+                else if decided(first) != decided(second) { keepFirst = decided(first) }
+                else if current(first) != current(second) { keepFirst = current(first) }
+                else { keepFirst = first.createdAt <= second.createdAt }
+                guard var keeper = events.first(where: { $0.id == (keepFirst ? first : second).id }),
+                      let extra = events.first(where: { $0.id == (keepFirst ? second : first).id }), !hasContent(extra) else { continue }
+                try deleteEvent(extra.id, keepsInTrash: decided(extra))
+                removed.insert(extra.id)
+                var changed = false
+                // 残す記録を今の日程の回につなぐ。中身のない方で参加していた時は、残す方を参加にする。
+                if !current(keeper), current(extra), let key = extra.cycleKey { keeper.cycleKey = key; changed = true }
+                if extra.isActualParticipant && !decided(keeper) {
+                    keeper.isParticipating = true; keeper.isInterested = false; keeper.status = .planned
+                    for name in extra.participants where !keeper.participants.contains(where: { playerSearchKey($0) == playerSearchKey(name) }) { keeper.participants.append(name) }
+                    changed = true
+                }
+                if changed { try saveEvent(keeper) }
+                if !keepFirst { break }
             }
         }
     }

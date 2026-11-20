@@ -469,7 +469,8 @@ struct GiriEventPageReview: View {
                 GiriParticipantCandidateSections(candidates: $draft.participants, knownNames: knownNames, listedCount: draft.listedParticipantCount)
             }
             // 0.29：説明・コメントに書いてあったチーム（タッグ）。
-            if !isTeamReview && !draft.teams.isEmpty {
+            // 0.33：大会の時だけ出す（通常の会・企画などでは使わないので、読み取ったタッグを出さない）。
+            if !isTeamReview && !draft.teams.isEmpty && draft.meetingKind == "tournament" {
                 Section {
                     AppCardSectionTitle(title: draft.tournamentFormat == .pair ? "タッグ" : "チーム", systemImage: "person.3", accentColor: AppSectionAccent.artist)
                         .listRowSeparator(.hidden)

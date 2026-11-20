@@ -624,7 +624,8 @@ struct GiriSiteEditor: View {
             settings.leagues = settings.leagues.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
             value.cycleSettings = settings
         }
-        store.run { try store.saveOnlineSite(value); onSaved?(value); playLiveStairSaveFeedback(); dismiss() }
+        // 0.33：日程・今の回の番号を直した時は、前の日程で作った同じ回の記録をすぐにつなぎ直す。
+        store.run { try store.saveOnlineSite(value); try store.ensureCurrentSiteCycles(); onSaved?(value); playLiveStairSaveFeedback(); dismiss() }
     }
 }
 

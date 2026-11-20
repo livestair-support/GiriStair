@@ -20,10 +20,18 @@ struct GiriCalendarPeriod: Identifiable {
         guard let to = Calendar.current.date(byAdding: .day, value: 1, to: from) else { return false }
         return start < to && end > from
     }
-    static func make(events: [GiriEvent]) -> [GiriCalendarPeriod] {
+    /// 0.33：同じサイト（なければ同じ名前）の同じ期間・同じ投稿／投票は1つだけ出す（同じ回の記録が2つあっても重ねない）。
+    static func make(events: [GiriEvent], siteNames: [String: String] = [:]) -> [GiriCalendarPeriod] {
         var periods: [GiriCalendarPeriod] = []
+        var seen = Set<String>()
         func add(_ event: GiriEvent, _ round: EventRound?, _ start: Date?, _ end: Date?, _ phase: Phase) {
             guard let start, let end, start < end else { return }
+            if round != nil {
+                let label = event.onlineSiteId.flatMap { siteNames[$0] } ?? event.title
+                let minute = { (date: Date) in Int(date.timeIntervalSinceReferenceDate / 60) }
+                let key = [playerSearchKey(label), phase.rawValue, String(minute(start)), String(minute(end))].joined(separator: "|")
+                guard seen.insert(key).inserted else { return }
+            }
             periods.append(GiriCalendarPeriod(event: event, round: round, start: start, end: end, phase: phase))
         }
         for event in events where event.isActualParticipant {
@@ -106,7 +114,7 @@ struct GiriCalendarView: View {
     @State private var pickerYear = Calendar.current.component(.year, from: Date())
     @State private var pickerMonth = Calendar.current.component(.month, from: Date())
     private let accent = accentActionColor
-    private var periods: [GiriCalendarPeriod] { GiriCalendarPeriod.make(events: events) }
+    private var periods: [GiriCalendarPeriod] { GiriCalendarPeriod.make(events: events, siteNames: siteNames) }
     private var currentMonthPeriods: [GiriCalendarPeriod] {
         guard let end = GiriCalendarRules.calendar.date(byAdding: .month, value: 1, to: month) else { return [] }
         return periods.filter { $0.start < end && $0.end > month }

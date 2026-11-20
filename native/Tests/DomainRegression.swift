@@ -2658,6 +2658,76 @@ struct DomainRegression {
                       "live results get the missing rule stages before the recorded ones")
         }
 
+        // 0.33 follow-up: corrected site cycles are not duplicated, self-hosted fees, page footers on event pages (fictional names only).
+        do {
+            let base = GiriDates.parse("2026-11-11T14:00:00Z") ?? Date()
+            func day(_ offset: Int) -> Date { addCalendarDays(base, offset) }
+            var corrected = OnlineSite(id: "corrected-site", name: "架空の天文台", recurrence: .weekly)
+            corrected.submissionDays = 7; corrected.votingDays = 7
+            var oldSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: day(-7), intervalDays: 7, anchorCycleNumber: 1, seasonName: "第30シーズン")
+            oldSettings.seasonID = "s30"; oldSettings.ruleRevisionID = "old-rule"; oldSettings.regularCycleCount = 8
+            var newSettings = oldSettings; newSettings.anchorStart = day(0); newSettings.ruleRevisionID = "new-rule"
+            corrected.cycleSettings = newSettings
+            corrected.ruleHistory = [SiteRuleRevision(id: "old-rule", settings: oldSettings, submissionDays: 7, votingDays: 7, recurrence: .weekly)]
+            let rows = siteCycleDescriptors(corrected, around: day(3)).filter { $0.kind == .regular }
+            try check(rows.filter { $0.cycleNumber == 1 }.count == 1 && rows.first { $0.cycleNumber == 1 }?.start == day(0),
+                      "correcting the current number leaves no second first round from the previous dates")
+            guard let first = rows.first(where: { $0.cycleNumber == 1 }) else { throw GiriDataError.invalid("Missing corrected round") }
+            var oldJoined = GiriEvent(title: "架空の天文台"); oldJoined.eventFormat = .onlineLong; oldJoined.onlineSiteId = corrected.id
+            oldJoined.cycleKey = cycleKeyFor(day(-7)); oldJoined.siteCycleNumber = 1; oldJoined.siteSeason = "第30シーズン"; oldJoined.siteSeasonID = "s30"
+            var oldRound = EventRound(id: "old-round"); oldRound.submissionStart = day(-7)
+            oldJoined.rounds = [completeRoundSchedule(oldRound, submissionDays: 7, votingDays: 7)]
+            let keys = Set(rows.map(\.cycleKey))
+            try check(siteRelinkCandidate(first, events: [oldJoined], currentKeys: keys, now: day(3))?.id == oldJoined.id,
+                      "the record of the same numbered round in the same season is linked to the corrected round")
+            try check(siteRelinkCandidate(first, events: [oldJoined], currentKeys: keys, now: day(20)) == nil, "finished records are never moved")
+            var nearby = oldJoined; nearby.id = "nearby"; nearby.siteCycleNumber = 5; nearby.cycleKey = "other-key"
+            nearby.rounds[0].submissionStart = day(0).addingTimeInterval(1800)
+            try check(siteRelinkCandidate(first, events: [nearby], currentKeys: keys, now: day(3))?.id == "nearby", "a record starting within an hour is the same round")
+
+            let dupDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriDuplicates-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: dupDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dupDirectory) }
+            let dupStore = GiriStore(directory: dupDirectory)
+            var dupSite = OnlineSite(id: "dup-site", name: "架空の半分", recurrence: .weekly)
+            dupSite.submissionDays = 7; dupSite.votingDays = 7
+            dupSite.cycleSettings = SiteCycleSettings(pattern: .alternating, anchorStart: day(0), intervalDays: 14)
+            try dupStore.saveOnlineSite(dupSite)
+            guard let storedDup = dupStore.onlineSiteById(dupSite.id),
+                  let current = siteCycleDescriptors(storedDup, around: day(3)).first(where: { $0.start == day(0) }) else { throw GiriDataError.invalid("Missing duplicate fixture") }
+            let preview = try dupStore.createSiteCycle(dupSite.id, descriptor: current, join: false, now: day(3))
+            var orphan = preview; orphan.id = UUID().uuidString; orphan.cycleKey = "older-key"; orphan.isParticipating = true
+            try dupStore.saveEvent(orphan)
+            try dupStore.ensureCurrentSiteCycles(now: day(3))
+            let remaining = dupStore.events.filter { $0.onlineSiteId == dupSite.id && $0.effectiveRounds.first?.submissionStart == day(0) }
+            try check(remaining.count == 1 && remaining.first?.id == orphan.id && remaining.first?.cycleKey == current.cycleKey && remaining.first?.isActualParticipant == true,
+                      "an empty duplicate of a joined round is removed and the joined record follows the current schedule")
+
+            var hosted = GiriEvent(title: "架空の会"); hosted.entryFee = 1000; hosted.organizer = "わたし"
+            try check(hosted.countedEntryFee(isSelf: { $0 == "わたし" }) == nil, "fees of meetings I host are not counted")
+            hosted.organizer = "だれか"; hosted.coOrganizers = ["わたし"]
+            try check(hosted.countedEntryFee(isSelf: { $0 == "わたし" }) == nil, "fees of meetings I co-host are not counted")
+            hosted.coOrganizers = []
+            try check(hosted.countedEntryFee(isSelf: { $0 == "わたし" }) == 1000, "fees of other meetings are counted")
+
+            func row(_ text: String, _ y: Double, x: Double = 0.3, h: Double = 0.006) -> GiriOCRLine { GiriOCRLine(text: text, midX: x, midY: y, height: h) }
+            let pageTop = [row("2027年1月10日[日] 13:00", 0.02, h: 0.010), row("架空を知る会", 0.04, h: 0.010), row("かくれ", 0.06), row("[9 views]", 0.07),
+                           row("Xでシェアする", 0.075, x: 0.5), row("詳細", 0.10), row("8人横並びの大喜利会です", 0.12)]
+            let pageList = [row("参加者 (2人)", 0.30, x: 0.15), row("ねこ", 0.32, x: 0.15), row("いぬ", 0.34, x: 0.15)]
+            let footer = [row("近日開催のイベント", 0.60), row("2026/11/23 00:00", 0.62), row("架空タッグ戦（はるか・たろう）", 0.64),
+                          row("やまださんが主催", 0.66), row("たなか", 0.68, x: 0.15)]
+            let pageNow = GiriDates.parse("2026-11-01T00:00:00Z") ?? Date()
+            let footerDraft = giriEventPageDraft(lines: pageTop + pageList + footer, known: [], venues: [], now: pageNow)
+            try check(footerDraft.meetingKind == nil && footerDraft.tournamentFormat == nil && footerDraft.teams.isEmpty
+                      && footerDraft.participants.filter(\.included).map(\.name) == ["ねこ", "いぬ"]
+                      && footerDraft.title == "架空を知る会" && footerDraft.organizer == "かくれ",
+                      "other events listed below the page are not read into the meeting")
+            try check(giriIsEventPageFooter("近日開催のイベント") && giriIsEventPageFooter("イベント告知・出欠管理サービス「TwiPla」について")
+                      && !giriIsEventPageFooter("その他のイベント情報はこちら") && !giriIsEventPageFooter("「ルール」について"), "only the site's own footer ends the page")
+            let bodyTeam = giriEventPageDraft(lines: pageTop + [row("後半はチーム戦もあります", 0.14)] + pageList, known: [], venues: [], now: pageNow)
+            try check(bodyTeam.meetingKind == nil && bodyTeam.tournamentFormat == .team, "team wording in the description alone does not make a meeting a tournament")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

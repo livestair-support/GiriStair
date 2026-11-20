@@ -245,17 +245,59 @@ func siteCycleDescriptors(_ site: OnlineSite, around now: Date = Date(), calenda
         $0.element.effectiveFrom == $1.element.effectiveFrom ? $0.offset < $1.offset : $0.element.effectiveFrom < $1.element.effectiveFrom
     }.map(\.element)
     var output: [String: SiteCycleDescriptor] = [:]
+    var revisionOf: [String: Int] = [:]
     for (index, revision) in revisions.enumerated() {
         let upper = index + 1 < revisions.count ? revisions[index + 1].effectiveFrom : nil
         for descriptor in siteRevisionDescriptors(siteID: site.id, block: site.block,
             revision: revision, around: now, upperBound: upper,
             hasPreviousRevision: index > 0, calendar: calendar) {
             output[descriptor.cycleKey] = descriptor
+            revisionOf[descriptor.cycleKey] = index
         }
+    }
+    // 0.33：日程や今の回の番号を直した時、前の決まりで作った同じ回（同じシーズンの同じ番号、または1時間以内に始まる回）は出さない。
+    // 前の決まりのまま残ると、同じ回が2つ並び、カレンダーにも2つ出るため。
+    let regular = output.values.filter { $0.kind == .regular }
+    for descriptor in regular {
+        let index = revisionOf[descriptor.cycleKey] ?? 0
+        let replaced = regular.contains { later in
+            guard (revisionOf[later.cycleKey] ?? 0) > index else { return false }
+            if let a = descriptor.start, let b = later.start, abs(a.timeIntervalSince(b)) < 3600 { return true }
+            guard let number = descriptor.cycleNumber, later.cycleNumber == number else { return false }
+            return siteSameSeason(descriptor.seasonID, descriptor.seasonName, later.seasonID, later.seasonName)
+        }
+        if replaced { output.removeValue(forKey: descriptor.cycleKey) }
     }
     return output.values.sorted {
         let first = $0.start ?? .distantFuture, second = $1.start ?? .distantFuture
         return first == second ? $0.cycleKey < $1.cycleKey : first < second
+    }
+}
+
+/// 0.33：同じシーズンか（IDがあればID、なければ名前）。
+func siteSameSeason(_ firstID: String?, _ firstName: String, _ secondID: String?, _ secondName: String) -> Bool {
+    if let firstID, let secondID { return firstID == secondID }
+    return firstID == nil && secondID == nil && firstName == secondName
+}
+
+/// 0.33：サイトの日程や今の回の番号を直した時、前の日程で作った回の記録のうち、この回とつなぎ直す記録。
+/// 1時間以内に始まる記録か、同じシーズンの同じ番号でまだ終わっていない（結果も入れていない）記録。
+/// 今の日程の回とつながっている記録（`currentKeys`）は使わない。
+func siteRelinkCandidate(_ descriptor: SiteCycleDescriptor, events: [GiriEvent], currentKeys: Set<String>, now: Date = Date()) -> GiriEvent? {
+    guard descriptor.kind == .regular, let start = descriptor.start else { return nil }
+    let orphans = events.filter { event in
+        guard event.sitePeriodKind == .regular, let key = event.cycleKey, !key.hasPrefix("special:") else { return false }
+        return !currentKeys.contains(key)
+    }
+    func eventStart(_ event: GiriEvent) -> Date? { event.effectiveRounds.first.flatMap { $0.submissionStart ?? $0.votingStart } }
+    if let same = orphans.first(where: { event in eventStart(event).map { abs($0.timeIntervalSince(start)) < 3600 } ?? false }) { return same }
+    guard let number = descriptor.cycleNumber else { return nil }
+    return orphans.first { event in
+        guard event.siteCycleNumber == number, !event.hasCycleResult,
+              siteSameSeason(event.siteSeasonID, event.siteSeason, descriptor.seasonID, descriptor.seasonName),
+              let begin = eventStart(event), abs(begin.timeIntervalSince(start)) < 60 * 86_400 else { return false }
+        let end = event.effectiveRounds.compactMap { $0.votingEnd ?? $0.submissionEnd }.max() ?? .distantPast
+        return end > now
     }
 }
 
