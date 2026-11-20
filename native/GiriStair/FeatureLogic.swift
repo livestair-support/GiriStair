@@ -1465,7 +1465,7 @@ func giriHalfwidthDigits(_ text: String) -> String {
     })
 }
 
-private func giriRegexGroups(_ pattern: String, in text: String) -> [[String]] {
+func giriRegexGroups(_ pattern: String, in text: String) -> [[String]] {
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
     let range = NSRange(text.startIndex..., in: text)
     return regex.matches(in: text, range: range).map { match in
