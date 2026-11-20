@@ -278,6 +278,8 @@ struct GiriEventDetail: View {
                 if event.eventFormat == .live && event.knockout { detailValue("対戦形式", "トーナメント") }
                 if !event.judging.isEmpty { detailValue("審査方法", event.judging) }
             }
+            // 0.31：道具を持っていく会。
+            if event.eventFormat == .live && event.needsTools { detailValue("道具", "持っていく") }
             if let kind = event.battleKind, event.meetingType != .tournament {
                 detailValue("対戦", GiriSideResult.kinds.first { $0.value == kind }?.title ?? "その他")
             }
