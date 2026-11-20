@@ -198,6 +198,8 @@ struct GiriResultEntry: View {
     @State private var liveReview: GiriLiveResultReviewData?
     /// 0.31：記事のルールから作ったルール（保存する時にルール一覧へ登録してこの大会に使う）。
     @State private var pendingRule: GiriRule?
+    /// 0.32：ルールの勝ち抜けから自動で入れた通過・敗退（手で選び直した記録は自動で変えない）。
+    @State private var autoOutcomeIDs: Set<String> = []
     @State private var leave = false
     @State private var originalResult = TournamentResult()
     @State private var originalPlacement: Int?
@@ -320,7 +322,11 @@ struct GiriResultEntry: View {
                 }
             }
         }
-        .sheet(item: $nextDraft, onDismiss: { if resultSaved && closeAfterSave { dismiss() } }) { action in
+        .sheet(item: $nextDraft, onDismiss: {
+            if resultSaved && closeAfterSave { dismiss(); return }
+            // 0.32：足した回を、結果の一覧にも出す。
+            if let event { addRoundStages(event) }
+        }) { action in
             NavigationStack { GiriNextRoundEditor(eventID: eventID, sameStage: action == .sameStage) }
         }
     }
@@ -588,6 +594,19 @@ struct GiriResultEntry: View {
         // 開いた直後（読み込んだだけ）では何も変えない。
         guard let event, event.isSelfPlayer, loaded, result.stages != originalResult.stages else { return }
         if event.eventFormat.hasOnlineRounds { syncSingleRoundStages() }
+        // 0.32：ルールの勝ち抜け（上位半数など）と順位・出場人数から、通過・敗退を入れる。
+        let rule = event.ruleID.flatMap { store.rule($0) }
+        for index in result.stages.indices {
+            let stage = result.stages[index]
+            guard stage.outcome == .unrecorded || autoOutcomeIDs.contains(stage.id) else { continue }
+            if let outcome = giriAutoOutcome(stage, rule: rule) {
+                if outcome != stage.outcome { result.stages[index].outcome = outcome }
+                autoOutcomeIDs.insert(stage.id)
+            } else if autoOutcomeIDs.contains(stage.id) {
+                result.stages[index].outcome = .unrecorded
+                autoOutcomeIDs.remove(stage.id)
+            }
+        }
         let names = bracket(event)
         if names.count >= 2, var next = giriNextBracketStage(result.stages, bracket: names, isSelf: store.preferences.isSelf) {
             if !event.eventFormat.hasOnlineRounds { next.laps = giriNormalizedLaps(next, lapCount: 1) }
@@ -735,7 +754,7 @@ struct GiriResultEntry: View {
 
     /// 段階（予選・本戦…）を上から並べ、ネットの各回はその段階の下に出す。
     private func stageListSection(_ event: GiriEvent) -> some View {
-        let wide = result.stages.filter { $0.roundId == nil }
+        let wide = orderedWide(event)
         let rounds = result.stages.filter { $0.roundId != nil }
         return Section {
             AppCardSectionTitle(title: "段階の結果", systemImage: "list.number", accentColor: AppSectionAccent.ticket,
@@ -804,7 +823,24 @@ struct GiriResultEntry: View {
             if bracket(event).count >= 2 {
                 bracketRow(event, hasStages: !wide.isEmpty)
             }
+            // 0.32：ルールの流れで、大会の日程にまだない回があれば足す（今ある回・結果はそのまま）。
+            let missing = missingFlowRounds(event)
+            if !missing.isEmpty {
+                Button { addMissingFlowRounds() } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label("ルールの流れで足りない回を足す", systemImage: "list.bullet.rectangle")
+                        Text(missing.map(\.name).joined(separator: "・")).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+                .tint(accentActionColor)
+            }
             Button {
+                // 0.32：ネット・スプシ系で日程のある大会は、段階を日程の回として足す（日付を前の回から入れて確認して保存する）。
+                if event.eventFormat.hasOnlineRounds && !event.effectiveRounds.isEmpty {
+                    closeAfterSave = false
+                    nextDraft = .nextStage
+                    return
+                }
                 var stage = ResultStage()
                 // 予選の後は本戦、本戦の後は生大喜利なら決勝・ネット大喜利なら準々決勝（名前は変えられる）。
                 stage.name = wide.isEmpty ? "予選" : giriEditorNextStage(wide.last?.name ?? "", live: !event.eventFormat.hasOnlineRounds)
@@ -858,6 +894,7 @@ struct GiriResultEntry: View {
             guard let round = singleRound(of: result.stages[index], in: rounds) else { continue }
             if round.outcome != .unrecorded && result.stages[index].outcome != round.outcome { result.stages[index].outcome = round.outcome }
             if let placement = round.placement, result.stages[index].placement != placement { result.stages[index].placement = placement }
+            if let entrants = round.entrantCount, result.stages[index].entrantCount != entrants { result.stages[index].entrantCount = entrants }
         }
     }
 
@@ -1104,21 +1141,14 @@ struct GiriResultEntry: View {
         tournamentTitle = event.title
         originalTitle = event.title
         existing = Set(result.stages.map(\.id))
-        var seen = Set<String>()
-        for round in event.effectiveRounds {
-            if seen.insert(round.effectiveStageId).inserted,
-               !result.stages.contains(where: { $0.roundId == nil && $0.stageId == round.effectiveStageId }) {
-                var stage = ResultStage()
-                stage.name = round.name
-                stage.stageId = round.effectiveStageId
-                result.stages.append(stage)
-            }
-            if !result.stages.contains(where: { $0.roundId == round.id }) {
-                var prompt = ResultStage()
-                prompt.name = giriRoundNumberText(round, in: event.effectiveRounds).map { "\(round.name) \($0)" } ?? round.name
-                prompt.roundId = round.id
-                prompt.stageId = round.effectiveStageId
-                result.stages.append(prompt)
+        addRoundStages(event)
+        // 0.32：生大喜利などは、大会のルールの流れのうちまだない段階を正しい順に出す（記録を入れるまで保存しない）。
+        if !event.eventFormat.hasOnlineRounds, let rule = event.ruleID.flatMap({ store.rule($0) }), !rule.stages.isEmpty {
+            result.stages = giriAddingRuleStages(rule, to: result.stages).map { stage in
+                guard !existing.contains(stage.id), stage.laps.isEmpty else { return stage }
+                var value = stage
+                value.laps = giriNormalizedLaps(value, lapCount: 1)
+                return value
             }
         }
         selectedID = result.stages.first(where: { $0.id == initialStageID })?.id ?? result.stages.first(where: { $0.roundId == initialRoundID && initialRoundID != nil })?.id ?? result.stages.first?.id ?? ""
@@ -1146,6 +1176,66 @@ struct GiriResultEntry: View {
         originalPlacement = placement
         originalStandings = standings
         loaded = true
+    }
+
+    /// 大会の日程の回ごとに、段階全体と回の記録を出す（もう出ている回は足さない）。
+    private func addRoundStages(_ event: GiriEvent) {
+        var seen = Set<String>()
+        for round in event.effectiveRounds {
+            if seen.insert(round.effectiveStageId).inserted,
+               !result.stages.contains(where: { $0.roundId == nil && $0.stageId == round.effectiveStageId }) {
+                var stage = ResultStage()
+                stage.name = round.name
+                stage.stageId = round.effectiveStageId
+                result.stages.append(stage)
+            }
+            if !result.stages.contains(where: { $0.roundId == round.id }) {
+                var prompt = ResultStage()
+                prompt.name = giriRoundNumberText(round, in: event.effectiveRounds).map { "\(round.name) \($0)" } ?? round.name
+                prompt.roundId = round.id
+                prompt.stageId = round.effectiveStageId
+                result.stages.append(prompt)
+            }
+        }
+    }
+
+    /// 0.32：ネット・スプシ系の大会で、ルールの流れにあって日程にまだない回（日程つき）。
+    private func missingFlowRounds(_ event: GiriEvent) -> [EventRound] {
+        guard event.eventFormat.hasOnlineRounds, let rule = event.ruleID.flatMap({ store.rule($0) }), !rule.stages.isEmpty else { return [] }
+        var preview = event
+        giriApplyRule(rule, to: &preview)
+        let ids = Set(event.effectiveRounds.map(\.id))
+        return preview.effectiveRounds.filter { !ids.contains($0.id) }
+    }
+
+    /// 0.32：ルールの流れの足りない回を大会の日程に足し（保存する）、結果の一覧にも出す。
+    private func addMissingFlowRounds() {
+        guard var current = event, let rule = current.ruleID.flatMap({ store.rule($0) }) else { return }
+        giriApplyRule(rule, to: &current)
+        store.run {
+            try giriEditorValidate(current)
+            try store.saveEvent(current)
+            addRoundStages(current)
+            playLiveStairSaveFeedback()
+        }
+    }
+
+    /// 0.32：段階の一覧の並び。ネットは日程（投稿の始まり）の順にする（あとから足した前の回も正しい場所に出る）。
+    private func orderedWide(_ event: GiriEvent) -> [ResultStage] {
+        let wide = result.stages.filter { $0.roundId == nil }
+        guard event.eventFormat.hasOnlineRounds else { return wide }
+        let rounds = event.effectiveRounds
+        func start(_ stage: ResultStage) -> Date? {
+            rounds.filter { $0.effectiveStageId == stage.stageId }.compactMap(\.submissionStart).min()
+        }
+        return wide.enumerated().sorted { first, second in
+            switch (start(first.element), start(second.element)) {
+            case let (a?, b?) where a != b: return a < b
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return first.offset < second.offset
+            }
+        }.map(\.element)
     }
 
     private func requestSave(closing: Bool) {
@@ -1422,12 +1512,14 @@ struct GiriStageEditor: View {
                         // 0.17：画像のお題は画像も出す。
                         if !answerNotes[index].imageDataBase64.isEmpty { GiriThoughtImage(base64: answerNotes[index].imageDataBase64) }
                         GiriAnswerResultFields(records: $answerNotes[index].answerRecords, teammates: previewTeammates,
-                                               onOwnResult: { record in
+                                               onOwnResult: { record, submissions in
                                                    // 0.31：結果画面から読めた自分の結果を、この回の結果にも入れる（入れていない欄だけ）。
                                                    guard !isStageWide else { return }
                                                    if stage.placement == nil { stage.placement = record.placement }
                                                    if stage.points == nil { stage.points = record.points }
                                                    if stage.voterCount == nil { stage.voterCount = record.voterCount }
+                                                   // 0.32：結果画面の投稿数を出場人数にする（ルールの勝ち抜けの判定に使う）。
+                                                   if stage.entrantCount == nil { stage.entrantCount = submissions }
                                                })
                     }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
                 }
@@ -1454,6 +1546,13 @@ struct GiriStageEditor: View {
             // 親の editingStageID を外すと、この画面は自動で閉じる（dismiss を重ねない）。
             onDelete()
         }
+    }
+
+    /// 0.32：大会のルールのこの段階の勝ち抜け（上位半数など）。
+    private var ruleAdvanceText: String? {
+        guard stage.effectiveKind != .final, let rule = event.ruleID.flatMap({ store.rule($0) }),
+              let ruleStage = giriRuleStage(for: stage.name, in: rule) else { return nil }
+        return ruleStage.advanceText
     }
 
     /// 段階の結果の選択肢（決勝は優勝・準優勝など、それ以外は通過・敗退）。以前の版で選んだ値も残す。
@@ -1503,6 +1602,12 @@ struct GiriStageEditor: View {
                 } label: { GiriEditorLabel(isStageWide ? "結果" : "この回の結果") }
                 .pickerStyle(.menu).tint(.primary)
                 numberRow("順位", value: $stage.placement, suffix: "位")
+                // 0.32：出場人数（ネットは結果画面の投稿数から入る）。ルールの勝ち抜けと順位から通過・敗退を自動で入れる。
+                numberRow("出場人数", value: $stage.entrantCount, suffix: "人")
+                if let advance = ruleAdvanceText {
+                    Text("ルール：\(advance)が勝ち抜け。順位と出場人数から通過・敗退を自動で入れます。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if isStageWide && stage.effectiveKind != .final { numberRow("通過枠", value: $stage.advanceCount, suffix: "人") }
                 if team {
                     numberRow("チーム順位", value: $stage.teamPlacement, suffix: "位")

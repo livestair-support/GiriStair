@@ -2559,6 +2559,66 @@ struct DomainRegression {
                       "only finals offer a championship")
         }
 
+        // 0.32 tournament flow from rules: stages with rounds, missing rounds in order, automatic pass/elimination and final results.
+        do {
+            var flowRule = GiriRule(kind: .online, scope: .tournament)
+            flowRule.name = "架空の名人戦"
+            flowRule.submissionDays = 2; flowRule.votingDays = 1
+            flowRule.stages = [GiriRuleStage(name: "予選", kind: StageKind.qualifier.rawValue, advanceFraction: "1/2", roundCount: 3),
+                               GiriRuleStage(name: "準決勝", kind: StageKind.semifinal.rawValue, advanceCount: 2), GiriRuleStage(name: "決勝", kind: StageKind.final.rawValue)]
+            try check(giriRuleFlowNames(flowRule).map(\.name) == ["予選1回戦", "予選2回戦", "予選3回戦", "準決勝", "決勝"], "stages with several rounds are named by round")
+            try check(giriRuleStage(for: "予選2回戦", in: flowRule)?.name == "予選" && giriRuleStage(for: "予選", in: flowRule)?.name == "予選"
+                      && giriRuleStage(for: "準決勝", in: flowRule)?.name == "準決勝" && giriRuleStage(for: "エキシビション", in: flowRule) == nil, "rounds find their rule stage")
+            let plainStage = try JSONSerialization.jsonObject(with: JSONEncoder().encode(GiriRuleStage(name: "決勝"))) as? [String: Any] ?? [:]
+            try check(plainStage["roundCount"] == nil && plainStage["rankBy"] == nil, "single-round stages keep the older JSON shape")
+            try check(try JSONDecoder().decode(GiriRuleStage.self, from: JSONEncoder().encode(flowRule.stages[0])).roundCount == 3, "round counts roundtrip")
+
+            let base = GiriDates.parse("2026-11-10T12:00:00Z") ?? Date()
+            func dayAt(_ offset: Int) -> Date { addCalendarDays(base, offset) }
+            let second = EventRound(id: "r2", name: "予選2回戦", submissionStart: dayAt(10), submissionEnd: dayAt(12), votingStart: dayAt(12), votingEnd: dayAt(13), stageId: "r2")
+            let third = EventRound(id: "r3", name: "予選3回戦", submissionStart: dayAt(13), submissionEnd: dayAt(15), votingStart: dayAt(15), votingEnd: dayAt(16), stageId: "r3")
+            let flowed = giriAddingRuleFlow(flowRule, to: [second, third], defaultStart: base, submissionDays: 2, votingDays: 1)
+            try check(flowed.map(\.name) == ["予選1回戦", "予選2回戦", "予選3回戦", "準決勝", "決勝"] && flowed[1].id == "r2" && flowed[2].id == "r3",
+                      "missing rounds are added in the right order and existing rounds stay")
+            try check(flowed[0].votingEnd == dayAt(10) && flowed[0].submissionStart == dayAt(7) && flowed[3].submissionStart == dayAt(16) && flowed[3].stageId == flowed[3].id,
+                      "a missing earlier round ends before the next one and later rounds follow the previous one")
+
+            var netEvent = GiriEvent(title: "架空の名人戦")
+            netEvent.eventFormat = .onlineLong; netEvent.meetingType = .tournament
+            giriApplyRule(flowRule, to: &netEvent, flowStart: base)
+            try check(netEvent.ruleID == flowRule.id && netEvent.rounds.map(\.name) == ["予選1回戦", "予選2回戦", "予選3回戦", "準決勝", "決勝"]
+                      && netEvent.rounds.first?.submissionStart == base, "choosing a rule makes the flow of a net tournament")
+            giriApplyRule(flowRule, to: &netEvent)
+            try check(netEvent.rounds.count == 5, "choosing the same rule again adds nothing")
+
+            var round = ResultStage(); round.name = "予選3回戦"; round.roundId = "r3"; round.placement = 6; round.entrantCount = 11
+            try check(giriAutoOutcome(round, rule: flowRule) == .advanced, "the top half rounds up (6th of 11 advances)")
+            round.placement = 7
+            try check(giriAutoOutcome(round, rule: flowRule) == .eliminated, "below the top half is eliminated")
+            round.entrantCount = nil
+            try check(giriAutoOutcome(round, rule: flowRule) == nil, "without the entrant count a fraction cannot be judged")
+            var semi = ResultStage(); semi.name = "準決勝"; semi.placement = 3
+            try check(giriAutoOutcome(semi, rule: flowRule) == .eliminated, "a fixed number of advancing players needs no entrant count")
+            var finalStage = ResultStage(); finalStage.name = "決勝"; finalStage.placement = 1
+            try check(giriAutoOutcome(finalStage, rule: flowRule) == nil, "finals are not judged automatically")
+            var totalRule = flowRule; totalRule.stages[0].rankBy = "total"
+            round.entrantCount = 11
+            try check(giriAutoOutcome(round, rule: totalRule) == nil, "stages ranked by the total of their rounds are not judged per round")
+
+            var wideRound = ResultStage(); wideRound.name = "予選3回戦"; wideRound.stageId = "r3"
+            var lostRound = ResultStage(); lostRound.name = "予選3回戦"; lostRound.roundId = "r3"; lostRound.outcome = .eliminated
+            try check(giriSuggestedFinalChoice([wideRound, lostRound]) == .eliminated, "a lost round gives the final result when its stage has no record")
+            var bigSemi = ResultStage(); bigSemi.name = "準決勝"; bigSemi.outcome = .eliminated; bigSemi.entrantCount = 8
+            try check(giriSuggestedFinalChoice([bigSemi]) == .best8, "the best-of number follows the entrants of the stage")
+
+            var liveRule = GiriRule(kind: .live, scope: .tournament)
+            liveRule.stages = [GiriRuleStage(name: "予選", lineup: "横並び5人", advanceCount: 2), GiriRuleStage(name: "決勝")]
+            var recorded = ResultStage(); recorded.name = "決勝"; recorded.outcome = .champion
+            let liveStages = giriAddingRuleStages(liveRule, to: [recorded])
+            try check(liveStages.map(\.name) == ["予選", "決勝"] && liveStages[0].lineup == "横並び5人" && liveStages[0].advanceCount == 2 && liveStages[1].outcome == .champion,
+                      "live results get the missing rule stages before the recorded ones")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

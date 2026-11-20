@@ -717,7 +717,14 @@ func giriOrganizerResults(_ events: [GiriEvent], now: Date = Date()) -> [GiriOrg
 /// 段階の記録から最終結果の候補を出す（決勝の負けは、タイマンなら準優勝・横並びなら決勝進出）。
 /// 0.14：予選・本戦の敗退は「敗退」（表示は「予選敗退」など段階の名前から）。
 func giriSuggestedFinalChoice(_ stages: [ResultStage]) -> GiriFinalResultChoice? {
-    guard let last = stages.filter({ $0.roundId == nil }).last(where: { $0.outcome != .unrecorded }) else { return nil }
+    // 0.32：段階全体の記録がない時は、回の記録（ネットの「予選3回戦」など）から決める。
+    guard let last = stages.filter({ $0.roundId == nil }).last(where: { $0.outcome != .unrecorded })
+            ?? stages.last(where: { $0.outcome != .unrecorded }) else { return nil }
+    /// 準決勝・準々決勝の敗退は、出場人数が分かればその人数のベスト（準決勝に8人ならベスト8）。
+    func best(_ fallback: GiriFinalResultChoice) -> GiriFinalResultChoice {
+        guard let entrants = last.entrantCount, entrants > 0 else { return fallback }
+        return entrants <= 4 ? .best4 : entrants <= 8 ? .best8 : entrants <= 16 ? .best16 : fallback
+    }
     switch last.effectiveKind {
     case .qualifier, .main: return last.outcome == .eliminated ? .eliminated : nil
     case .final:
@@ -731,9 +738,10 @@ func giriSuggestedFinalChoice(_ stages: [ResultStage]) -> GiriFinalResultChoice?
             return oneOnOne ? .runnerUp : .finalist
         default: return nil
         }
-    case .semifinal: return last.outcome == .eliminated ? .best4 : nil
-    case .quarterfinal: return last.outcome == .eliminated ? .best8 : nil
-    default: return nil
+    case .semifinal: return last.outcome == .eliminated ? best(.best4) : nil
+    case .quarterfinal: return last.outcome == .eliminated ? best(.best8) : nil
+    // 0.32：「1回戦」などの回の敗退も「〇回戦敗退」として敗退にする。
+    case .other, .repechage: return last.outcome == .eliminated ? .eliminated : nil
     }
 }
 
