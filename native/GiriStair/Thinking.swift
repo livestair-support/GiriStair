@@ -2039,7 +2039,7 @@ struct GiriAnswerResultFields: View {
     /// 0.28：チーム戦のメンバー（自分を除く）。いる時は、出した回答の原案と、メンバーの回答の結果も入れる。
     var teammates: [String] = []
     /// 0.31：結果画面から読めた自分の回答の結果（大会の回の結果にも入れる）。
-    var onOwnResult: ((AnswerRecord) -> Void)? = nil
+    var onOwnResult: ((AnswerRecord, Int?) -> Void)? = nil
     /// 0.15：結果のページのスクリーンショットから、出した回答の順位・得点・投票人数を読む。
     @State private var resultPhoto: PhotosPickerItem?
     @State private var readingResult = false
@@ -2143,7 +2143,7 @@ struct GiriAnswerResultFields: View {
         if records[target].points == nil { records[target].points = entry.points }
         if records[target].voterCount == nil { records[target].voterCount = page.voterCount }
         if records[target].pointCounts.isEmpty { records[target].pointCounts = entry.pointCounts }
-        onOwnResult?(records[target])
+        onOwnResult?(records[target], page.submissionCount)
         // ほかの人の回答（同じ回答はもう一度足さない）。
         for (index, other) in page.entries.enumerated() where index != entryIndex {
             let key = giriResultKey(other.text)

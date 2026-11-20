@@ -538,7 +538,21 @@ struct GiriEventEditor: View {
 
     private func applyLiveRule(_ id: String?, saved: GiriRule? = nil) {
         guard let id, let rule = saved ?? store.rule(id) else { draft.ruleID = nil; return }
-        giriApplyRule(rule, to: &draft)
+        // 0.32：新しく登録する大会で、自動で入れた最初の回（名前も日程もまだ触っていない回）だけがある時は、
+        // その回をルールの流れ（「予選1回戦」など）で作り直す。始まりの日時は引き継ぐ。
+        var flowStart: Date? = nil
+        if event == nil, draft.meetingType == .tournament, draft.eventFormat.hasOnlineRounds, !rule.stages.isEmpty,
+           draft.rounds.count == 1, let only = draft.rounds.first,
+           !giriRuleFlowNames(rule).contains(where: { playerSearchKey($0.name) == playerSearchKey(only.name) }),
+           only.name == nextStageName("") {
+            flowStart = only.submissionStart
+            automaticFields[only.id] = nil
+            draft.rounds = []
+        }
+        let before = Set(draft.rounds.map(\.id))
+        giriApplyRule(rule, to: &draft, flowStart: flowStart)
+        // ルールから足した回は、締切などを日数から自動で入れる回にする。
+        for round in draft.rounds where !before.contains(round.id) { automaticFields[round.id] = ["submissionEnd", "votingStart", "votingEnd"] }
     }
 
     /// 参加者を外す時に、リザーバー1を繰り上げるかを聞く。

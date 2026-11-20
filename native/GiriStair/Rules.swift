@@ -167,8 +167,8 @@ struct GiriRuleEditor: View {
                 tournamentSection
                 entrySection
                 if draft.kind == .online { scheduleSection }
+                // 0.32：大会の成績の出し方は段階ごと（回が何回かある段階の「回の合計点・平均」）で決めるので、ここには出さない。
                 stageSection
-                scoringSection
             } else {
                 scheduleSection
                 leagueSection
@@ -604,7 +604,8 @@ struct GiriRuleEditor: View {
     private func stageListRow(_ index: Int, _ stage: GiriRuleStage) -> some View {
         let selected = stage.id == selectedStageID
         let accent = stageAccent(stage)
-        let caption = [stage.lineup.isEmpty ? nil : stage.lineup,
+        let caption = [stage.roundText,
+                       stage.lineup.isEmpty ? nil : stage.lineup,
                        stage.promptCount.map { "お題\($0)問" },
                        stage.advanceText.map { $0 + "が勝ち抜け" },
                        draft.hasMemberChanges ? stage.memberChangeText : nil].compactMap { $0 }.joined(separator: "・")
@@ -689,6 +690,24 @@ struct GiriRuleEditor: View {
             TextField("大会と同じ", text: stage.judging).multilineTextAlignment(.trailing)
         }
         .padding(.leading, 40)
+        // 0.32：「予選1回戦〜3回戦」のように、この段階を何回やるか。大会に選ぶと「予選1回戦」などの回を作る。
+        Stepper(value: Binding(get: { stage.wrappedValue.roundCount ?? 1 }, set: { stage.wrappedValue.roundCount = $0 <= 1 ? nil : $0 }), in: 1...20) {
+            HStack(spacing: 4) {
+                GiriEditorLabel("回の数")
+                AppInfoButton(title: "回の数について", message: "予選1回戦〜3回戦のように同じ段階を何回かやる時に入れます。勝ち抜けは全部の回で同じものを使います。",
+                              tintColor: AppSectionAccent.ticket)
+                Spacer(minLength: 8)
+                Text((stage.wrappedValue.roundCount ?? 1) > 1 ? "全\(stage.wrappedValue.roundCount ?? 1)回" : "1回").font(.subheadline).monospacedDigit()
+            }
+        }
+        .padding(.leading, 40)
+        if (stage.wrappedValue.roundCount ?? 1) > 1 {
+            Picker(selection: stage.rankBy) {
+                ForEach(giriRuleStageRankings, id: \.value) { Text($0.title).tag($0.value) }
+            } label: { GiriEditorLabel("順位の決め方") }
+            .pickerStyle(.menu).tint(Color.primary)
+            .padding(.leading, 40)
+        }
         Stepper(value: Binding(get: { stage.wrappedValue.promptCount ?? 0 }, set: { stage.wrappedValue.promptCount = $0 == 0 ? nil : $0 }), in: 0...30) {
             HStack {
                 GiriEditorLabel("お題の数")
@@ -936,7 +955,8 @@ struct GiriRuleDetailRows: View {
                 if !tag.tieBreak.isEmpty { note(tag.tieBreak) }
                 if !tag.formationNote.isEmpty { note(tag.formationNote) }
             }
-            if rule.usesScoring {
+            // 0.32：大会の成績の出し方は段階ごとに出すので、通常（シーズン・リーグ）のルールだけに出す。
+            if rule.usesScoring && rule.effectiveScope == .regular {
                 heading("成績の出し方")
                 line("順位の決め方", rule.scoring.title)
                 if rule.scoring == .topRequired, let required = rule.requiredAnswerCount { line("規定回答数", "\(required)回答") }
@@ -972,7 +992,8 @@ struct GiriRuleDetailRows: View {
 
     private func stageLine(_ index: Int, _ stage: GiriRuleStage) -> some View {
         let name = stage.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (stage.stageKind?.title ?? "段階") : stage.name
-        let details = [stage.lineup.isEmpty ? nil : stage.lineup,
+        let details = [stage.roundText,
+                       stage.lineup.isEmpty ? nil : stage.lineup,
                        stage.judging.isEmpty ? nil : stage.judging,
                        stage.promptCount.map { "お題\($0)問" },
                        stage.advanceText.map { $0 + "が勝ち抜け" },

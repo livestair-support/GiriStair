@@ -946,7 +946,14 @@ struct GiriRuleStage: Codable, Equatable, Identifiable {
     /// 0.28：この段階でのメンバーの変更（"add"：増やせる・"swap"：入れ替えられる。空は変えない）と人数。
     var memberChange: String = ""
     var memberChangeCount: Int? = nil
+    /// 0.32：この段階の回の数（「予選1回戦〜3回戦」なら3）。1回だけの段階は nil。
+    var roundCount: Int? = nil
+    /// 0.32：回が何回かある段階の順位の決め方（空：回ごとに勝ち抜け・"total"：回の合計点・"average"：回の平均）。
+    var rankBy: String = ""
 }
+
+/// 0.32：回が何回かある段階の順位の決め方。
+let giriRuleStageRankings: [(value: String, title: String)] = [("", "回ごとに勝ち抜け"), ("total", "回の合計点"), ("average", "回の平均")]
 
 /// 0.28：段階でのメンバーの変更の選び方。
 let giriRuleMemberChanges: [(value: String, title: String)] = [("add", "メンバーを増やせる"), ("swap", "メンバーを入れ替えられる")]
@@ -955,7 +962,7 @@ let giriRuleMemberChanges: [(value: String, title: String)] = [("add", "メン�
 let giriRuleStageLineups = ["横並び", "タイマン（1対1）", "グループ対戦", "リーグ（総当たり）", "お題ごとに勝ち抜け"]
 
 extension GiriRuleStage {
-    private enum CodingKeys: String, CodingKey { case id, name, kind, lineup, judging, promptCount, advanceCount, advanceFraction, advanceNote, memberChange, memberChangeCount }
+    private enum CodingKeys: String, CodingKey { case id, name, kind, lineup, judging, promptCount, advanceCount, advanceFraction, advanceNote, memberChange, memberChangeCount, roundCount, rankBy }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
@@ -969,6 +976,8 @@ extension GiriRuleStage {
         advanceNote = try c.decodeIfPresent(String.self, forKey: .advanceNote) ?? ""
         memberChange = try c.decodeIfPresent(String.self, forKey: .memberChange) ?? ""
         memberChangeCount = try c.decodeIfPresent(Int.self, forKey: .memberChangeCount)
+        roundCount = try c.decodeIfPresent(Int.self, forKey: .roundCount)
+        rankBy = try c.decodeIfPresent(String.self, forKey: .rankBy) ?? ""
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -983,6 +992,19 @@ extension GiriRuleStage {
         if !advanceNote.isEmpty { try c.encode(advanceNote, forKey: .advanceNote) }
         if !memberChange.isEmpty { try c.encode(memberChange, forKey: .memberChange) }
         try c.encodeIfPresent(memberChangeCount, forKey: .memberChangeCount)
+        if let roundCount, roundCount > 1 { try c.encode(roundCount, forKey: .roundCount) }
+        if !rankBy.isEmpty { try c.encode(rankBy, forKey: .rankBy) }
+    }
+    /// 0.32：段階の名前（空なら種類の名前）。
+    var displayName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? (stageKind?.title ?? "段階") : trimmed
+    }
+    /// 0.32：回の数と順位の決め方の短い説明（「全3回・回の合計点」）。1回だけの段階は nil。
+    var roundText: String? {
+        guard let roundCount, roundCount > 1 else { return nil }
+        let ranking = giriRuleStageRankings.first { $0.value == rankBy && !rankBy.isEmpty }?.title
+        return (["全\(roundCount)回"] + [ranking].compactMap { $0 }).joined(separator: "・")
     }
     /// 0.28：メンバーの変更の短い説明（「2人まで増やせる」など）。
     var memberChangeText: String? {
@@ -1303,9 +1325,15 @@ func giriRule(from event: GiriEvent) -> GiriRule {
 
 /// 大会のルールを大会に入れる（参加形式・対戦形式・審査方法）。段階は結果の入力で入れる。
 /// 0.27：ネットの大会には、ネット大喜利の「大会」のルールを入れる。
-func giriApplyRule(_ rule: GiriRule, to event: inout GiriEvent) {
+func giriApplyRule(_ rule: GiriRule, to event: inout GiriEvent, flowStart: Date? = nil) {
     guard giriRuleFits(rule, event: event) else { return }
     event.ruleID = rule.id
+    // 0.32：ネット・スプシ系の大会は、ルールの流れのうち大会にまだない段階・回を、日程つきで正しい順に足す（今ある回は変えない）。
+    if event.eventFormat.hasOnlineRounds && event.meetingType == .tournament && !rule.stages.isEmpty {
+        let rounds = event.rounds.isEmpty ? event.effectiveRounds : event.rounds
+        let start = flowStart ?? rounds.last?.votingEnd ?? event.startsAt ?? event.eventDate ?? Date()
+        event.rounds = giriAddingRuleFlow(rule, to: rounds, defaultStart: start, submissionDays: rule.submissionDays, votingDays: rule.votingDays)
+    }
     event.tournamentFormat = rule.tournamentFormat
     // 0.28：チーム戦で途中でメンバーが変わるルール。
     if rule.hasMemberChanges && rule.tournamentFormat != .individual { event.hasMemberChanges = true }
@@ -1318,6 +1346,99 @@ func giriApplyRule(_ rule: GiriRule, to event: inout GiriEvent) {
     // トーナメント（1対1）の対戦形式は生大喜利だけ（スプシ系では使わない）。
     event.knockout = event.eventFormat == .live ? rule.knockout : false
     if !rule.judging.isEmpty { event.judging = rule.judging }
+}
+
+/// 0.32：ルールの流れの名前（回の数がある段階は「予選1回戦」「予選2回戦」…）。
+func giriRuleFlowNames(_ rule: GiriRule) -> [(stage: GiriRuleStage, name: String)] {
+    rule.stages.flatMap { stage -> [(stage: GiriRuleStage, name: String)] in
+        guard let count = stage.roundCount, count > 1 else { return [(stage, stage.displayName)] }
+        return (1...count).map { (stage, stage.displayName + "\($0)回戦") }
+    }
+}
+
+/// 0.32：段階・回の名前に当たるルールの段階（流れの名前と同じ → 名前の始まりが段階の名前と同じで長い方）。
+func giriRuleStage(for name: String, in rule: GiriRule) -> GiriRuleStage? {
+    let key = playerSearchKey(name)
+    guard !key.isEmpty else { return nil }
+    if let flow = giriRuleFlowNames(rule).first(where: { playerSearchKey($0.name) == key }) { return flow.stage }
+    return rule.stages.filter { stage in
+        let stageKey = playerSearchKey(stage.displayName)
+        return !stageKey.isEmpty && key.hasPrefix(stageKey)
+    }.max { $0.displayName.count < $1.displayName.count }
+}
+
+/// 0.32：ルールの流れで、大会にまだない回を正しい順に足す。今ある回・日程・結果はそのまま。
+/// 新しい回の日程は前の回から続け、前に回がなく後ろにある時は、後ろの回の始まりまでに終わるように前へ数える。
+func giriAddingRuleFlow(_ rule: GiriRule, to rounds: [EventRound], defaultStart: Date, submissionDays: Int, votingDays: Int,
+                        calendar: Calendar = .current) -> [EventRound] {
+    var output = rounds
+    var lastIndex: Int? = nil
+    for item in giriRuleFlowNames(rule) {
+        let key = playerSearchKey(item.name)
+        if let found = output.firstIndex(where: { playerSearchKey($0.name) == key }) {
+            lastIndex = found
+            continue
+        }
+        let insertAt = lastIndex.map { $0 + 1 } ?? 0
+        let previous = insertAt > 0 ? output[insertAt - 1] : nil
+        var round: EventRound
+        if previous == nil, insertAt < output.count, let nextStart = output[insertAt].submissionStart {
+            round = EventRound()
+            let votingStart = addCalendarDays(nextStart, -max(1, votingDays), calendar: calendar)
+            round.votingEnd = nextStart
+            round.votingStart = votingStart
+            round.submissionEnd = votingStart
+            round.submissionStart = addCalendarDays(votingStart, -max(1, submissionDays), calendar: calendar)
+        } else {
+            round = addNextRound(previous, defaultStart: defaultStart, submissionDays: max(1, submissionDays), votingDays: max(1, votingDays), calendar: calendar)
+        }
+        round.name = item.name
+        round.stageId = round.id
+        round.promptNumber = 1
+        round.block = ""
+        output.insert(round, at: insertAt)
+        lastIndex = insertAt
+    }
+    return output
+}
+
+/// 0.32：生大喜利などの結果の段階に、ルールの流れのうちまだない段階を正しい順に足す（形式・審査方法・お題の数・勝ち抜けも入れる）。
+func giriAddingRuleStages(_ rule: GiriRule, to stages: [ResultStage]) -> [ResultStage] {
+    var output = stages
+    var lastIndex: Int? = nil
+    for item in giriRuleFlowNames(rule) {
+        let key = playerSearchKey(item.name)
+        if let found = output.firstIndex(where: { $0.roundId == nil && playerSearchKey($0.name) == key }) {
+            lastIndex = found
+            continue
+        }
+        var stage = ResultStage()
+        stage.name = item.name
+        stage.kind = item.stage.stageKind
+        stage.lineup = item.stage.lineup
+        stage.judging = item.stage.judging
+        stage.promptCount = item.stage.promptCount
+        stage.advanceCount = item.stage.advanceCount
+        let insertAt = lastIndex.map { $0 + 1 } ?? 0
+        output.insert(stage, at: insertAt)
+        lastIndex = insertAt
+    }
+    return output
+}
+
+/// 0.32：ルールの勝ち抜け（上位○人・上位半数など。半数などの割合は切り上げ）と、回の順位・出場人数から、通過・敗退を決める。
+/// 決勝・回の合計や平均で決める段階の回・条件が分からない時は nil。
+func giriAutoOutcome(_ stage: ResultStage, rule: GiriRule?) -> TournamentOutcome? {
+    guard let placement = stage.placement, stage.effectiveKind != .final else { return nil }
+    let ruleStage = rule.flatMap { giriRuleStage(for: stage.name, in: $0) }
+    // 回の合計・平均で順位を決める段階は、1回ごとの記録では決めない（段階の名前の記録だけで決める）。
+    if let ruleStage, !ruleStage.rankBy.isEmpty, playerSearchKey(stage.name) != playerSearchKey(ruleStage.displayName) { return nil }
+    var limit: Int? = ruleStage?.advanceCount ?? stage.advanceCount
+    if limit == nil, let fraction = giriFraction(ruleStage?.advanceFraction), let entrants = stage.entrantCount, entrants > 0 {
+        limit = Int((Double(entrants * fraction.numerator) / Double(fraction.denominator)).rounded(.up))
+    }
+    guard let limit, limit > 0 else { return nil }
+    return placement <= limit ? .advanced : .eliminated
 }
 
 /// 0.27：その大会に選べるルールか（ネットの大会はネットの大会のルール、生・スプシ系は生大喜利・スプシ系のルール）。
