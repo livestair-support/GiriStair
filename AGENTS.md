@@ -339,4 +339,4 @@ GiriStairのiPhone版は **Swift / SwiftUI**、Android版は既存のFlutter実�
 ## CI（0.34から）
 
 - `native-ios.yml`（PRが待つ確認、約3分）：データ・日程の回帰テスト（`data-checks`）とアプリのビルド（`native-iphone`、arm64のシミュレーター向けだけ）を2台で同時に回す。
-- `native-ui.yml`（UIテスト、約8分）：シミュレーターをビルド中に起動し、アプリとUIテストを1回だけビルドして（build-for-testing）、そのまま使って（test-without-building）タブ・形式の切り替えを確かめる。PRは待たずに並行して回し、失敗したらすぐ直す。一覧の形式切替やタブ移動を変えた時は、この結果も待つ。
+- `native-ui.yml`（UIテスト、約8分）：アプリとUIテストを1回だけビルドして（build-for-testing。シミュレーターはビルドのあとに起動する。ビルド中に起動すると、CPUを取り合ってビルドが3倍遅くなった）、そのまま使って（test-without-building）タブ・形式の切り替えを確かめる。PRは待たずに並行して回し、失敗したらすぐ直す。一覧の形式切替やタブ移動を変えた時は、この結果も待つ。
