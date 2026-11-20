@@ -245,17 +245,59 @@ func siteCycleDescriptors(_ site: OnlineSite, around now: Date = Date(), calenda
         $0.element.effectiveFrom == $1.element.effectiveFrom ? $0.offset < $1.offset : $0.element.effectiveFrom < $1.element.effectiveFrom
     }.map(\.element)
     var output: [String: SiteCycleDescriptor] = [:]
+    var revisionOf: [String: Int] = [:]
     for (index, revision) in revisions.enumerated() {
         let upper = index + 1 < revisions.count ? revisions[index + 1].effectiveFrom : nil
         for descriptor in siteRevisionDescriptors(siteID: site.id, block: site.block,
             revision: revision, around: now, upperBound: upper,
             hasPreviousRevision: index > 0, calendar: calendar) {
             output[descriptor.cycleKey] = descriptor
+            revisionOf[descriptor.cycleKey] = index
         }
+    }
+    // 0.33：日程や今の回の番号を直した時、前の決まりで作った同じ回（同じシーズンの同じ番号、または1時間以内に始まる回）は出さない。
+    // 前の決まりのまま残ると、同じ回が2つ並び、カレンダーにも2つ出るため。
+    let regular = output.values.filter { $0.kind == .regular }
+    for descriptor in regular {
+        let index = revisionOf[descriptor.cycleKey] ?? 0
+        let replaced = regular.contains { later in
+            guard (revisionOf[later.cycleKey] ?? 0) > index else { return false }
+            if let a = descriptor.start, let b = later.start, abs(a.timeIntervalSince(b)) < 3600 { return true }
+            guard let number = descriptor.cycleNumber, later.cycleNumber == number else { return false }
+            return siteSameSeason(descriptor.seasonID, descriptor.seasonName, later.seasonID, later.seasonName)
+        }
+        if replaced { output.removeValue(forKey: descriptor.cycleKey) }
     }
     return output.values.sorted {
         let first = $0.start ?? .distantFuture, second = $1.start ?? .distantFuture
         return first == second ? $0.cycleKey < $1.cycleKey : first < second
+    }
+}
+
+/// 0.33：同じシーズンか（IDがあればID、なければ名前）。
+func siteSameSeason(_ firstID: String?, _ firstName: String, _ secondID: String?, _ secondName: String) -> Bool {
+    if let firstID, let secondID { return firstID == secondID }
+    return firstID == nil && secondID == nil && firstName == secondName
+}
+
+/// 0.33：サイトの日程や今の回の番号を直した時、前の日程で作った回の記録のうち、この回とつなぎ直す記録。
+/// 1時間以内に始まる記録か、同じシーズンの同じ番号でまだ終わっていない（結果も入れていない）記録。
+/// 今の日程の回とつながっている記録（`currentKeys`）は使わない。
+func siteRelinkCandidate(_ descriptor: SiteCycleDescriptor, events: [GiriEvent], currentKeys: Set<String>, now: Date = Date()) -> GiriEvent? {
+    guard descriptor.kind == .regular, let start = descriptor.start else { return nil }
+    let orphans = events.filter { event in
+        guard event.sitePeriodKind == .regular, let key = event.cycleKey, !key.hasPrefix("special:") else { return false }
+        return !currentKeys.contains(key)
+    }
+    func eventStart(_ event: GiriEvent) -> Date? { event.effectiveRounds.first.flatMap { $0.submissionStart ?? $0.votingStart } }
+    if let same = orphans.first(where: { event in eventStart(event).map { abs($0.timeIntervalSince(start)) < 3600 } ?? false }) { return same }
+    guard let number = descriptor.cycleNumber else { return nil }
+    return orphans.first { event in
+        guard event.siteCycleNumber == number, !event.hasCycleResult,
+              siteSameSeason(event.siteSeasonID, event.siteSeason, descriptor.seasonID, descriptor.seasonName),
+              let begin = eventStart(event), abs(begin.timeIntervalSince(start)) < 60 * 86_400 else { return false }
+        let end = event.effectiveRounds.compactMap { $0.votingEnd ?? $0.submissionEnd }.max() ?? .distantPast
+        return end > now
     }
 }
 
@@ -1328,11 +1370,15 @@ func giriRule(from event: GiriEvent) -> GiriRule {
 func giriApplyRule(_ rule: GiriRule, to event: inout GiriEvent, flowStart: Date? = nil) {
     guard giriRuleFits(rule, event: event) else { return }
     event.ruleID = rule.id
-    // 0.32：ネット・スプシ系の大会は、ルールの流れのうち大会にまだない段階・回を、日程つきで正しい順に足す（今ある回は変えない）。
-    if event.eventFormat.hasOnlineRounds && event.meetingType == .tournament && !rule.stages.isEmpty {
-        let rounds = event.rounds.isEmpty ? event.effectiveRounds : event.rounds
-        let start = flowStart ?? rounds.last?.votingEnd ?? event.startsAt ?? event.eventDate ?? Date()
-        event.rounds = giriAddingRuleFlow(rule, to: rounds, defaultStart: start, submissionDays: rule.submissionDays, votingDays: rule.votingDays)
+    // 0.33：ネット・スプシ系の大会は、回がまだない時だけ、ルールの流れの最初の回を日程つきで作る。
+    // 先の段階は勝ち上がった時に足す（決勝まで進めるとは限らず、何回戦から準々決勝になるかも分からないことがあるため）。
+    if event.eventFormat.hasOnlineRounds && event.meetingType == .tournament && event.effectiveRounds.isEmpty,
+       let first = giriRuleFlowNames(rule).first {
+        var round = addNextRound(nil, defaultStart: flowStart ?? event.startsAt ?? event.eventDate ?? Date(),
+                                 submissionDays: max(1, rule.submissionDays), votingDays: max(1, rule.votingDays))
+        round.name = first.name
+        round.stageId = round.id
+        event.rounds = [round]
     }
     event.tournamentFormat = rule.tournamentFormat
     // 0.28：チーム戦で途中でメンバーが変わるルール。
@@ -1367,39 +1413,145 @@ func giriRuleStage(for name: String, in rule: GiriRule) -> GiriRuleStage? {
     }.max { $0.displayName.count < $1.displayName.count }
 }
 
-/// 0.32：ルールの流れで、大会にまだない回を正しい順に足す。今ある回・日程・結果はそのまま。
-/// 新しい回の日程は前の回から続け、前に回がなく後ろにある時は、後ろの回の始まりまでに終わるように前へ数える。
-func giriAddingRuleFlow(_ rule: GiriRule, to rounds: [EventRound], defaultStart: Date, submissionDays: Int, votingDays: Int,
-                        calendar: Calendar = .current) -> [EventRound] {
-    var output = rounds
-    var lastIndex: Int? = nil
-    for item in giriRuleFlowNames(rule) {
-        let key = playerSearchKey(item.name)
-        if let found = output.firstIndex(where: { playerSearchKey($0.name) == key }) {
-            lastIndex = found
-            continue
+/// 0.33：勝ち上がった後の次の段階の候補。先にルールの流れの次・名前の続き（「予選5回戦」）、その後にルールのあとの段階と
+/// 準々決勝・準決勝・決勝を浅い順に出す。何回戦から準々決勝になるか分からない大会もあるので、続きの候補も出す。大会にもうある名前は出さない。
+func giriNextStageCandidates(after name: String, rule: GiriRule?, existing: [String], live: Bool) -> [String] {
+    let current = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let currentKey = playerSearchKey(current)
+    let currentDepth = giriInferredStageKind(current).depth ?? 0
+    let flow = rule.map(giriRuleFlowNames) ?? []
+    func depth(_ stage: GiriRuleStage, _ name: String) -> Int { (stage.stageKind ?? giriInferredStageKind(name)).depth ?? 0 }
+    var first: [String] = []
+    var later: [(name: String, depth: Int)] = []
+    if let index = flow.firstIndex(where: { playerSearchKey($0.name) == currentKey }) {
+        // ルールの流れの中の回：流れの次と名前の続き。そのあとの段階は最初の回だけ。
+        if index + 1 < flow.count { first.append(flow[index + 1].name) }
+        first.append(giriEditorNextStage(current, live: live))
+        var seen: Set<String> = [flow[index].stage.id]
+        for item in flow[(index + 1)...] where seen.insert(item.stage.id).inserted { later.append((item.name, depth(item.stage, item.name))) }
+    } else {
+        // ルールと名前が合わない回：名前の続きと、ルールの準々決勝・準決勝・決勝のうち今より先のもの。
+        first.append(giriEditorNextStage(current, live: live))
+        var seen = Set<String>()
+        for item in flow where seen.insert(item.stage.id).inserted {
+            let value = depth(item.stage, item.name)
+            if value >= 2 && value > currentDepth { later.append((item.name, value)) }
         }
-        let insertAt = lastIndex.map { $0 + 1 } ?? 0
-        let previous = insertAt > 0 ? output[insertAt - 1] : nil
-        var round: EventRound
-        if previous == nil, insertAt < output.count, let nextStart = output[insertAt].submissionStart {
-            round = EventRound()
-            let votingStart = addCalendarDays(nextStart, -max(1, votingDays), calendar: calendar)
-            round.votingEnd = nextStart
-            round.votingStart = votingStart
-            round.submissionEnd = votingStart
-            round.submissionStart = addCalendarDays(votingStart, -max(1, submissionDays), calendar: calendar)
-        } else {
-            round = addNextRound(previous, defaultStart: defaultStart, submissionDays: max(1, submissionDays), votingDays: max(1, votingDays), calendar: calendar)
-        }
-        round.name = item.name
-        round.stageId = round.id
-        round.promptNumber = 1
-        round.block = ""
-        output.insert(round, at: insertAt)
-        lastIndex = insertAt
     }
-    return output
+    for kind in [StageKind.quarterfinal, .semifinal, .final] where (kind.depth ?? 0) > currentDepth { later.append((kind.title, kind.depth ?? 0)) }
+    let ordered = first + later.enumerated().sorted { ($0.element.depth, $0.offset) < ($1.element.depth, $1.offset) }.map { $0.element.name }
+    var names: [String] = []
+    for value in ordered {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = playerSearchKey(trimmed)
+        guard !key.isEmpty, key != currentKey, !existing.contains(where: { playerSearchKey($0) == key }),
+              !names.contains(where: { playerSearchKey($0) == key }) else { continue }
+        names.append(trimmed)
+    }
+    return Array(names.prefix(6))
+}
+
+/// 0.33：勝ち進んでいない先の段階（敗退の後で、結果・メモがないもの）を隠すための判定。
+/// `recorded` は段階に結果があるか、`eliminated` は段階で敗退したか。並びは大会の順。出す数を返す。
+func giriReachedCount(_ items: [(recorded: Bool, eliminated: Bool)]) -> Int {
+    guard let out = items.firstIndex(where: { $0.eliminated }) else { return items.count }
+    let lastRecorded = items.lastIndex(where: { $0.recorded }) ?? out
+    return max(out, lastRecorded) + 1
+}
+
+extension ResultStage {
+    /// 0.33：結果（通過・敗退・順位・点・メモなど）が入っているか。ルールから入れた形式・審査方法だけの段階は入っていない。
+    var hasResultEntry: Bool {
+        outcome != .unrecorded || placement != nil || teamPlacement != nil || individualPlacement != nil || points != nil || voterCount != nil ||
+            !memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !opponents.isEmpty || !advancedWith.isEmpty ||
+            laps.contains { lap in lap.placement != nil || lap.voterCount != nil || lap.points.contains { $0 != nil } || !lap.opponents.isEmpty }
+    }
+}
+
+/// 0.33：結果の段階（段階全体の記録）のうち、勝ち進んだところまで。敗退の後の、結果のない段階は出さない。
+/// `rounds` は回の記録（ネットの回ごとの結果）。段階の回の記録も段階の結果・敗退として見る。
+func giriReachedStages(_ wide: [ResultStage], rounds: [ResultStage]) -> [ResultStage] {
+    let items = wide.map { stage -> (recorded: Bool, eliminated: Bool) in
+        let own = rounds.filter { $0.stageId != nil && $0.stageId == stage.stageId }
+        return (stage.hasResultEntry || own.contains(where: \.hasResultEntry),
+                stage.outcome == .eliminated || own.contains { $0.outcome == .eliminated })
+    }
+    return Array(wide.prefix(giriReachedCount(items)))
+}
+
+/// 0.33：大会の日程の回のうち、勝ち進んだところまで（詳細の回のカード）。敗退の後の、結果もお題・回答もない回は出さない。
+func giriReachedRounds(_ event: GiriEvent, notedRoundIDs: Set<String>) -> [EventRound] {
+    let rounds = event.effectiveRounds
+    guard event.meetingType == .tournament else { return rounds }
+    let stages = event.tournamentResult?.stages ?? []
+    let items = rounds.map { round -> (recorded: Bool, eliminated: Bool) in
+        let own = stages.filter { $0.roundId == round.id }
+        let siblings = rounds.filter { $0.effectiveStageId == round.effectiveStageId }
+        // 段階全体の敗退は、その段階の最後の回で数える。
+        let wide = round.id == siblings.last?.id ? stages.filter { $0.roundId == nil && $0.stageId == round.effectiveStageId } : []
+        return (own.contains(where: \.hasResultEntry) || notedRoundIDs.contains(round.id),
+                (own + wide).contains { $0.outcome == .eliminated })
+    }
+    return Array(rounds.prefix(giriReachedCount(items)))
+}
+
+/// 0.33：ネットの大会で、開いた時に「勝ち上がりましたか？」と聞く回。
+/// 最後の回の投票が終わり、決勝ではなく、その段階の通過・敗退も最終結果もまだ入れていない時（同じ段階に残りの回がある時は聞かない）。
+func giriAdvanceQuestionRound(_ event: GiriEvent, now: Date = Date()) -> EventRound? {
+    guard event.eventFormat.hasOnlineRounds, event.meetingType == .tournament, event.isSelfPlayer, event.isActualParticipant,
+          !event.hasFinalResult else { return nil }
+    let rounds = event.effectiveRounds
+    guard let last = rounds.last, let end = last.votingEnd, end <= now, !giriNextRoundIsParallel(rounds) else { return nil }
+    let stageID = last.effectiveStageId
+    let siblingIDs = Set(rounds.filter { $0.effectiveStageId == stageID }.map(\.id))
+    let records = (event.tournamentResult?.stages ?? []).filter { record in
+        if let roundID = record.roundId { return siblingIDs.contains(roundID) }
+        return record.stageId == stageID
+    }
+    let kind = records.first(where: { $0.roundId == nil })?.kind ?? giriInferredStageKind(last.name)
+    guard kind != .final, !records.contains(where: { $0.outcome != .unrecorded }) else { return nil }
+    return last
+}
+
+/// 0.33：「勝ち上がりましたか？」の答えを、段階（回が1つだけの段階は回にも）の記録に入れる。
+/// 敗退で最終結果がまだない時は、段階の記録から最終結果（予選2回戦敗退・ベスト8など）も入れる。
+func giriRecordingAdvance(_ event: GiriEvent, roundID: String, advanced: Bool) -> GiriEvent {
+    var value = event
+    let rounds = value.effectiveRounds
+    guard let round = rounds.first(where: { $0.id == roundID }) else { return value }
+    var result = value.tournamentResult ?? TournamentResult()
+    if value.tournamentResult == nil { result.format = value.tournamentFormat }
+    let outcome: TournamentOutcome = advanced ? .advanced : .eliminated
+    let stageID = round.effectiveStageId
+    if let index = result.stages.firstIndex(where: { $0.roundId == nil && $0.stageId == stageID }) {
+        result.stages[index].outcome = outcome
+    } else {
+        var stage = ResultStage()
+        stage.name = round.name
+        stage.stageId = stageID
+        stage.outcome = outcome
+        result.stages.append(stage)
+    }
+    if rounds.filter({ $0.effectiveStageId == stageID }).count == 1 {
+        if let index = result.stages.firstIndex(where: { $0.roundId == round.id }) {
+            result.stages[index].outcome = outcome
+        } else {
+            var record = ResultStage()
+            record.name = round.name
+            record.roundId = round.id
+            record.stageId = stageID
+            record.outcome = outcome
+            result.stages.append(record)
+        }
+    }
+    if !advanced, !value.hasFinalResult, let choice = giriSuggestedFinalChoice(result.stages) {
+        result.outcome = choice.outcome
+        result.bestOf = choice.bestOf
+        result.finalist = choice == .finalist
+        value.placement = nil
+    }
+    value.tournamentResult = result
+    return value
 }
 
 /// 0.32：生大喜利などの結果の段階に、ルールの流れのうちまだない段階を正しい順に足す（形式・審査方法・お題の数・勝ち抜けも入れる）。

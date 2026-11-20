@@ -913,6 +913,12 @@ extension GiriEvent {
         guard !key.isEmpty else { return false }
         return (!organizerIsGroup && playerSearchKey(organizer) == key) || coOrganizers.contains { playerSearchKey($0) == key }
     }
+    /// 0.33：参加費の集計に入れる額。自分が主催（個人）・共催の会は払わないので入れない（nil）。
+    func countedEntryFee(isSelf: (String) -> Bool) -> Int? {
+        guard let entryFee else { return nil }
+        let hosts = (organizerIsGroup ? [] : [organizer]) + coOrganizers
+        return hosts.contains(where: isSelf) ? nil : entryFee
+    }
     /// MC・審査員としてこの人の名前がある。
     func isMCOrJudge(byKey key: String) -> Bool {
         guard !key.isEmpty else { return false }
@@ -1597,7 +1603,19 @@ private func giriEventPageLabel(_ raw: String, names: String) -> (matched: Bool,
 private func giriIsEventPageNoise(_ text: String) -> Bool {
     let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
     if value.count < 2 { return true }
-    return value.range(of: #"(?i)\bviews?\b|シェア|で送る|カレンダー登録|ログイン|^https?://|\.(jp|com|net)\b|^[0-9:\s]+$|LTE|[345]G$"#, options: .regularExpression) != nil
+    // 0.33：ページのボタン・タグのような表示（道順・もっと見る・参加者プロフィールなど）も使わない。
+    return value.range(of: #"(?i)\bviews?\b|シェア|で送る|カレンダー登録|ログイン|^https?://|\.(jp|com|net)\b|^[0-9:\s]+$|LTE|[345]G$|道順を調べる|もっと見る|参加者プロフィール|名前をID表示|参加しますか|^(広告|PR|AD)$"#, options: .regularExpression) != nil
+}
+
+/// 0.33：イベントページの下の、そのサイトのほかのイベントの一覧・案内（「近日開催のイベント」「みんなのイベント」・著作権表示など）。
+/// ここから下はこの会の内容ではないので読まない（ほかの会の名前・日付・主催・「タッグ」などを読まないように）。
+func giriIsEventPageFooter(_ raw: String) -> Bool {
+    let value = raw.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+    guard !value.isEmpty, value.count <= 40 else { return false }
+    let patterns = [#"^(近日開催|開催予定|新着|人気|注目|おすすめ|オススメ|関連|その他|他|ほか|最近)の?イベント(一覧)?$"#,
+                    #"^(みんなのイベント|地図から探す|使い方ガイド|イベントを探す|イベントを作る|イベントを作成|利用規約|プライバシーポリシー|お問い合わせ)$"#,
+                    #"^(©|\(c\)|Copyright)"#, #"(サービス|アプリ).*「[^」]+」について$"#]
+    return patterns.contains { value.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
 }
 
 /// イベントページの画面（ツイプラなど）から、会の名前・日付・時刻・会場・主催・参加費・参加者を読む。
@@ -1605,7 +1623,15 @@ private func giriIsEventPageNoise(_ text: String) -> Bool {
 func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String], organizers: [String] = [],
                         venueRooms: [String: [String]] = [:], venueAddresses: [String: String] = [:],
                         now: Date = Date(), calendar: Calendar = .current) -> GiriEventPageDraft {
-    let sorted = giriReadingOrder(lines)
+    let ordered = giriReadingOrder(lines)
+    // 0.33：ページの下のほかのイベントの一覧・案内から下は読まない（参加者の見出しか日付より下にある時だけ）。
+    let footerTop: Double = {
+        let above = ordered.first { giriParticipantHeader($0.text) == .participants }?.midY
+            ?? ordered.first { giriEventPageDate($0.text, now: now, calendar: calendar) != nil }?.midY ?? 0
+        return ordered.first { $0.midY > above && giriIsEventPageFooter($0.text) }?.midY ?? .infinity
+    }()
+    let sorted = ordered.filter { $0.midY < footerTop }
+    let lines = lines.filter { $0.midY < footerTop }
     var draft = GiriEventPageDraft()
     draft.recognizedText = sorted.map(\.text).joined(separator: "\n")
     // イベントページの参加者は「参加者」などの見出しの下だけ（見出しがなければ説明文を名前にしない）。
@@ -1731,7 +1757,14 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
         ?? dateIndex.flatMap { times[$0].lone.first }
     draft.end = times.compactMap(\.end).first ?? times.compactMap(\.rangeEnd).first ?? times.compactMap(\.teardown).first
     // 0.29：会の種類は、会の名前とページの上の方（タイトルのまわり）の書き方から推す。
-    let head = info.prefix(10).map(\.text).joined(separator: " ")
+    // 0.33：タイトルのまわりだけにする（上のボタン・タグや広告の文で会の種類・タッグを決めない）。
+    let head: String = {
+        guard let first = titleBlock.first, let last = titleEnd else {
+            return info.prefix(10).map(\.text).filter { !giriIsEventPageNoise($0) }.joined(separator: " ")
+        }
+        let upper = min(info.count, last + 4)
+        return info[first..<max(first, upper)].map(\.text).filter { !giriIsEventPageNoise($0) && !giriIsEventPageSectionStart($0) }.joined(separator: " ")
+    }()
     draft.meetingKind = giriInferredMeetingKind(title: draft.title + " " + head, text: info.map(\.text).joined(separator: "\n"))
     // 0.31：持ち物（道具がいるか）。
     draft.needsTools = giriEventPageNeedsTools(info.map(\.text))
@@ -1749,8 +1782,11 @@ func giriEventPageDraft(lines: [GiriOCRLine], known: [String], venues: [String],
         if rest.count >= 2 { draft.title = rest }
     }
     let allText = sorted.map(\.text)
-    draft.tournamentFormat = giriInferredTournamentFormat(title: draft.title + " " + head, lines: allText)
-    if draft.tournamentFormat != nil && draft.meetingKind == nil { draft.meetingKind = "tournament" }
+    // 0.33：タイトルのまわりに「タッグ」「チーム」とある時だけ大会にする。説明の中の「チーム戦」などは参加形式の候補だけにする
+    // （通常の会の説明やコメントの「タッグ」で大会にしない）。
+    let titleFormat = giriInferredTournamentFormat(title: draft.title + " " + head, lines: [])
+    draft.tournamentFormat = titleFormat ?? giriInferredTournamentFormat(title: "", lines: allText)
+    if titleFormat != nil && draft.meetingKind == nil { draft.meetingKind = "tournament" }
     // チーム（タッグ）の名前とメンバーは、説明とコメント欄（ページ全体）から読む。
     // 0.30：メンバーはページの参加者の名前にも合わせる。
     // 0.30.1：タッグ・〇人チームの人数に合わせて読む。

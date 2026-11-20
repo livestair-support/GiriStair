@@ -121,9 +121,10 @@ struct GiriStatisticsView: View {
         if selectedFormat == .live || records.contains(where: { $0.entryFee != nil }) {
             Section {
                 AppCardSectionTitle(title: "参加費", systemImage: "yensign.circle", accentColor: AppSectionAccent.ticket,
-                                    infoTitle: "参加費の集計について", infoMessage: "参加した会のうち、参加費を入力した記録を合計します。キャンセル・興味ありは含めません。")
+                                    infoTitle: "参加費の集計について", infoMessage: "参加した会のうち、参加費を入力した記録を合計します。キャンセル・興味ありと、自分が主催・共催の会は含めません。")
                     .listRowSeparator(.hidden)
-                let fees = records.compactMap(\.entryFee)
+                // 0.33：自分が主催・共催の会の参加費は払わないので入れない。
+                let fees = records.compactMap { $0.countedEntryFee(isSelf: store.preferences.isSelf) }
                 LabeledContent("合計", value: giriYenText(fees.reduce(0, +)))
                 LabeledContent("入力した記録", value: "\(fees.count)回")
                 if !fees.isEmpty { LabeledContent("1回あたり", value: giriYenText(fees.reduce(0, +) / fees.count)) }

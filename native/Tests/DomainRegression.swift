@@ -2577,19 +2577,57 @@ struct DomainRegression {
             func dayAt(_ offset: Int) -> Date { addCalendarDays(base, offset) }
             let second = EventRound(id: "r2", name: "予選2回戦", submissionStart: dayAt(10), submissionEnd: dayAt(12), votingStart: dayAt(12), votingEnd: dayAt(13), stageId: "r2")
             let third = EventRound(id: "r3", name: "予選3回戦", submissionStart: dayAt(13), submissionEnd: dayAt(15), votingStart: dayAt(15), votingEnd: dayAt(16), stageId: "r3")
-            let flowed = giriAddingRuleFlow(flowRule, to: [second, third], defaultStart: base, submissionDays: 2, votingDays: 1)
-            try check(flowed.map(\.name) == ["予選1回戦", "予選2回戦", "予選3回戦", "準決勝", "決勝"] && flowed[1].id == "r2" && flowed[2].id == "r3",
-                      "missing rounds are added in the right order and existing rounds stay")
-            try check(flowed[0].votingEnd == dayAt(10) && flowed[0].submissionStart == dayAt(7) && flowed[3].submissionStart == dayAt(16) && flowed[3].stageId == flowed[3].id,
-                      "a missing earlier round ends before the next one and later rounds follow the previous one")
 
+            // 0.33: a net tournament only gets the first round of the flow; later stages are added once the player advances.
             var netEvent = GiriEvent(title: "架空の名人戦")
             netEvent.eventFormat = .onlineLong; netEvent.meetingType = .tournament
             giriApplyRule(flowRule, to: &netEvent, flowStart: base)
-            try check(netEvent.ruleID == flowRule.id && netEvent.rounds.map(\.name) == ["予選1回戦", "予選2回戦", "予選3回戦", "準決勝", "決勝"]
-                      && netEvent.rounds.first?.submissionStart == base, "choosing a rule makes the flow of a net tournament")
-            giriApplyRule(flowRule, to: &netEvent)
-            try check(netEvent.rounds.count == 5, "choosing the same rule again adds nothing")
+            try check(netEvent.ruleID == flowRule.id && netEvent.rounds.map(\.name) == ["予選1回戦"] && netEvent.rounds.first?.submissionStart == base
+                      && netEvent.rounds.first?.submissionEnd == dayAt(2) && netEvent.rounds.first?.votingEnd == dayAt(3), "choosing a rule makes only the first round of a net tournament")
+            var namedEvent = netEvent
+            namedEvent.rounds = [EventRound(id: "q1", name: "1回戦", submissionStart: dayAt(0), submissionEnd: dayAt(2), votingStart: dayAt(2), votingEnd: dayAt(3), stageId: "q1")]
+            giriApplyRule(flowRule, to: &namedEvent)
+            try check(namedEvent.rounds.map(\.name) == ["1回戦"], "rounds whose names differ from the rule are never filled in")
+
+            try check(giriNextStageCandidates(after: "予選1回戦", rule: flowRule, existing: ["予選1回戦"], live: false) == ["予選2回戦", "準々決勝", "準決勝", "決勝"],
+                      "the next round of the flow comes first, then later stages")
+            try check(giriNextStageCandidates(after: "予選3回戦", rule: flowRule, existing: ["予選1回戦", "予選2回戦", "予選3回戦"], live: false) == ["準決勝", "予選4回戦", "準々決勝", "決勝"],
+                      "after the last round of a stage the next stage comes first and an extra round stays possible")
+            try check(giriNextStageCandidates(after: "予選4回戦", rule: flowRule, existing: [], live: false) == ["予選5回戦", "準々決勝", "準決勝", "決勝"],
+                      "names that differ from the rule continue and offer the later rule stages")
+            try check(giriNextStageCandidates(after: "準決勝", rule: nil, existing: [], live: false) == ["決勝"], "without a rule the stage names continue")
+
+            var reached = ResultStage(); reached.name = "予選1回戦"; reached.stageId = "a"; reached.outcome = .advanced
+            var lost = ResultStage(); lost.name = "予選2回戦"; lost.stageId = "b"; lost.outcome = .eliminated
+            var unreached = ResultStage(); unreached.name = "準決勝"; unreached.stageId = "c"; unreached.lineup = "横並び"
+            try check(giriReachedStages([reached, lost, unreached], rounds: []).map(\.name) == ["予選1回戦", "予選2回戦"], "stages after an elimination are hidden")
+            unreached.memo = "メモ"
+            try check(giriReachedStages([reached, lost, unreached], rounds: []).count == 3, "a stage with an entry after an elimination stays visible")
+            var lostRecord = ResultStage(); lostRecord.roundId = "rb"; lostRecord.stageId = "b"; lostRecord.outcome = .eliminated
+            lost.outcome = .unrecorded; unreached.memo = ""
+            try check(giriReachedStages([reached, lost, unreached], rounds: [lostRecord]).count == 2, "a lost round hides the later stages")
+
+            var advanceEvent = GiriEvent(title: "架空の名人戦")
+            advanceEvent.eventFormat = .onlineLong; advanceEvent.meetingType = .tournament
+            advanceEvent.rounds = [second, third]
+            try check(giriAdvanceQuestionRound(advanceEvent, now: dayAt(14)) == nil, "no question before the last round has finished voting")
+            try check(giriAdvanceQuestionRound(advanceEvent, now: dayAt(17))?.id == "r3", "the finished last round asks whether the player advanced")
+            let advanced = giriRecordingAdvance(advanceEvent, roundID: "r3", advanced: true)
+            try check(advanced.tournamentResult?.stages.filter { $0.stageId == "r3" }.allSatisfy { $0.outcome == .advanced } == true
+                      && advanced.tournamentResult?.stages.count == 2 && !advanced.hasFinalResult && giriAdvanceQuestionRound(advanced, now: dayAt(17)) == nil,
+                      "advancing records the round and its stage without a final result")
+            let eliminated = giriRecordingAdvance(advanceEvent, roundID: "r3", advanced: false)
+            try check(eliminated.tournamentResult?.outcome == .eliminated && eliminated.hasFinalResult, "an elimination also fills the final result")
+            try check(giriReachedRounds(eliminated, notedRoundIDs: []).map(\.id) == ["r2", "r3"], "rounds up to the elimination stay visible")
+            var junk = eliminated
+            junk.rounds.append(EventRound(id: "r4", name: "準決勝", submissionStart: dayAt(16), submissionEnd: dayAt(18), votingStart: dayAt(18), votingEnd: dayAt(19), stageId: "r4"))
+            try check(giriReachedRounds(junk, notedRoundIDs: []).map(\.id) == ["r2", "r3"] && giriReachedRounds(junk, notedRoundIDs: ["r4"]).count == 3,
+                      "rounds after an elimination are hidden unless they have prompts or answers")
+            var finalEvent = advanceEvent
+            finalEvent.rounds.append(EventRound(id: "f", name: "決勝", submissionStart: dayAt(16), submissionEnd: dayAt(18), votingStart: dayAt(18), votingEnd: dayAt(19), stageId: "f"))
+            try check(giriAdvanceQuestionRound(finalEvent, now: dayAt(20)) == nil, "finals do not ask about advancing")
+            var watching = advanceEvent; watching.selfRole = .spectator
+            try check(giriAdvanceQuestionRound(watching, now: dayAt(17)) == nil, "only players are asked about advancing")
 
             var round = ResultStage(); round.name = "予選3回戦"; round.roundId = "r3"; round.placement = 6; round.entrantCount = 11
             try check(giriAutoOutcome(round, rule: flowRule) == .advanced, "the top half rounds up (6th of 11 advances)")
@@ -2615,8 +2653,79 @@ struct DomainRegression {
             liveRule.stages = [GiriRuleStage(name: "予選", lineup: "横並び5人", advanceCount: 2), GiriRuleStage(name: "決勝")]
             var recorded = ResultStage(); recorded.name = "決勝"; recorded.outcome = .champion
             let liveStages = giriAddingRuleStages(liveRule, to: [recorded])
+            try check(giriNextStageCandidates(after: "予選", rule: liveRule, existing: ["予選"], live: true).first == "決勝", "live results offer the next rule stage")
             try check(liveStages.map(\.name) == ["予選", "決勝"] && liveStages[0].lineup == "横並び5人" && liveStages[0].advanceCount == 2 && liveStages[1].outcome == .champion,
                       "live results get the missing rule stages before the recorded ones")
+        }
+
+        // 0.33 follow-up: corrected site cycles are not duplicated, self-hosted fees, page footers on event pages (fictional names only).
+        do {
+            let base = GiriDates.parse("2026-11-11T14:00:00Z") ?? Date()
+            func day(_ offset: Int) -> Date { addCalendarDays(base, offset) }
+            var corrected = OnlineSite(id: "corrected-site", name: "架空の天文台", recurrence: .weekly)
+            corrected.submissionDays = 7; corrected.votingDays = 7
+            var oldSettings = SiteCycleSettings(pattern: .overlapping, anchorStart: day(-7), intervalDays: 7, anchorCycleNumber: 1, seasonName: "第30シーズン")
+            oldSettings.seasonID = "s30"; oldSettings.ruleRevisionID = "old-rule"; oldSettings.regularCycleCount = 8
+            var newSettings = oldSettings; newSettings.anchorStart = day(0); newSettings.ruleRevisionID = "new-rule"
+            corrected.cycleSettings = newSettings
+            corrected.ruleHistory = [SiteRuleRevision(id: "old-rule", settings: oldSettings, submissionDays: 7, votingDays: 7, recurrence: .weekly)]
+            let rows = siteCycleDescriptors(corrected, around: day(3)).filter { $0.kind == .regular }
+            try check(rows.filter { $0.cycleNumber == 1 }.count == 1 && rows.first { $0.cycleNumber == 1 }?.start == day(0),
+                      "correcting the current number leaves no second first round from the previous dates")
+            guard let first = rows.first(where: { $0.cycleNumber == 1 }) else { throw GiriDataError.invalid("Missing corrected round") }
+            var oldJoined = GiriEvent(title: "架空の天文台"); oldJoined.eventFormat = .onlineLong; oldJoined.onlineSiteId = corrected.id
+            oldJoined.cycleKey = cycleKeyFor(day(-7)); oldJoined.siteCycleNumber = 1; oldJoined.siteSeason = "第30シーズン"; oldJoined.siteSeasonID = "s30"
+            var oldRound = EventRound(id: "old-round"); oldRound.submissionStart = day(-7)
+            oldJoined.rounds = [completeRoundSchedule(oldRound, submissionDays: 7, votingDays: 7)]
+            let keys = Set(rows.map(\.cycleKey))
+            try check(siteRelinkCandidate(first, events: [oldJoined], currentKeys: keys, now: day(3))?.id == oldJoined.id,
+                      "the record of the same numbered round in the same season is linked to the corrected round")
+            try check(siteRelinkCandidate(first, events: [oldJoined], currentKeys: keys, now: day(20)) == nil, "finished records are never moved")
+            var nearby = oldJoined; nearby.id = "nearby"; nearby.siteCycleNumber = 5; nearby.cycleKey = "other-key"
+            nearby.rounds[0].submissionStart = day(0).addingTimeInterval(1800)
+            try check(siteRelinkCandidate(first, events: [nearby], currentKeys: keys, now: day(3))?.id == "nearby", "a record starting within an hour is the same round")
+
+            let dupDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriDuplicates-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: dupDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dupDirectory) }
+            let dupStore = GiriStore(directory: dupDirectory)
+            var dupSite = OnlineSite(id: "dup-site", name: "架空の半分", recurrence: .weekly)
+            dupSite.submissionDays = 7; dupSite.votingDays = 7
+            dupSite.cycleSettings = SiteCycleSettings(pattern: .alternating, anchorStart: day(0), intervalDays: 14)
+            try dupStore.saveOnlineSite(dupSite)
+            guard let storedDup = dupStore.onlineSiteById(dupSite.id),
+                  let current = siteCycleDescriptors(storedDup, around: day(3)).first(where: { $0.start == day(0) }) else { throw GiriDataError.invalid("Missing duplicate fixture") }
+            let preview = try dupStore.createSiteCycle(dupSite.id, descriptor: current, join: false, now: day(3))
+            var orphan = preview; orphan.id = UUID().uuidString; orphan.cycleKey = "older-key"; orphan.isParticipating = true
+            try dupStore.saveEvent(orphan)
+            try dupStore.ensureCurrentSiteCycles(now: day(3))
+            let remaining = dupStore.events.filter { $0.onlineSiteId == dupSite.id && $0.effectiveRounds.first?.submissionStart == day(0) }
+            try check(remaining.count == 1 && remaining.first?.id == orphan.id && remaining.first?.cycleKey == current.cycleKey && remaining.first?.isActualParticipant == true,
+                      "an empty duplicate of a joined round is removed and the joined record follows the current schedule")
+
+            var hosted = GiriEvent(title: "架空の会"); hosted.entryFee = 1000; hosted.organizer = "わたし"
+            try check(hosted.countedEntryFee(isSelf: { $0 == "わたし" }) == nil, "fees of meetings I host are not counted")
+            hosted.organizer = "だれか"; hosted.coOrganizers = ["わたし"]
+            try check(hosted.countedEntryFee(isSelf: { $0 == "わたし" }) == nil, "fees of meetings I co-host are not counted")
+            hosted.coOrganizers = []
+            try check(hosted.countedEntryFee(isSelf: { $0 == "わたし" }) == 1000, "fees of other meetings are counted")
+
+            func row(_ text: String, _ y: Double, x: Double = 0.3, h: Double = 0.006) -> GiriOCRLine { GiriOCRLine(text: text, midX: x, midY: y, height: h) }
+            let pageTop = [row("2027年1月10日[日] 13:00", 0.02, h: 0.010), row("架空を知る会", 0.04, h: 0.010), row("かくれ", 0.06), row("[9 views]", 0.07),
+                           row("Xでシェアする", 0.075, x: 0.5), row("詳細", 0.10), row("8人横並びの大喜利会です", 0.12)]
+            let pageList = [row("参加者 (2人)", 0.30, x: 0.15), row("ねこ", 0.32, x: 0.15), row("いぬ", 0.34, x: 0.15)]
+            let footer = [row("近日開催のイベント", 0.60), row("2026/11/23 00:00", 0.62), row("架空タッグ戦（はるか・たろう）", 0.64),
+                          row("やまださんが主催", 0.66), row("たなか", 0.68, x: 0.15)]
+            let pageNow = GiriDates.parse("2026-11-01T00:00:00Z") ?? Date()
+            let footerDraft = giriEventPageDraft(lines: pageTop + pageList + footer, known: [], venues: [], now: pageNow)
+            try check(footerDraft.meetingKind == nil && footerDraft.tournamentFormat == nil && footerDraft.teams.isEmpty
+                      && footerDraft.participants.filter(\.included).map(\.name) == ["ねこ", "いぬ"]
+                      && footerDraft.title == "架空を知る会" && footerDraft.organizer == "かくれ",
+                      "other events listed below the page are not read into the meeting")
+            try check(giriIsEventPageFooter("近日開催のイベント") && giriIsEventPageFooter("イベント告知・出欠管理サービス「TwiPla」について")
+                      && !giriIsEventPageFooter("その他のイベント情報はこちら") && !giriIsEventPageFooter("「ルール」について"), "only the site's own footer ends the page")
+            let bodyTeam = giriEventPageDraft(lines: pageTop + [row("後半はチーム戦もあります", 0.14)] + pageList, known: [], venues: [], now: pageNow)
+            try check(bodyTeam.meetingKind == nil && bodyTeam.tournamentFormat == .team, "team wording in the description alone does not make a meeting a tournament")
         }
 
         print("Native domain regressions passed: \(passed)")

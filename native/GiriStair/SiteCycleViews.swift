@@ -239,6 +239,8 @@ struct GiriSitePeriodActions: View {
     /// 日程の設定・結果の入力をタブの中で開く。ない時は従来どおりシートで開く。
     var onRoute: ((GiriSiteRoute) -> Void)? = nil
     @State private var showingSetup = false
+    /// 0.33：現在の状況（第何回か・締切）の編集をシートで開く（タブの中で開けない時）。
+    @State private var showingStatus = false
     @State private var resultEvent: GiriEvent?
     @State private var deadlineRequest: GiriSiteDeadlineRequest?
     /// 運営の都合で休みにする回（確認を出す）。
@@ -262,6 +264,7 @@ struct GiriSitePeriodActions: View {
             Text("この回は作らず、次の回から番号を1つずつ詰めます。あとで取り消せます。")
         }
         .sheet(isPresented: $showingSetup) { NavigationStack { GiriSiteEditor(site: site) } }
+        .sheet(isPresented: $showingStatus) { NavigationStack { GiriSiteEditor(site: site, statusOnly: true) } }
         .sheet(item: $joiningCycle) { cycle in NavigationStack { joinSheet(cycle) }.presentationDetents([.medium]) }
         .sheet(item: $resultEvent) { event in NavigationStack { GiriCycleResultEditor(eventID: event.id) } }
         .sheet(item: $deadlineRequest, onDismiss: {
@@ -285,6 +288,11 @@ struct GiriSitePeriodActions: View {
         }
         for event in events where event.isActualParticipant {
             for round in event.effectiveRounds where !values.contains(where: { $0.event?.id == event.id && $0.round.id == round.id }) {
+                // 0.33：同じ回（1時間以内に始まる回）がもう出ている時は、2つ目を出さない。
+                let start = round.submissionStart ?? round.votingStart
+                if let start, values.contains(where: { value in
+                    (value.round.submissionStart ?? value.round.votingStart).map { abs($0.timeIntervalSince(start)) < 3600 } ?? false
+                }) { continue }
                 let title = [event.siteCycleNumber.map { "第\($0)回" } ?? "", event.sitePeriodKind == .regular ? "" : event.sitePeriodKind.title]
                     .filter { !$0.isEmpty }.joined(separator: "・")
                 values.append(SiteVisibleCycle(descriptor: nil, event: event, round: round, title: title.isEmpty ? event.title : title))
@@ -402,9 +410,15 @@ struct GiriSitePeriodActions: View {
                     .foregroundStyle(skipped ? Color.secondary : accentActionColor)
                 Spacer(minLength: 8)
                 if !cycle.title.isEmpty { Text(cycle.title).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.trailing) }
-                if canBreak(cycle) {
+                if canBreak(cycle) || canFixNumber(cycle) {
                     Menu {
-                        Button("運営の都合で休み", systemImage: "moon.zzz") { breakCycle = cycle }
+                        // 0.33：今の回の番号や締切がサイトと違う時は、現在の状況の編集で直す。
+                        if canFixNumber(cycle) {
+                            Button("第何回か・締切を直す", systemImage: "number") { openStatus() }
+                        }
+                        if canBreak(cycle) {
+                            Button("運営の都合で休み", systemImage: "moon.zzz") { breakCycle = cycle }
+                        }
                     } label: {
                         Image(systemName: "ellipsis.circle").font(.subheadline).foregroundStyle(.secondary)
                             .frame(width: 26, height: 22).contentShape(Rectangle())
@@ -441,6 +455,16 @@ struct GiriSitePeriodActions: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 0.33：番号の付く通常の回は、第何回か・締切を直せる（現在の状況の編集を開く）。
+    private func canFixNumber(_ cycle: SiteVisibleCycle) -> Bool {
+        guard site.recurrence == .weekly, site.cycleSettings?.waitingForNext != true, let descriptor = cycle.descriptor else { return false }
+        return descriptor.kind == .regular && descriptor.cycleNumber != nil
+    }
+
+    private func openStatus() {
+        if let onRoute { onRoute(.status(site.id)) } else { showingStatus = true }
     }
 
     /// 決まった間隔で出る通常の回だけ、休みにできる。
@@ -940,6 +964,16 @@ struct GiriSiteCycleSettingsForm: View {
                     OptionalDateRow(title: phase == .posting ? "投稿の締切" : "投票の締切",
                                     selection: Binding(get: { deadline }, set: { if let date = $0 { deadline = date; updateSchedule() } }))
                 }
+                // 0.33：今の回の番号（サイトと違う時にここで直す）。シーズンのないサイトも番号で並べる。
+                if timing != .irregular {
+                    Stepper(value: Binding(get: { currentCycle }, set: { currentCycle = $0; updateSchedule() }), in: 1...max(9999, currentCycle)) {
+                        HStack {
+                            GiriEditorLabel(phase == .waiting ? "次のお題" : "今のお題")
+                            Spacer()
+                            Text("第\(currentCycle)回").font(.body.weight(.semibold))
+                        }
+                    }
+                }
             }
             Picker(selection: Binding(get: { timing }, set: { timing = $0; updateSchedule() })) {
                 ForEach(SiteNextPromptTiming.allCases) { Text($0.title).tag($0) }
@@ -1054,13 +1088,6 @@ struct GiriSiteCycleSettingsForm: View {
                     }
                 }
                 if timing != .irregular {
-                    Stepper(value: Binding(get: { currentCycle }, set: { currentCycle = $0; updateSchedule() }), in: 1...max(9999, currentCycle)) {
-                        HStack {
-                            GiriEditorLabel(phase == .waiting ? "次のお題" : "今のお題")
-                            Spacer()
-                            Text("第\(currentCycle)回").font(.body.weight(.semibold))
-                        }
-                    }
                     Toggle("1シーズンの回数が決まっている", isOn: Binding(get: { settings.wrappedValue.regularCycleCount != nil }, set: { enabled in
                         var value = settings.wrappedValue
                         value.regularCycleCount = enabled ? max(currentCycle, 8) : nil
