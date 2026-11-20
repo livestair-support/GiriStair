@@ -2728,6 +2728,67 @@ struct DomainRegression {
             try check(bodyTeam.meetingKind == nil && bodyTeam.tournamentFormat == .team, "team wording in the description alone does not make a meeting a tournament")
         }
 
+        // 0.34 stage names across rules and results, round cleanup and net result screens without answers (fictional names only).
+        do {
+            try check(giriSameStageName("2回戦", "予選2回戦") && giriSameStageName("予選2回戦", "予選2回戦") && !giriSameStageName("準決勝", "決勝")
+                      && !giriSameStageName("予選2回戦", "本戦2回戦") && !giriSameStageName("予選2回戦", "予選3回戦"), "numbered rounds match with or without the stage name")
+            try check(giriAdaptedRoundName("3回戦", like: "予選2回戦") == "予選3回戦" && giriAdaptedRoundName("準決勝", like: "予選2回戦") == "準決勝",
+                      "rule round names follow the tournament's naming")
+            var knockoutRule = GiriRule(kind: .online, scope: .tournament)
+            knockoutRule.stages = ["1回戦", "2回戦", "3回戦", "4回戦", "準決勝", "決勝"].map { GiriRuleStage(name: $0) }
+            knockoutRule.stages[1].advanceCount = 16
+            try check(giriRuleStage(for: "予選2回戦", in: knockoutRule)?.name == "2回戦", "a prefixed round finds the rule's numbered round")
+            try check(giriNextStageCandidates(after: "予選4回戦", rule: knockoutRule, existing: ["予選2回戦", "予選3回戦", "予選4回戦"], live: false)
+                      == ["準決勝", "予選5回戦", "準々決勝", "決勝"], "after the rule's last numbered round its next stage comes first")
+            var filled = ResultStage(); filled.name = "予選2回戦"
+            try check(giriFillingStage(filled, from: knockoutRule.stages[1]).advanceCount == 16, "rule fields fill the matching result stage")
+            try check(giriRuleFlowSummary(knockoutRule).hasPrefix("1回戦 → 2回戦（上位16"), "the rule flow is summarized with advancing counts")
+
+            let base = GiriDates.parse("2026-11-01T14:00:00Z") ?? Date()
+            func day(_ offset: Int) -> Date { addCalendarDays(base, offset) }
+            func round(_ id: String, _ name: String, _ start: Int) -> EventRound {
+                EventRound(id: id, name: name, submissionStart: day(start), submissionEnd: day(start + 2), votingStart: day(start + 2), votingEnd: day(start + 3), stageId: id)
+            }
+            var messy = GiriEvent(title: "架空の長考杯")
+            messy.eventFormat = .onlineLong; messy.meetingType = .tournament
+            messy.rounds = [round("r1", "1回戦", 0), round("r2", "2回戦", 2), round("q2", "予選2回戦", 3), round("r3", "3回戦", 5), round("q3", "予選3回戦", 6),
+                            round("r4", "4回戦", 8), round("q4", "予選4回戦", 9), round("s", "準決勝", 20), round("f", "決勝", 23)]
+            var passed2 = ResultStage(); passed2.name = "予選2回戦"; passed2.roundId = "q2"; passed2.stageId = "q2"; passed2.placement = 8; passed2.outcome = .advanced
+            var passed3 = ResultStage(); passed3.name = "予選3回戦"; passed3.roundId = "q3"; passed3.stageId = "q3"; passed3.placement = 6; passed3.outcome = .advanced
+            var emptyRecord = ResultStage(); emptyRecord.name = "2回戦"; emptyRecord.roundId = "r2"; emptyRecord.stageId = "r2"
+            messy.tournamentResult = TournamentResult(); messy.tournamentResult?.stages = [passed2, passed3, emptyRecord]
+            let cleanup = giriRoundCleanup(messy, results: messy.tournamentResult?.stages ?? [], notedRoundIDs: ["q4"], now: day(11))
+            try check(cleanup.map(\.title) == ["「1回戦」を「予選1回戦」にする", "「2回戦」を「予選2回戦」にまとめる", "「3回戦」を「予選3回戦」にまとめる",
+                                                "「4回戦」を「予選4回戦」にまとめる", "「準決勝」を消す", "「決勝」を消す"],
+                      "duplicated rounds are merged, names follow the tournament and unreached empty rounds can be removed")
+            let tidy = giriApplyingRoundCleanup(cleanup, to: messy)
+            try check(tidy.rounds.map(\.name) == ["予選1回戦", "予選2回戦", "予選3回戦", "予選4回戦"]
+                      && tidy.tournamentResult?.stages.map(\.roundId) == ["q2", "q3"], "the cleanup keeps every recorded round and result")
+            var both = messy; both.rounds = [round("a", "2回戦", 0), round("b", "予選2回戦", 1)]
+            var recorded = ResultStage(); recorded.roundId = "a"; recorded.placement = 3
+            try check(giriRoundCleanup(both, results: [recorded], notedRoundIDs: ["b"]).isEmpty, "rounds that both have records are never merged")
+            var cleanEvent = messy; cleanEvent.rounds = [round("q2", "予選2回戦", 3), round("q3", "予選3回戦", 6)]
+            try check(giriRoundCleanup(cleanEvent, results: [], notedRoundIDs: [], now: day(0)).isEmpty, "tidy tournaments show no cleanup")
+
+            let page = GiriNetResultPage(prompt: "架空のお題です", submissionCount: 12, voterCount: 30,
+                                         entries: [GiriNetResultEntry(placement: 1, points: 50, author: "はるか", text: "ぜんぜん違うトップの答えだよ"),
+                                                   GiriNetResultEntry(placement: 6, points: 20, author: "わたし", text: "自分の架空の回答")])
+            var roundRecord = ResultStage(); roundRecord.name = "予選4回戦"; roundRecord.roundId = "q4"; roundRecord.stageId = "q4"
+            let fresh = giriApplyingNetResult(page, stage: roundRecord, notes: [], eventID: messy.id, roundID: "q4", format: .onlineLong,
+                                              fallbackTitle: "予選4回戦", isSelf: { $0 == "わたし" })
+            try check(fresh.foundOwn && fresh.createdNote && fresh.stage.placement == 6 && fresh.stage.points == 20 && fresh.stage.voterCount == 30 && fresh.stage.entrantCount == 12,
+                      "a result screen fills the round without registered answers")
+            try check(fresh.notes.count == 1 && fresh.notes[0].prompt == "架空のお題です" && fresh.notes[0].roundId == "q4"
+                      && fresh.notes[0].answerRecords.filter(\.isOwn).map(\.text) == ["自分の架空の回答"] && fresh.notes[0].answerRecords.filter(\.isOwn).first?.isSubmitted == true
+                      && fresh.notes[0].answerRecords.contains { $0.answerer == "はるか" && $0.placement == 1 }, "the prompt, my answer and other answers are added")
+            var existingNote = fresh.notes[0]; existingNote.answerRecords = [AnswerRecord(text: "自分の架空の回答", isSubmitted: true)]
+            let again = giriApplyingNetResult(page, stage: roundRecord, notes: [existingNote], eventID: messy.id, roundID: "q4", format: .onlineLong,
+                                              fallbackTitle: "予選4回戦", isSelf: { _ in false })
+            try check(!again.createdNote && again.notes.count == 1 && again.notes[0].answerRecords.filter(\.isOwn).count == 1
+                      && again.notes[0].answerRecords.first?.placement == 6, "a registered answer is matched by its text")
+            try check(giriNetResultRound(page, event: messy, notes: [existingNote], results: [])?.id == "q4", "the round is found from the prompt")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

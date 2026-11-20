@@ -2038,6 +2038,8 @@ struct GiriAnswerResultFields: View {
     @Binding var records: [AnswerRecord]
     /// 0.28：チーム戦のメンバー（自分を除く）。いる時は、出した回答の原案と、メンバーの回答の結果も入れる。
     var teammates: [String] = []
+    /// 0.34：結果のスクショの読み取りを出すか（大会の回の画面では、回の上の読み取りを使う）。
+    var showsReader = true
     /// 0.31：結果画面から読めた自分の回答の結果（大会の回の結果にも入れる）。
     var onOwnResult: ((AnswerRecord, Int?) -> Void)? = nil
     /// 0.15：結果のページのスクリーンショットから、出した回答の順位・得点・投票人数を読む。
@@ -2046,8 +2048,9 @@ struct GiriAnswerResultFields: View {
     var body: some View {
         let submitted = records.filter { $0.isOwn && $0.isSubmitted }
         if submitted.isEmpty {
-            Text("提出した回答をお題/回答で選んでください。").font(.subheadline).foregroundStyle(.secondary)
-        } else {
+            Text(showsReader ? "提出した回答をお題/回答で選んでください。" : "提出した回答は、上の「結果のスクショから読み取る」かお題/回答で入れます。")
+                .font(.subheadline).foregroundStyle(.secondary)
+        } else if showsReader {
             PhotosPicker(selection: $resultPhoto, matching: .images, photoLibrary: .shared()) {
                 Label(readingResult ? "読み取り中" : "結果のスクショから読み取る", systemImage: "text.viewfinder")
             }

@@ -1407,6 +1407,8 @@ func giriRuleStage(for name: String, in rule: GiriRule) -> GiriRuleStage? {
     let key = playerSearchKey(name)
     guard !key.isEmpty else { return nil }
     if let flow = giriRuleFlowNames(rule).first(where: { playerSearchKey($0.name) == key }) { return flow.stage }
+    // 0.34：「予選2回戦」とルールの「2回戦」のように、番号の回戦は前の段階名が違っても同じ回にする。
+    if let flow = giriRuleFlowNames(rule).first(where: { giriSameStageName($0.name, name) }) { return flow.stage }
     return rule.stages.filter { stage in
         let stageKey = playerSearchKey(stage.displayName)
         return !stageKey.isEmpty && key.hasPrefix(stageKey)
@@ -1419,11 +1421,11 @@ func giriNextStageCandidates(after name: String, rule: GiriRule?, existing: [Str
     let current = name.trimmingCharacters(in: .whitespacesAndNewlines)
     let currentKey = playerSearchKey(current)
     let currentDepth = giriInferredStageKind(current).depth ?? 0
-    let flow = rule.map(giriRuleFlowNames) ?? []
+    let flow = (rule.map(giriRuleFlowNames) ?? []).map { item in (stage: item.stage, name: giriAdaptedRoundName(item.name, like: current)) }
     func depth(_ stage: GiriRuleStage, _ name: String) -> Int { (stage.stageKind ?? giriInferredStageKind(name)).depth ?? 0 }
     var first: [String] = []
     var later: [(name: String, depth: Int)] = []
-    if let index = flow.firstIndex(where: { playerSearchKey($0.name) == currentKey }) {
+    if let index = flow.firstIndex(where: { playerSearchKey($0.name) == currentKey }) ?? flow.firstIndex(where: { giriSameStageName($0.name, current) }) {
         // ルールの流れの中の回：流れの次と名前の続き。そのあとの段階は最初の回だけ。
         if index + 1 < flow.count { first.append(flow[index + 1].name) }
         first.append(giriEditorNextStage(current, live: live))
@@ -1444,11 +1446,253 @@ func giriNextStageCandidates(after name: String, rule: GiriRule?, existing: [Str
     for value in ordered {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = playerSearchKey(trimmed)
-        guard !key.isEmpty, key != currentKey, !existing.contains(where: { playerSearchKey($0) == key }),
-              !names.contains(where: { playerSearchKey($0) == key }) else { continue }
+        guard !key.isEmpty, key != currentKey, !giriSameStageName(trimmed, current), !existing.contains(where: { giriSameStageName($0, trimmed) }),
+              !names.contains(where: { giriSameStageName($0, trimmed) }) else { continue }
         names.append(trimmed)
     }
     return Array(names.prefix(6))
+}
+
+// MARK: - 0.34 段階の名前の揺れ・回の整理・ネットの結果画面
+
+/// 0.34：「予選2回戦」→（"予選", 2）。番号の回戦でなければ nil。
+func giriNumberedRound(_ name: String) -> (prefix: String, number: Int)? {
+    let text = giriHalfwidthDigits(name).replacingOccurrences(of: #"[\s　]"#, with: "", options: .regularExpression)
+    guard let groups = giriRegexGroups(#"^(.*?)([0-9]+)回戦$"#, in: text).first, let number = Int(groups[2]) else { return nil }
+    return (groups[1], number)
+}
+
+/// 0.34：同じ段階・回の名前か。同じ名前のほか、番号の回戦は前の段階名の有無が違っても同じ（「2回戦」と「予選2回戦」）。
+/// 「準決勝」と「決勝」のような別の段階は同じにしない。
+func giriSameStageName(_ first: String, _ second: String) -> Bool {
+    let a = playerSearchKey(first), b = playerSearchKey(second)
+    guard !a.isEmpty, !b.isEmpty else { return false }
+    if a == b { return true }
+    guard let x = giriNumberedRound(first), let y = giriNumberedRound(second), x.number == y.number else { return false }
+    return x.prefix.isEmpty != y.prefix.isEmpty && !(x.prefix + y.prefix).contains("準")
+}
+
+/// 0.34：ルールの「3回戦」を、大会の名前の付け方（「予選2回戦」）に合わせて「予選3回戦」にする。
+func giriAdaptedRoundName(_ name: String, like current: String) -> String {
+    guard let target = giriNumberedRound(name), target.prefix.isEmpty,
+          let model = giriNumberedRound(current), !model.prefix.isEmpty else { return name }
+    return model.prefix + "\(target.number)回戦"
+}
+
+/// 0.34：ルールの段階の形式・審査方法・お題の数・勝ち抜け・種類を、結果の段階に入れる（入れていない欄だけ）。
+func giriFillingStage(_ stage: ResultStage, from ruleStage: GiriRuleStage) -> ResultStage {
+    var value = stage
+    if value.lineup.isEmpty { value.lineup = ruleStage.lineup }
+    if value.judging.isEmpty { value.judging = ruleStage.judging }
+    if value.promptCount == nil { value.promptCount = ruleStage.promptCount }
+    if value.advanceCount == nil { value.advanceCount = ruleStage.advanceCount }
+    if value.kind == nil, let kind = ruleStage.stageKind, kind != giriInferredStageKind(value.name) { value.kind = kind }
+    return value
+}
+
+/// 0.34：ルールの流れの短い説明（「予選（全3回・上位半数が勝ち抜け）→ 準決勝（上位2人が勝ち抜け）→ 決勝」）。
+func giriRuleFlowSummary(_ rule: GiriRule) -> String {
+    rule.stages.map { stage in
+        let notes = [stage.roundText, stage.stageKind == .final ? nil : stage.advanceText.map { $0 + "が勝ち抜け" }].compactMap { $0 }
+        return stage.displayName + (notes.isEmpty ? "" : "（" + notes.joined(separator: "・") + "）")
+    }.joined(separator: " → ")
+}
+
+/// 0.34：大会の日程の回の整理（同じ回をまとめる・名前をそろえる・まだ進んでいない回を消す）。
+struct GiriRoundCleanupItem: Identifiable, Equatable {
+    var title: String
+    var detail: String
+    var removeID: String? = nil
+    var renameID: String? = nil
+    var newName: String? = nil
+    var id: String { (removeID ?? "") + "|" + (renameID ?? "") }
+}
+
+/// 0.34：0.32 で足した「2回戦」と大会の「予選2回戦」のように、同じ回が2つある大会の整理の候補。
+/// 消すのは結果もお題/回答もない回だけ。番号の回戦は大会の前の段階名にそろえる。
+/// 同じ回・名前の整理がある時だけ、前の回で通過していない、まだ始まっていない記録のない回も消す候補にする。
+func giriRoundCleanup(_ event: GiriEvent, results: [ResultStage], notedRoundIDs: Set<String>, now: Date = Date()) -> [GiriRoundCleanupItem] {
+    let rounds = event.rounds
+    guard event.meetingType == .tournament, rounds.count >= 2 else { return [] }
+    func hasContent(_ round: EventRound) -> Bool {
+        if notedRoundIDs.contains(round.id) || results.contains(where: { $0.roundId == round.id && $0.hasResultEntry }) { return true }
+        guard rounds.filter({ $0.effectiveStageId == round.effectiveStageId }).count == 1 else { return false }
+        return results.contains { $0.roundId == nil && $0.stageId == round.effectiveStageId && $0.hasResultEntry }
+    }
+    let numbered = rounds.compactMap { round in giriNumberedRound(round.name).map { (round: round, prefix: $0.prefix, number: $0.number) } }
+    var counts: [String: Int] = [:]
+    for item in numbered where !item.prefix.isEmpty { counts[item.prefix, default: 0] += 1 }
+    let family = numbered.map(\.prefix).first { !$0.isEmpty && counts[$0] == counts.values.max() }
+    var items: [GiriRoundCleanupItem] = []
+    var handled = Set<String>()
+    for item in numbered where item.prefix.isEmpty && !handled.contains(item.round.id) {
+        if let partner = numbered.first(where: { !$0.prefix.isEmpty && $0.number == item.number && !$0.prefix.contains("準") && !handled.contains($0.round.id) }) {
+            let mine = hasContent(item.round), theirs = hasContent(partner.round)
+            if !mine {
+                items.append(GiriRoundCleanupItem(title: "「\(item.round.name)」を「\(partner.round.name)」にまとめる",
+                                                  detail: "同じ回です。記録のない「\(item.round.name)」を消します。", removeID: item.round.id))
+            } else if !theirs {
+                items.append(GiriRoundCleanupItem(title: "「\(item.round.name)」を「\(partner.round.name)」にまとめる",
+                                                  detail: "同じ回です。記録のある方を残し、名前を「\(partner.round.name)」にします。",
+                                                  removeID: partner.round.id, renameID: item.round.id, newName: partner.round.name))
+            } else { continue }
+            handled.insert(item.round.id); handled.insert(partner.round.id)
+        } else if let family {
+            let name = family + "\(item.number)回戦"
+            guard !rounds.contains(where: { playerSearchKey($0.name) == playerSearchKey(name) }) else { continue }
+            items.append(GiriRoundCleanupItem(title: "「\(item.round.name)」を「\(name)」にする", detail: "ほかの回と名前をそろえます。",
+                                              renameID: item.round.id, newName: name))
+            handled.insert(item.round.id)
+        }
+    }
+    guard !items.isEmpty else { return [] }
+    let removed = Set(items.compactMap(\.removeID))
+    let remaining = rounds.filter { !removed.contains($0.id) }
+    for index in remaining.indices.dropFirst() {
+        let round = remaining[index], previous = remaining[index - 1]
+        guard !handled.contains(round.id), !hasContent(round), previous.effectiveStageId != round.effectiveStageId,
+              let start = round.submissionStart ?? round.votingStart, start > now else { continue }
+        let previousAdvanced = results.contains { ($0.roundId == previous.id || ($0.roundId == nil && $0.stageId == previous.effectiveStageId)) && $0.outcome == .advanced }
+        guard !previousAdvanced else { continue }
+        items.append(GiriRoundCleanupItem(title: "「\(round.name)」を消す", detail: "まだ進んでいない回で、記録がありません。勝ち上がった時に足します。", removeID: round.id))
+    }
+    return items
+}
+
+/// 0.34：選んだ整理を大会の日程と結果に入れる。
+func giriApplyingRoundCleanup(_ items: [GiriRoundCleanupItem], to event: GiriEvent) -> GiriEvent {
+    var value = event
+    let before = value.rounds
+    let removeIDs = Set(items.compactMap(\.removeID))
+    var renames: [String: String] = [:]
+    for item in items { if let id = item.renameID, let name = item.newName { renames[id] = name } }
+    value.rounds = before.filter { !removeIDs.contains($0.id) }.map { round in
+        var copy = round
+        if let name = renames[round.id] { copy.name = name }
+        return copy
+    }
+    if var result = value.tournamentResult {
+        result.stages = giriApplyingRoundCleanup(items, to: result.stages, rounds: before)
+        value.tournamentResult = result
+    }
+    return value
+}
+
+/// 0.34：結果の記録の側（回の記録を消し、名前を変えた回の記録の名前も変える。使われなくなった段階の記録も消す）。
+func giriApplyingRoundCleanup(_ items: [GiriRoundCleanupItem], to stages: [ResultStage], rounds: [EventRound]) -> [ResultStage] {
+    let removeIDs = Set(items.compactMap(\.removeID))
+    var renames: [String: (old: String, new: String)] = [:]
+    for item in items {
+        if let id = item.renameID, let name = item.newName, let round = rounds.first(where: { $0.id == id }) { renames[id] = (round.name, name) }
+    }
+    let remaining = rounds.filter { !removeIDs.contains($0.id) }
+    let usedStages = Set(remaining.map(\.effectiveStageId))
+    let goneStages = Set(rounds.filter { removeIDs.contains($0.id) }.map(\.effectiveStageId)).subtracting(usedStages)
+    var stageRenames: [String: (old: String, new: String)] = [:]
+    for (id, names) in renames { if let round = rounds.first(where: { $0.id == id }) { stageRenames[round.effectiveStageId] = names } }
+    return stages.compactMap { stage -> ResultStage? in
+        if let roundID = stage.roundId {
+            guard !removeIDs.contains(roundID) else { return nil }
+            guard let names = renames[roundID] else { return stage }
+            var copy = stage
+            copy.name = copy.name.replacingOccurrences(of: names.old, with: names.new)
+            return copy
+        }
+        if let stageID = stage.stageId {
+            if goneStages.contains(stageID) && !stage.hasResultEntry { return nil }
+            if let names = stageRenames[stageID], playerSearchKey(stage.name) == playerSearchKey(names.old) {
+                var copy = stage
+                copy.name = names.new
+                return copy
+            }
+        }
+        return stage
+    }
+}
+
+/// 0.34：ネットの結果画面を入れた結果（回の記録・その回のお題/回答・自分の回答が見つかったか・お題を作ったか）。
+struct GiriNetResultApplication {
+    var stage: ResultStage
+    var notes: [ThoughtNote]
+    var foundOwn: Bool
+    var createdNote: Bool
+}
+
+/// 0.34：ネットの結果画面を、回の記録とその回のお題/回答に入れる（入れていない欄だけ）。回答を入れていなくても読める。
+/// 自分の回答（出した回答の文か、作者が自分）を探し、順位・得点・投票人数・内訳を回答と回の記録に入れる。
+/// 出した回答がない時は、見つけた自分の回答を出した回答として足す。お題/回答がない回は、画面のお題でお題を作る。
+/// ほかの人の回答と得点も残す（同じ回答は足さない）。投稿数は出場人数にする。
+func giriApplyingNetResult(_ page: GiriNetResultPage, stage: ResultStage, notes: [ThoughtNote], eventID: String, roundID: String,
+                           format: EventFormat, fallbackTitle: String, isSelf: (String) -> Bool, now: Date = Date()) -> GiriNetResultApplication {
+    var value = stage
+    var output = notes
+    var created = false
+    if value.entrantCount == nil { value.entrantCount = page.submissionCount }
+    if value.voterCount == nil { value.voterCount = page.voterCount }
+    let promptKey = giriResultKey(page.prompt)
+    var noteIndex = output.firstIndex { note in
+        let key = giriResultKey(note.prompt)
+        return !promptKey.isEmpty && !key.isEmpty && (key == promptKey || key.hasPrefix(String(promptKey.prefix(8))) || promptKey.hasPrefix(String(key.prefix(8))))
+    } ?? (output.count == 1 ? 0 : nil)
+    if noteIndex == nil {
+        var note = giriBulkPromptNotes(text: page.prompt, eventID: eventID, roundID: roundID, format: format, participates: true, now: now).first ?? ThoughtNote()
+        if note.prompt.isEmpty {
+            note.kind = .answers; note.title = fallbackTitle; note.eventId = eventID; note.roundId = roundID; note.format = format
+            note.answerCategory = format == .onlineLong ? "long" : "other"; note.participates = true; note.usesAnswerRecords = true
+        }
+        note.answerRecords = []
+        output.append(note)
+        noteIndex = output.count - 1
+        created = true
+    }
+    guard let noteIndex else { return GiriNetResultApplication(stage: value, notes: output, foundOwn: false, createdNote: created) }
+    var records = output[noteIndex].answerRecords
+    let own = records.indices.filter { records[$0].isOwn && records[$0].isSubmitted }
+    let entryIndex = giriNetResultOwnEntry(page, answers: own.map { records[$0].text }, isSelf: isSelf)
+    if let entryIndex {
+        let entry = page.entries[entryIndex]
+        let entryKey = giriResultKey(entry.text)
+        var target = own.first { index in
+            let key = giriResultKey(records[index].text)
+            return !key.isEmpty && (key == entryKey || key.hasPrefix(String(entryKey.prefix(8))) || entryKey.hasPrefix(String(key.prefix(8))))
+        } ?? (own.count == 1 ? own.first : nil)
+        if target == nil && own.isEmpty && !entry.text.isEmpty {
+            records.append(AnswerRecord(text: entry.text, isSubmitted: true))
+            target = records.count - 1
+        }
+        if let target {
+            if records[target].placement == nil { records[target].placement = entry.placement }
+            if records[target].points == nil { records[target].points = entry.points }
+            if records[target].voterCount == nil { records[target].voterCount = page.voterCount }
+            if records[target].pointCounts.isEmpty { records[target].pointCounts = entry.pointCounts }
+        }
+        if value.placement == nil { value.placement = entry.placement }
+        if value.points == nil { value.points = entry.points }
+    }
+    for (index, other) in page.entries.enumerated() where index != entryIndex {
+        let key = giriResultKey(other.text)
+        guard key.count >= 2, !records.contains(where: { giriResultKey($0.text) == key }) else { continue }
+        var record = AnswerRecord(text: other.text, placement: other.placement, points: other.points, voterCount: page.voterCount,
+                                  answerer: other.author.isEmpty ? "回答者不明" : other.author)
+        record.pointCounts = other.pointCounts
+        records.append(record)
+    }
+    output[noteIndex].answerRecords = records
+    output[noteIndex].usesAnswerRecords = true
+    return GiriNetResultApplication(stage: value, notes: output, foundOwn: entryIndex != nil, createdNote: created)
+}
+
+/// 0.34：ネットの結果画面がどの回か。画面のお題と同じお題の回 → 投票が終わって結果を入れていない最後の回 → 投票が終わった最後の回 → 最後の回。
+func giriNetResultRound(_ page: GiriNetResultPage, event: GiriEvent, notes: [ThoughtNote], results: [ResultStage], now: Date = Date()) -> EventRound? {
+    let rounds = event.effectiveRounds
+    let promptKey = giriResultKey(page.prompt)
+    if !promptKey.isEmpty, let note = notes.first(where: { note in
+        let key = giriResultKey(note.prompt)
+        return note.eventId == event.id && !key.isEmpty && (key == promptKey || key.hasPrefix(String(promptKey.prefix(8))) || promptKey.hasPrefix(String(key.prefix(8))))
+    }), let round = rounds.first(where: { $0.id == note.roundId }) { return round }
+    let finished = rounds.filter { ($0.votingEnd ?? .distantFuture) <= now }
+    if let open = finished.last(where: { round in !results.contains { $0.roundId == round.id && ($0.placement != nil || $0.points != nil) } }) { return open }
+    return finished.last ?? rounds.last
 }
 
 /// 0.33：勝ち進んでいない先の段階（敗退の後で、結果・メモがないもの）を隠すための判定。
