@@ -2766,7 +2766,34 @@ struct DomainRegression {
                       && tidy.tournamentResult?.stages.map(\.roundId) == ["q2", "q3"], "the cleanup keeps every recorded round and result")
             var both = messy; both.rounds = [round("a", "2回戦", 0), round("b", "予選2回戦", 1)]
             var recorded = ResultStage(); recorded.roundId = "a"; recorded.placement = 3
-            try check(giriRoundCleanup(both, results: [recorded], notedRoundIDs: ["b"]).isEmpty, "rounds that both have records are never merged")
+            var recordedToo = ResultStage(); recordedToo.roundId = "b"; recordedToo.placement = 5
+            try check(giriRoundCleanup(both, results: [recorded, recordedToo], notedRoundIDs: []).isEmpty, "rounds that both have results are never merged")
+
+            // 0.34.1: a duplicate with prompts or results is merged into the tournament's round, moving them.
+            var moving = messy
+            moving.rounds = [round("j", "3回戦", 5), round("k", "予選3回戦", 6)]
+            var junkResult = ResultStage(); junkResult.name = "3回戦"; junkResult.roundId = "j"; junkResult.stageId = "j"; junkResult.placement = 4
+            var emptyKept = ResultStage(); emptyKept.name = "予選3回戦"; emptyKept.roundId = "k"; emptyKept.stageId = "k"
+            moving.tournamentResult = TournamentResult(); moving.tournamentResult?.stages = [junkResult, emptyKept]
+            let movingItems = giriRoundCleanup(moving, results: moving.tournamentResult?.stages ?? [], notedRoundIDs: ["j"], now: day(0))
+            try check(movingItems.count == 1 && movingItems.first?.removeID == "j" && movingItems.first?.keepID == "k", "a duplicate with records is merged into the tournament's round")
+            let moved = giriApplyingRoundCleanup(movingItems, to: moving)
+            try check(moved.rounds.map(\.id) == ["k"] && moved.tournamentResult?.stages.count == 1 && moved.tournamentResult?.stages.first?.roundId == "k"
+                      && moved.tournamentResult?.stages.first?.placement == 4 && moved.tournamentResult?.stages.first?.name == "予選3回戦", "the result moves to the kept round")
+            var junkNote = ThoughtNote(); junkNote.kind = .answers; junkNote.title = "架空のお題"; junkNote.prompt = "架空のお題"
+            junkNote.eventId = moving.id; junkNote.roundId = "j"
+            try check(giriMovingRoundNotes([junkNote], eventID: moving.id, items: movingItems).first?.roundId == "k", "prompts move to the kept round")
+            let mergeDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriMergeRounds-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: mergeDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: mergeDirectory) }
+            let mergeStore = GiriStore(directory: mergeDirectory)
+            try mergeStore.saveEvent(moving)
+            try mergeStore.saveNote(junkNote)
+            try mergeStore.mergeDuplicateTournamentRounds(now: day(0))
+            try mergeStore.mergeDuplicateTournamentRounds(now: day(0))
+            try check(mergeStore.events.first { $0.id == moving.id }?.rounds.map(\.id) == ["k"] && mergeStore.notes.first { $0.id == junkNote.id }?.roundId == "k"
+                      && mergeStore.events.first { $0.id == moving.id }?.tournamentResult?.stages.first?.placement == 4,
+                      "opening the app merges the same rounds once, with their prompts and results")
             var cleanEvent = messy; cleanEvent.rounds = [round("q2", "予選2回戦", 3), round("q3", "予選3回戦", 6)]
             try check(giriRoundCleanup(cleanEvent, results: [], notedRoundIDs: [], now: day(0)).isEmpty, "tidy tournaments show no cleanup")
 

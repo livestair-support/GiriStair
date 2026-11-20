@@ -1505,20 +1505,24 @@ struct GiriRoundCleanupItem: Identifiable, Equatable {
     var removeID: String? = nil
     var renameID: String? = nil
     var newName: String? = nil
+    /// 0.34.1：まとめる先の回（消す回のお題/回答・結果をここへ移す）。
+    var keepID: String? = nil
     var id: String { (removeID ?? "") + "|" + (renameID ?? "") }
 }
 
 /// 0.34：0.32 で足した「2回戦」と大会の「予選2回戦」のように、同じ回が2つある大会の整理の候補。
-/// 消すのは結果もお題/回答もない回だけ。番号の回戦は大会の前の段階名にそろえる。
+/// 0.34.1：同じ回は、大会の名前の付け方の回（「予選2回戦」。日程・ブロックもこちら）に、お題/回答と結果を移してまとめる。
+/// 両方に結果がある時はまとめない。番号の回戦は大会の前の段階名にそろえる。
 /// 同じ回・名前の整理がある時だけ、前の回で通過していない、まだ始まっていない記録のない回も消す候補にする。
 func giriRoundCleanup(_ event: GiriEvent, results: [ResultStage], notedRoundIDs: Set<String>, now: Date = Date()) -> [GiriRoundCleanupItem] {
     let rounds = event.rounds
     guard event.meetingType == .tournament, rounds.count >= 2 else { return [] }
-    func hasContent(_ round: EventRound) -> Bool {
-        if notedRoundIDs.contains(round.id) || results.contains(where: { $0.roundId == round.id && $0.hasResultEntry }) { return true }
+    func hasResult(_ round: EventRound) -> Bool {
+        if results.contains(where: { $0.roundId == round.id && $0.hasResultEntry }) { return true }
         guard rounds.filter({ $0.effectiveStageId == round.effectiveStageId }).count == 1 else { return false }
         return results.contains { $0.roundId == nil && $0.stageId == round.effectiveStageId && $0.hasResultEntry }
     }
+    func hasContent(_ round: EventRound) -> Bool { notedRoundIDs.contains(round.id) || hasResult(round) }
     let numbered = rounds.compactMap { round in giriNumberedRound(round.name).map { (round: round, prefix: $0.prefix, number: $0.number) } }
     var counts: [String: Int] = [:]
     for item in numbered where !item.prefix.isEmpty { counts[item.prefix, default: 0] += 1 }
@@ -1527,15 +1531,12 @@ func giriRoundCleanup(_ event: GiriEvent, results: [ResultStage], notedRoundIDs:
     var handled = Set<String>()
     for item in numbered where item.prefix.isEmpty && !handled.contains(item.round.id) {
         if let partner = numbered.first(where: { !$0.prefix.isEmpty && $0.number == item.number && !$0.prefix.contains("準") && !handled.contains($0.round.id) }) {
-            let mine = hasContent(item.round), theirs = hasContent(partner.round)
-            if !mine {
-                items.append(GiriRoundCleanupItem(title: "「\(item.round.name)」を「\(partner.round.name)」にまとめる",
-                                                  detail: "同じ回です。記録のない「\(item.round.name)」を消します。", removeID: item.round.id))
-            } else if !theirs {
-                items.append(GiriRoundCleanupItem(title: "「\(item.round.name)」を「\(partner.round.name)」にまとめる",
-                                                  detail: "同じ回です。記録のある方を残し、名前を「\(partner.round.name)」にします。",
-                                                  removeID: partner.round.id, renameID: item.round.id, newName: partner.round.name))
-            } else { continue }
+            guard !(hasResult(item.round) && hasResult(partner.round)) else { continue }
+            let detail = hasContent(item.round)
+                ? "同じ回です。「\(item.round.name)」のお題/回答・結果を「\(partner.round.name)」に移して、「\(item.round.name)」を消します。"
+                : "同じ回です。記録のない「\(item.round.name)」を消します。"
+            items.append(GiriRoundCleanupItem(title: "「\(item.round.name)」を「\(partner.round.name)」にまとめる", detail: detail,
+                                              removeID: item.round.id, keepID: partner.round.id))
             handled.insert(item.round.id); handled.insert(partner.round.id)
         } else if let family {
             let name = family + "\(item.number)回戦"
@@ -1579,8 +1580,11 @@ func giriApplyingRoundCleanup(_ items: [GiriRoundCleanupItem], to event: GiriEve
 }
 
 /// 0.34：結果の記録の側（回の記録を消し、名前を変えた回の記録の名前も変える。使われなくなった段階の記録も消す）。
+/// 0.34.1：まとめる回の結果は、まとめる先の回（と段階）に移す（まとめる先に結果がない時だけ。空の記録は外す）。
 func giriApplyingRoundCleanup(_ items: [GiriRoundCleanupItem], to stages: [ResultStage], rounds: [EventRound]) -> [ResultStage] {
     let removeIDs = Set(items.compactMap(\.removeID))
+    var moves: [String: EventRound] = [:]
+    for item in items { if let id = item.removeID, let target = item.keepID, let round = rounds.first(where: { $0.id == target }) { moves[id] = round } }
     var renames: [String: (old: String, new: String)] = [:]
     for item in items {
         if let id = item.renameID, let name = item.newName, let round = rounds.first(where: { $0.id == id }) { renames[id] = (round.name, name) }
@@ -1588,10 +1592,20 @@ func giriApplyingRoundCleanup(_ items: [GiriRoundCleanupItem], to stages: [Resul
     let remaining = rounds.filter { !removeIDs.contains($0.id) }
     let usedStages = Set(remaining.map(\.effectiveStageId))
     let goneStages = Set(rounds.filter { removeIDs.contains($0.id) }.map(\.effectiveStageId)).subtracting(usedStages)
+    var stageMoves: [String: EventRound] = [:]
+    for (id, target) in moves { if let round = rounds.first(where: { $0.id == id }), goneStages.contains(round.effectiveStageId) { stageMoves[round.effectiveStageId] = target } }
     var stageRenames: [String: (old: String, new: String)] = [:]
     for (id, names) in renames { if let round = rounds.first(where: { $0.id == id }) { stageRenames[round.effectiveStageId] = names } }
-    return stages.compactMap { stage -> ResultStage? in
+    var filledRounds = Set<String>(), filledStages = Set<String>()
+    var output = stages.compactMap { stage -> ResultStage? in
         if let roundID = stage.roundId {
+            if let target = moves[roundID] {
+                guard stage.hasResultEntry, !stages.contains(where: { $0.roundId == target.id && $0.hasResultEntry }) else { return nil }
+                var copy = stage
+                copy.roundId = target.id; copy.stageId = target.effectiveStageId; copy.name = target.name
+                filledRounds.insert(target.id)
+                return copy
+            }
             guard !removeIDs.contains(roundID) else { return nil }
             guard let names = renames[roundID] else { return stage }
             var copy = stage
@@ -1599,6 +1613,14 @@ func giriApplyingRoundCleanup(_ items: [GiriRoundCleanupItem], to stages: [Resul
             return copy
         }
         if let stageID = stage.stageId {
+            if let target = stageMoves[stageID] {
+                let targetStage = target.effectiveStageId
+                guard stage.hasResultEntry, !stages.contains(where: { $0.roundId == nil && $0.stageId == targetStage && $0.hasResultEntry }) else { return nil }
+                var copy = stage
+                copy.stageId = targetStage; copy.name = target.name
+                filledStages.insert(targetStage)
+                return copy
+            }
             if goneStages.contains(stageID) && !stage.hasResultEntry { return nil }
             if let names = stageRenames[stageID], playerSearchKey(stage.name) == playerSearchKey(names.old) {
                 var copy = stage
@@ -1607,6 +1629,26 @@ func giriApplyingRoundCleanup(_ items: [GiriRoundCleanupItem], to stages: [Resul
             }
         }
         return stage
+    }
+    // 移した結果のある回・段階の、空の記録は外す（同じ回の記録を2つにしない）。
+    output.removeAll { stage in
+        guard !stage.hasResultEntry else { return false }
+        if let roundID = stage.roundId { return filledRounds.contains(roundID) }
+        return stage.stageId.map { filledStages.contains($0) } ?? false
+    }
+    return output
+}
+
+/// 0.34.1：まとめた回のお題/回答を、まとめる先の回に移す。
+func giriMovingRoundNotes(_ notes: [ThoughtNote], eventID: String, items: [GiriRoundCleanupItem]) -> [ThoughtNote] {
+    var moves: [String: String] = [:]
+    for item in items { if let id = item.removeID, let target = item.keepID { moves[id] = target } }
+    guard !moves.isEmpty else { return notes }
+    return notes.map { note in
+        guard note.eventId == eventID, let roundID = note.roundId, let target = moves[roundID] else { return note }
+        var copy = note
+        copy.roundId = target
+        return copy
     }
 }
 

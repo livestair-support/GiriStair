@@ -954,6 +954,27 @@ final class GiriStore: ObservableObject {
             }
         }
     }
+    /// 0.34.1：大会の回の整理（同じ回をまとめる・名前をそろえる・まだ進んでいない空の回を消す）を、
+    /// 大会とお題/回答にまとめて保存する（まとめた回のお題/回答・結果は、まとめる先の回へ移す）。
+    func applyRoundCleanup(_ eventID: String, items: [GiriRoundCleanupItem]) throws {
+        guard loaded else { throw GiriDataError.notLoaded }
+        guard let event = events.first(where: { $0.id == eventID }), !items.isEmpty else { return }
+        let updated = Self.normalizedEvent(giriApplyingRoundCleanup(items, to: event))
+        try updated.validate()
+        try mutate { next in
+            Self.upsert(updated, into: &next.events)
+            next.notes = giriMovingRoundNotes(next.notes, eventID: eventID, items: items)
+        }
+    }
+    /// 0.34.1：0.32 で足した「2回戦」と「予選2回戦」のような同じ回を、開いた時に自動でまとめる。
+    func mergeDuplicateTournamentRounds(now: Date = Date()) throws {
+        guard loaded else { return }
+        for event in events where event.meetingType == .tournament {
+            let noted = Set(notes.filter { $0.eventId == event.id }.compactMap(\.roundId))
+            let items = giriRoundCleanup(event, results: event.tournamentResult?.stages ?? [], notedRoundIDs: noted, now: now)
+            if !items.isEmpty { try applyRoundCleanup(event.id, items: items) }
+        }
+    }
     /// 「今回は見送る」：その回を参加しない記録として残す（見送りは参加回数・通知・結果入力の対象外）。
     /// 見送りを取り消すと、まだ決めていない状態に戻る。
     @discardableResult
