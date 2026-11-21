@@ -11,7 +11,7 @@ import time
 
 
 def pick_device():
-    """The newest iOS runtime's first iPhone; the same device for the early boot and the test run."""
+    """The newest iOS runtime's first iPhone."""
     data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "--json"]))
     runtimes = sorted(data["devices"], key=lambda x: tuple(map(int, re.findall(r"\d+", x))), reverse=True)
     device = next((d for runtime in runtimes if "iOS" in runtime for d in data["devices"][runtime]
@@ -21,21 +21,11 @@ def pick_device():
     return device
 
 
-def boot_in_background():
-    """Start booting the simulator while the app is being built (the boot takes over a minute)."""
-    device = pick_device()
-    print("Booting the UI regression simulator early:", device["name"], device["udid"], flush=True)
-    if device["state"] == "Shutdown":
-        subprocess.Popen(["xcrun", "simctl", "boot", device["udid"]], stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
-
-
 def main():
     device = pick_device()
     print("Native UI regression simulator:", device["name"], device["udid"], flush=True)
     if device["state"] == "Shutdown":
         subprocess.run(["xcrun", "simctl", "boot", device["udid"]], check=False, timeout=120)
-    # "-b" also boots a device that is not booted yet; it waits for a boot started earlier.
     subprocess.run(["xcrun", "simctl", "bootstatus", device["udid"], "-b"], check=True, timeout=240)
     log = Path("build/native/uitest.log")
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -108,8 +98,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import sys
-    if "--boot" in sys.argv[1:]:
-        boot_in_background()
-    else:
-        main()
+    main()

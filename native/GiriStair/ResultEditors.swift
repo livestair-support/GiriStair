@@ -493,12 +493,13 @@ struct GiriResultEntry: View {
     private func applyCleanup(_ items: [GiriRoundCleanupItem]) {
         guard let current = event, !items.isEmpty else { return }
         let before = current.rounds
-        let updated = giriApplyingRoundCleanup(items, to: current)
         store.run {
-            try giriEditorValidate(updated)
-            try store.saveEvent(updated)
+            // 0.34.1：まとめた回のお題/回答・結果は、まとめる先の回へ移す（大会とお題/回答を一緒に保存）。
+            try store.applyRoundCleanup(current.id, items: items)
             result.stages = giriApplyingRoundCleanup(items, to: result.stages, rounds: before)
             originalResult.stages = giriApplyingRoundCleanup(items, to: originalResult.stages, rounds: before)
+            answerNotes = giriMovingRoundNotes(answerNotes, eventID: current.id, items: items)
+            originalAnswerNotes = giriMovingRoundNotes(originalAnswerNotes, eventID: current.id, items: items)
             existing = existing.filter { id in result.stages.contains { $0.id == id } }
             playLiveStairSaveFeedback()
         }
@@ -2937,7 +2938,7 @@ struct GiriRoundCleanupSheet: View {
             Section {
                 AppCardSectionTitle(title: "回の整理", systemImage: "arrow.triangle.merge", accentColor: AppSectionAccent.artist,
                                     infoTitle: "回の整理について",
-                                    infoMessage: "同じ回が2つある時に、記録のない方を消してまとめます。結果・お題/回答は消しません。")
+                                    infoMessage: "同じ回が2つある時に、大会の名前の回にお題/回答・結果を移してまとめます。結果・お題/回答は消しません。")
                     .listRowSeparator(.hidden)
                 ForEach(items) { item in
                     Toggle(isOn: Binding(get: { selected.contains(item.id) }, set: { on in

@@ -87,6 +87,8 @@ private struct GiriRootView: View {
             if store.loaded { store.run { try store.ensureCurrentSiteCycles() } }
             // 0.19：1日1回、最初に開いた時に自動バックアップを作る（LiveStair と同じ）。
             GiriAutoBackup.runIfNeeded(store: store)
+            // 0.34.1：同じ回（「2回戦」と「予選2回戦」）をまとめる（バックアップの後）。
+            if store.loaded { store.run { try store.mergeDuplicateTournamentRounds() } }
             await NotificationsCoordinator.sync(store: store)
             promptForResult()
         }
@@ -98,6 +100,7 @@ private struct GiriRootView: View {
             if phase == .active {
                 if store.loaded { store.run { try store.ensureCurrentSiteCycles() } }
                 GiriAutoBackup.runIfNeeded(store: store)
+                if store.loaded { store.run { try store.mergeDuplicateTournamentRounds() } }
                 Task { await NotificationsCoordinator.sync(store: store) }
                 promptForResult()
             }
