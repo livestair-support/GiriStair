@@ -643,7 +643,8 @@ struct GiriEventDetail: View {
     private func thoughtsLink(_ event: GiriEvent) -> some View {
         Section {
             GiriEventCardSectionTitle(title: "お題・回答", systemImage: "lightbulb", accentColor: AppSectionAccent.memo).listRowSeparator(.hidden)
-            Button { navigation.openThoughts(eventID: event.id) } label: {
+            // 0.35：お題があれば回答を入れる画面、なければお題を入れる画面（ネットの会は今の回）。
+            Button { navigation.openPrompt(eventID: event.id) } label: {
                 HStack {
                     Label("お題/回答を開く", systemImage: "arrow.up.forward.square")
                     Spacer()
@@ -690,7 +691,7 @@ struct GiriEventDetail: View {
             scheduleValue("投票開始", round.votingStart)
             scheduleValue("投票締切", round.votingEnd)
             NavigationLink("日程を編集") { GiriRoundEditor(eventID: eventID, round: round) }
-            Button { navigation.openThoughts(eventID: eventID, roundID: round.id) } label: {
+            Button { navigation.openPrompt(eventID: eventID, roundID: round.id) } label: {
                 Label("この回のお題/回答を開く", systemImage: "lightbulb")
             }.tint(accentActionColor)
             if event.meetingType == .tournament {

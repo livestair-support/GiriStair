@@ -887,12 +887,14 @@ struct ThoughtNote: Codable, Equatable, Identifiable {
     var promptStyle: String = ""
     /// 0.16：このお題に参加したか（false は参加していないブロックのお題などを考えるため）。nil は以前の版で、参加として読む。
     var participates: Bool? = nil
+    /// 0.35：お題のページのURL（ネット大喜利の各お題）。空は以前の版と同じで、JSONに書かない。
+    var url: String = ""
 }
 
 extension ThoughtNote {
     private enum CodingKeys: String, CodingKey {
         case id, title, kind, createdAt, updatedAt, body, eventId, roundId, prompt, answers, used, imageDataBase64, answerRecords, isOthersAnswer, answerer, usesAnswerRecords, answerCategory
-        case promptAuthor, promptRevised, format, resultStageId, memo, promptStyle, participates
+        case promptAuthor, promptRevised, format, resultStageId, memo, promptStyle, participates, url
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -933,6 +935,7 @@ extension ThoughtNote {
         memo = try c.decodeIfPresent(String.self, forKey: .memo) ?? ""
         promptStyle = try c.decodeIfPresent(String.self, forKey: .promptStyle) ?? ""
         participates = try c.decodeIfPresent(Bool.self, forKey: .participates)
+        url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
 
         try validate()
     }
@@ -975,6 +978,7 @@ extension ThoughtNote {
         try c.encode(memo, forKey: .memo)
         try c.encode(promptStyle, forKey: .promptStyle)
         try c.encodeIfPresent(participates, forKey: .participates)
+        if !url.isEmpty { try c.encode(url, forKey: .url) }
     }
 }
 

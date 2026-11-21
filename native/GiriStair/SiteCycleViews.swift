@@ -181,56 +181,89 @@ struct GiriSitePastCycleEditor: View {
     }
 }
 
-/// Site status has one card boundary and one disclosure. Posting and voting
-/// can refer to different cycles, so neither is reduced to an ambiguous week.
-struct GiriSiteStatusCard: View {
-    @EnvironmentObject private var navigation: GiriNavigation
+/// 0.35：一覧のサイトのカード。大会のカードと同じ形にする（上に今の状況と締切、名前と札、下にシーズン・回・締切）。
+/// 投稿する・見送るはカードに出さず、サイト詳細の日程の「投稿する」で決める。
+struct GiriSiteListCard: View {
+    @EnvironmentObject private var store: GiriStore
     let site: OnlineSite
     let now: Date
-    /// 一覧のタブで詳細などへ遷移する（一覧側の NavigationStack に積む）。
-    var onRoute: ((GiriSiteRoute) -> Void)? = nil
-    @State private var showingSite = false
+    private var accent: Color { GiriEventPresentation.accent(site.format) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button { if let onRoute { onRoute(.detail(site.id)) } else { showingSite = true } } label: {
-                HStack(spacing: 9) {
-                    Image(systemName: "globe").foregroundStyle(AppSectionAccent.artist)
-                    Text(site.name).font(.headline).foregroundStyle(.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: "chevron.right").font(.subheadline.weight(.semibold)).foregroundStyle(.tertiary)
-                }.contentShape(Rectangle())
-            }.buttonStyle(.plain)
-            let league = siteLeague(site)
-            if site.hasAffiliations && !league.isEmpty {
-                Text(league).font(.subheadline).foregroundStyle(.secondary)
+        let cycles = siteSeasonCycles(site, events: store.events, now: now)
+        let featured = siteFeaturedCycle(cycles, now: now)
+        let status = siteListStatus(site, cycles: cycles, now: now)
+        GiriListCard(accentColor: accent) {
+            VStack(alignment: .leading, spacing: 7) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .center, spacing: 4) {
+                        GiriOnlineStatusLine(status: status)
+                            .frame(minWidth: 92, maxWidth: .infinity, alignment: .leading).layoutPriority(3)
+                        GiriListBadge(text: MeetingType.casual.title, color: GiriBadgeColors.meeting(.casual), fitsColumn: true)
+                            .frame(width: 70, alignment: .leading).offset(x: 2)
+                    }
+                    HStack(alignment: .top, spacing: 6) {
+                        Text(site.name)
+                            .font(.system(size: appFontSize(16), weight: .bold, design: .rounded))
+                            .foregroundStyle(.primary).multilineTextAlignment(.leading).lineLimit(2)
+                            .truncationMode(.tail)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if let badge = badge(featured, now: now) {
+                            GiriListBadge(text: badge.text, color: badge.color).frame(width: 70, alignment: .leading)
+                        }
+                    }
+                }
+                details(featured, status: status)
             }
-            GiriSitePeriodActions(site: site, now: now, onRoute: onRoute)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .appTintedCard(accentColor: AppSectionAccent.artist)
-        .sheet(isPresented: $showingSite) {
-            NavigationStack {
-                GiriSiteDetail(siteID: site.id)
-                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { showingSite = false } } }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// 札：参加した回は参加状況、見送った回は「見送り」、投稿中でまだ決めていない回は「未定」。
+    private func badge(_ cycle: SiteSeasonCycle?, now: Date) -> (text: String, color: Color)? {
+        guard let cycle else { return nil }
+        if let event = cycle.event, cycle.isJoined {
+            let state = event.participationState(now: now)
+            return state == .completed ? nil : (state.title, GiriBadgeColors.state(state))
+        }
+        if cycle.isSkipped { return ("見送り", Color.gray) }
+        return cycle.round.isSubmissionOpen(now) ? ("未定", Color.gray) : nil
+    }
+
+    /// 大会のカードの下の段と同じ：シーズン（リーグ）・回・投稿締切・投票締切。
+    private func details(_ cycle: SiteSeasonCycle?, status: GiriOnlineStatus) -> some View {
+        let season = [site.cycleSettings?.seasonName ?? "", site.hasAffiliations ? siteLeague(site, at: now) : ""].filter { !$0.isEmpty }
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Image(systemName: "globe").font(.caption2.weight(.semibold)).foregroundStyle(accent).frame(width: 15)
+                Text(season.isEmpty ? site.name : season.joined(separator: "・"))
+                    .font(.system(size: appFontSize(15), weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            if let cycle {
+                let block = cycle.round.block.isEmpty ? site.block : cycle.round.block
+                Text([cycle.title, block].filter { !$0.isEmpty }.joined(separator: "・"))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                if cycle.round.submissionEnabled, let end = cycle.round.submissionEnd {
+                    Text("投稿締切 \(GiriEventPresentation.dateTime(end))").font(.caption).foregroundStyle(.secondary)
+                }
+                if cycle.round.votingRequired, let end = cycle.round.votingEnd {
+                    Text("投票締切 \(GiriEventPresentation.dateTime(end))").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if status.phase == "シーズン終了" {
+                Text("新しいシーズンを作成できます").font(.caption.weight(.semibold)).foregroundStyle(accentActionColor)
+            } else if status.phase == "日程未設定" {
+                Text("投稿・投票の日程を設定してください").font(.caption).foregroundStyle(.secondary)
             }
         }
-        .onChange(of: navigation.selectedTab) { _, tab in if tab == 3 { showingSite = false } }
+        .padding(.trailing, 18)
     }
 }
 
-private struct SiteVisibleCycle: Identifiable {
-    let descriptor: SiteCycleDescriptor?
-    let event: GiriEvent?
-    let round: EventRound
-    let title: String
-    var id: String { (event?.id ?? descriptor?.cycleKey ?? "site") + ":" + round.id }
-}
-
-/// The same status/action rows are used by the index card and site detail.
-/// 投稿中の回は「参加する／今回は見送る」、投票中は参加した回だけ、終わった回は結果。
-/// 締切が決まっていないサイトとシーズンの終わりは、次の締切を1つ入れるだけで進める。
+/// 0.35：サイト詳細の日程。今のシーズンの回を全部（回数が分からない時は今の前後）並べ、
+/// 回ごとに「投稿する」のオン／オフで参加・見送りを決める。お題/回答と結果は参加した回だけ出す。
+/// シーズンの最後の回が終わったら、前のシーズンの登録を元に新しいシーズンを作るかを聞く。
 struct GiriSitePeriodActions: View {
     @EnvironmentObject private var store: GiriStore
     @EnvironmentObject private var navigation: GiriNavigation
@@ -244,11 +277,11 @@ struct GiriSitePeriodActions: View {
     @State private var resultEvent: GiriEvent?
     @State private var deadlineRequest: GiriSiteDeadlineRequest?
     /// 運営の都合で休みにする回（確認を出す）。
-    @State private var breakCycle: SiteVisibleCycle?
+    @State private var breakCycle: SiteSeasonCycle?
     /// 次のシーズンでルールが変わる時、締切の保存のあとに日程・ルールの設定を開く。
     @State private var setupAfterDeadline = false
     /// 0.28：タッグ部門のあるサイトで参加する回（シングル／タッグと相手を選んでから参加する）。
-    @State private var joiningCycle: SiteVisibleCycle?
+    @State private var joiningCycle: SiteSeasonCycle?
     @State private var joinDivision = ""
     @State private var joinPartner = ""
     private var usesTagDivision: Bool { site.currentRuleID.flatMap { store.rule($0) }?.tagDivision != nil || site.division == "tag" }
@@ -278,114 +311,157 @@ struct GiriSitePeriodActions: View {
         }
     }
 
-    private func cycles(now: Date) -> [SiteVisibleCycle] {
-        let events = store.events.filter { $0.onlineSiteId == site.id }
-        let descriptors = site.cycleSettings == nil ? [] : siteCycleDescriptors(site, around: now)
-        var values = descriptors.map { descriptor -> SiteVisibleCycle in
-            let event = events.first { $0.cycleKey == descriptor.cycleKey }
-            let round = event?.isActualParticipant == true ? event?.effectiveRounds.first ?? descriptor.round : descriptor.round
-            return SiteVisibleCycle(descriptor: descriptor, event: event, round: round, title: cycleTitle(descriptor: descriptor))
-        }
-        for event in events where event.isActualParticipant {
-            for round in event.effectiveRounds where !values.contains(where: { $0.event?.id == event.id && $0.round.id == round.id }) {
-                // 0.33：同じ回（1時間以内に始まる回）がもう出ている時は、2つ目を出さない。
-                let start = round.submissionStart ?? round.votingStart
-                if let start, values.contains(where: { value in
-                    (value.round.submissionStart ?? value.round.votingStart).map { abs($0.timeIntervalSince(start)) < 3600 } ?? false
-                }) { continue }
-                let title = [event.siteCycleNumber.map { "第\($0)回" } ?? "", event.sitePeriodKind == .regular ? "" : event.sitePeriodKind.title]
-                    .filter { !$0.isEmpty }.joined(separator: "・")
-                values.append(SiteVisibleCycle(descriptor: nil, event: event, round: round, title: title.isEmpty ? event.title : title))
-            }
-        }
-        return values.sorted { ($0.round.submissionStart ?? $0.round.votingStart ?? .distantPast) > ($1.round.submissionStart ?? $1.round.votingStart ?? .distantPast) }
-    }
-
-    /// 「第3回（全8回）」・特別週は名前。
-    private func cycleTitle(descriptor: SiteCycleDescriptor) -> String {
-        guard descriptor.kind == .regular, let number = descriptor.cycleNumber else { return descriptor.title }
-        if let last = site.cycleSettings?.regularCycleCount, site.recurrence == .weekly { return "第\(number)回（全\(last)回）" }
-        return "第\(number)回"
-    }
-
     @ViewBuilder private func periodRows(now: Date) -> some View {
-        let values = cycles(now: now)
-        let posting = values.filter { $0.round.isSubmissionOpen(now) }
-        // 投票中は、参加した回だけ（見送った回・決めていない回の投票は出さない）。
-        let voting = values.filter { $0.round.isVotingOpen(now) && $0.event?.isActualParticipant == true }
-        let seasonEnded = seasonFinished(now: now, values: values)
-        VStack(alignment: .leading, spacing: 10) {
-            if let seasonLabel = currentSeasonLabel { Text(seasonLabel).font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
-            ForEach(posting) { cycle in postingRow(cycle) }
-            if posting.isEmpty, let pause = siteCurrentBreak(site, now: now) { breakRow(pause) }
-            ForEach(voting) { cycle in votingRow(cycle) }
-            if posting.isEmpty && voting.isEmpty && !seasonEnded {
-                if site.cycleSettings == nil {
-                    Text("投稿・投票の日程を設定してください").font(.subheadline).foregroundStyle(.secondary)
-                    Button("日程を設定", systemImage: "calendar.badge.clock") { openSetup() }
-                        .font(.subheadline.weight(.semibold)).buttonStyle(.borderless).tint(accentActionColor)
-                } else if site.cycleSettings?.waitingForNext == true {
-                    Text("次のお題を待っています").font(.subheadline).foregroundStyle(.secondary)
-                } else if let next = values.filter({ ($0.round.submissionStart ?? .distantPast) > now }).min(by: { ($0.round.submissionStart ?? .distantFuture) < ($1.round.submissionStart ?? .distantFuture) }), let date = next.round.submissionStart {
-                    Text("次のお題　" + GiriDateText.dateTime(date) + " から").font(.subheadline).foregroundStyle(.secondary)
-                } else if let date = site.cycleSettings?.notBefore, date > now {
-                    Text("次のお題　" + GiriDateText.dateTime(date) + " から").font(.subheadline).foregroundStyle(.secondary)
-                } else {
-                    Text("今は投稿・投票の期間外です").font(.subheadline).foregroundStyle(.secondary)
-                }
-            }
-            if site.recurrence == .irregular && posting.isEmpty {
-                actionButton("次の回の締切を入れる", systemImage: "calendar.badge.plus") { deadlineRequest = .nextCycle }
-            } else if site.cycleSettings?.waitingForNext == true && posting.isEmpty && !seasonEnded {
+        let values = siteSeasonCycles(site, events: store.events, now: now)
+        let seasonEnded = siteSeasonHasEnded(site, rounds: values.map(\.round), now: now)
+        let active = values.contains { $0.round.isSubmissionOpen(now) || $0.round.isVotingOpen(now) }
+        VStack(alignment: .leading, spacing: 12) {
+            if let seasonLabel = currentSeasonLabel { Text(seasonLabel).font(.subheadline.weight(.semibold)) }
+            if seasonEnded { seasonEndPrompt }
+            if site.cycleSettings == nil {
+                Text("投稿・投票の日程を設定してください").font(.subheadline).foregroundStyle(.secondary)
+                actionButton("日程を設定", systemImage: "calendar.badge.clock") { openSetup() }
+            } else if site.cycleSettings?.waitingForNext == true && !active && !seasonEnded {
                 // シーズンの合間など：次のお題が分かったら締切を入れて再開する。
+                Text("次のお題を待っています").font(.subheadline).foregroundStyle(.secondary)
                 HStack(spacing: 16) {
                     actionButton("次のお題の締切を入れる", systemImage: "calendar.badge.plus") { deadlineRequest = .resume }
-                    if usesSeasons { actionButton("次のシーズンを始める", systemImage: "arrow.right.circle") { deadlineRequest = .nextSeason } }
+                    if usesSeasons { actionButton("新しいシーズンを作成", systemImage: "plus.circle") { deadlineRequest = .nextSeason } }
                 }
             }
-            if seasonEnded {
-                Text((site.cycleSettings?.seasonName.isEmpty == false ? site.cycleSettings?.seasonName ?? "" : "シーズン") + "の通常回が終わりました")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                HStack(spacing: 16) {
-                    actionButton("次のシーズンを始める", systemImage: "arrow.right.circle") { deadlineRequest = .nextSeason }
-                    actionButton("特別週を追加", systemImage: "plus.circle") { openSetup() }
-                }
+            if site.recurrence == .irregular && !values.contains(where: { $0.round.isSubmissionOpen(now) }) {
+                actionButton("次の回の締切を入れる", systemImage: "calendar.badge.plus") { deadlineRequest = .nextCycle }
             }
-            if let pending = pendingResult(now: now) {
-                Divider().overlay(appSeparatorColor)
-                Button { if let onRoute { onRoute(.cycleResult(pending.id)) } else { resultEvent = pending } } label: {
-                    HStack {
-                        Image(systemName: "square.and.pencil")
-                        Text("終わった回の結果を記録")
-                        Spacer(minLength: 8)
-                        if let number = pending.siteCycleNumber { Text("第\(number)回").foregroundStyle(.secondary) }
-                    }.font(.subheadline)
-                }.buttonStyle(.plain).tint(accentActionColor)
+            if let pause = siteCurrentBreak(site, now: now) { breakRow(pause) }
+            if values.isEmpty && site.cycleSettings != nil && site.cycleSettings?.waitingForNext != true {
+                Text("今は投稿・投票の期間外です").font(.subheadline).foregroundStyle(.secondary)
+            }
+            ForEach(values) { cycle in
+                if cycle.id != values.first?.id { Divider().overlay(appSeparatorColor) }
+                cycleBlock(cycle, now: now)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var usesSeasons: Bool {
-        guard let settings = site.cycleSettings else { return false }
-        return settings.seasonID != nil || !settings.seasonName.isEmpty || settings.trackSeasonTotals
+    /// シーズンの最後の回が終わった：前のシーズンの登録を元に、新しいシーズンを作るかを聞く。
+    private var seasonEndPrompt: some View {
+        let name = site.cycleSettings?.seasonName.isEmpty == false ? site.cycleSettings?.seasonName ?? "シーズン" : "シーズン"
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("\(name)が終わりました").font(.subheadline.weight(.semibold))
+            Text("新しいシーズンを作成しますか？前のシーズンの締切・回数・ルールを元に作り、違う所だけ直せます。")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 16) {
+                actionButton("新しいシーズンを作成", systemImage: "plus.circle") { deadlineRequest = .nextSeason }
+                actionButton("特別週を追加", systemImage: "calendar.badge.plus") { openSetup() }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppSectionAccent.artist.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
+
+    /// 1つの回：名前と状況、「投稿する」のオン／オフ、投稿・投票の日程、参加した回のお題/回答と結果。
+    private func cycleBlock(_ cycle: SiteSeasonCycle, now: Date) -> some View {
+        let phase = cyclePhase(cycle, now: now)
+        let ended = (cycle.end ?? .distantFuture) <= now
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(cycle.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    Text(phase.text).font(.caption.weight(.semibold)).foregroundStyle(phase.active ? AppSectionAccent.artist : Color.secondary)
+                }
+                Spacer(minLength: 8)
+                if !ended && (canBreak(cycle) || canFixNumber(cycle) || (!cycle.isJoined && !cycle.isSkipped)) {
+                    Menu {
+                        if !cycle.isJoined && !cycle.isSkipped {
+                            Button("見送りにする", systemImage: "forward") { skip(cycle) }
+                        }
+                        // 0.33：今の回の番号や締切がサイトと違う時は、現在の状況の編集で直す。
+                        if canFixNumber(cycle) {
+                            Button("第何回か・締切を直す", systemImage: "number") { openStatus() }
+                        }
+                        if canBreak(cycle) {
+                            Button("運営の都合で休み", systemImage: "moon.zzz") { breakCycle = cycle }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle").font(.subheadline).foregroundStyle(.secondary)
+                            .frame(width: 26, height: 22).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("この回のその他")
+                }
+                Text("投稿する").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                Toggle("投稿する", isOn: Binding(get: { cycle.isJoined }, set: { on in
+                    if on { requestJoin(cycle) } else { skip(cycle) }
+                }))
+                .labelsHidden()
+                .tint(AppSectionAccent.artist)
+            }
+            if cycle.round.submissionEnabled {
+                scheduleRow("投稿", start: cycle.round.submissionStart, end: cycle.round.submissionEnd)
+            }
+            if cycle.round.votingRequired {
+                scheduleRow("投票", start: cycle.round.votingStart, end: cycle.round.votingEnd)
+            }
+            if let event = cycle.event, cycle.isJoined {
+                Button {
+                    let round = event.effectiveRounds.first { $0.id == cycle.round.id } ?? event.effectiveRounds.first
+                    navigation.openPrompt(eventID: event.id, roundID: round?.id)
+                } label: {
+                    Label("お題/回答を開く", systemImage: "lightbulb").font(.subheadline)
+                }
+                .buttonStyle(.borderless).tint(accentActionColor)
+                if ended {
+                    Button { if let onRoute { onRoute(.cycleResult(event.id)) } else { resultEvent = event } } label: {
+                        HStack {
+                            Text("この回の結果").foregroundStyle(.primary)
+                            Spacer(minLength: 8)
+                            Text(resultSummary(event)).foregroundStyle(.secondary).lineLimit(1)
+                            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                        .font(.subheadline).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func scheduleRow(_ title: String, start: Date?, end: Date?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title).font(.caption).foregroundStyle(.secondary).frame(width: 30, alignment: .leading)
+            Text(GiriDateText.dateTime(start) + " 〜 " + GiriDateText.dateTime(end))
+                .font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(1).minimumScaleFactor(0.85)
+        }
+    }
+
+    /// 回の状況と、参加・見送り・未定。
+    private func cyclePhase(_ cycle: SiteSeasonCycle, now: Date) -> (text: String, active: Bool) {
+        var parts: [String] = []
+        let active = cycle.round.isSubmissionOpen(now) || cycle.round.isVotingOpen(now)
+        if cycle.round.isSubmissionOpen(now) { parts.append("投稿中") }
+        if cycle.round.isVotingOpen(now) { parts.append("投票中") }
+        if parts.isEmpty {
+            if let start = cycle.start, start > now { parts.append("開始前") } else { parts.append("終了") }
+        }
+        parts.append(cycle.isJoined ? "投稿する" : cycle.isSkipped ? "見送り" : "未定")
+        return (parts.joined(separator: "・"), active)
+    }
+
+    private func resultSummary(_ event: GiriEvent) -> String {
+        var parts: [String] = []
+        if !event.cycleResult.isEmpty { parts.append(event.cycleResult) }
+        if let rank = event.cyclePlacement { parts.append("\(rank)位") }
+        return parts.isEmpty ? "未入力" : parts.joined(separator: "・")
+    }
+
+    private var usesSeasons: Bool { siteUsesSeasons(site) }
 
     private var currentSeasonLabel: String? {
         guard let settings = site.cycleSettings, !settings.seasonName.isEmpty else { return nil }
         let league = site.hasAffiliations ? siteLeague(site) : ""
         return [settings.seasonName, league].filter { !$0.isEmpty }.joined(separator: "・")
-    }
-
-    /// シーズンの最後の通常回の投票が終わり、まだ次の回が来ていない。
-    private func seasonFinished(now: Date, values: [SiteVisibleCycle]) -> Bool {
-        guard let end = siteSeasonLastCycleEnd(site), end <= now else { return false }
-        return !values.contains { ($0.round.submissionStart ?? .distantPast) > now || $0.round.isSubmissionOpen(now) }
-    }
-
-    private func pendingResult(now: Date) -> GiriEvent? {
-        store.events.filter { $0.onlineSiteId == site.id && $0.isActualParticipant && $0.hasEnded(now: now) && !$0.hasCycleResult && !$0.promptedResultKeys.contains("cycle-result-skipped") }
-            .max { ($0.participationEndDate ?? .distantPast) < ($1.participationEndDate ?? .distantPast) }
     }
 
     private func openSetup() {
@@ -400,50 +476,7 @@ struct GiriSitePeriodActions: View {
         .tint(accentActionColor)
     }
 
-    private func postingRow(_ cycle: SiteVisibleCycle) -> some View {
-        let joined = cycle.event?.isActualParticipant == true
-        let skipped = cycle.event?.siteSkipped == true
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Label("投稿中", systemImage: "square.and.pencil")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(skipped ? Color.secondary : accentActionColor)
-                Spacer(minLength: 8)
-                if !cycle.title.isEmpty { Text(cycle.title).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.trailing) }
-                if canBreak(cycle) || canFixNumber(cycle) {
-                    Menu {
-                        // 0.33：今の回の番号や締切がサイトと違う時は、現在の状況の編集で直す。
-                        if canFixNumber(cycle) {
-                            Button("第何回か・締切を直す", systemImage: "number") { openStatus() }
-                        }
-                        if canBreak(cycle) {
-                            Button("運営の都合で休み", systemImage: "moon.zzz") { breakCycle = cycle }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle").font(.subheadline).foregroundStyle(.secondary)
-                            .frame(width: 26, height: 22).contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("この回のその他")
-                }
-            }
-            Text("締切 " + GiriDateText.dateTime(cycle.round.submissionEnd)).font(.caption).foregroundStyle(.secondary)
-            HStack(spacing: 16) {
-                if joined {
-                    actionButton("回答を考える", systemImage: "text.bubble") { open(cycle, join: true) }
-                    actionButton("今回は投稿しない", systemImage: "forward") { skip(cycle) }
-                } else if skipped {
-                    Text("見送り").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                    actionButton("やっぱり参加する", systemImage: "arrow.uturn.backward") { requestJoin(cycle) }
-                } else {
-                    actionButton("参加する", systemImage: "person.badge.plus") { requestJoin(cycle) }
-                    actionButton("今回は見送る", systemImage: "forward") { skip(cycle) }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// 運営の都合で休みの回：投稿期間のあいだ、カードに出して取り消せるようにする。
+    /// 運営の都合で休みの回：投稿期間のあいだ、取り消せるようにする。
     private func breakRow(_ round: EventRound) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("今回はお休み", systemImage: "moon.zzz")
@@ -458,7 +491,7 @@ struct GiriSitePeriodActions: View {
     }
 
     /// 0.33：番号の付く通常の回は、第何回か・締切を直せる（現在の状況の編集を開く）。
-    private func canFixNumber(_ cycle: SiteVisibleCycle) -> Bool {
+    private func canFixNumber(_ cycle: SiteSeasonCycle) -> Bool {
         guard site.recurrence == .weekly, site.cycleSettings?.waitingForNext != true, let descriptor = cycle.descriptor else { return false }
         return descriptor.kind == .regular && descriptor.cycleNumber != nil
     }
@@ -468,7 +501,7 @@ struct GiriSitePeriodActions: View {
     }
 
     /// 決まった間隔で出る通常の回だけ、休みにできる。
-    private func canBreak(_ cycle: SiteVisibleCycle) -> Bool {
+    private func canBreak(_ cycle: SiteSeasonCycle) -> Bool {
         guard site.recurrence == .weekly, let descriptor = cycle.descriptor else { return false }
         return descriptor.kind == .regular && !descriptor.cycleKey.hasPrefix("special:") && descriptor.round.submissionStart != nil
     }
@@ -482,7 +515,7 @@ struct GiriSitePeriodActions: View {
         Binding(get: { breakCycle != nil }, set: { if !$0 { breakCycle = nil } })
     }
 
-    private func markBreak(_ cycle: SiteVisibleCycle) {
+    private func markBreak(_ cycle: SiteSeasonCycle) {
         guard let start = cycle.descriptor?.round.submissionStart else { return }
         store.run {
             try store.setSiteCycleBreak(site.id, start: start, isBreak: true)
@@ -498,27 +531,7 @@ struct GiriSitePeriodActions: View {
         }
     }
 
-    private func votingRow(_ cycle: SiteVisibleCycle) -> some View {
-        Button { open(cycle, join: false) } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Label("投票中", systemImage: "checkmark.bubble")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AppSectionAccent.artist)
-                    Spacer(minLength: 8)
-                    if !cycle.title.isEmpty { Text(cycle.title).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.trailing) }
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("結果発表 " + GiriDateText.dateTime(cycle.round.votingEnd)).font(.caption).foregroundStyle(.secondary)
-                    Spacer(minLength: 8)
-                    Text("お題・回答を開く").font(.caption.weight(.semibold)).foregroundStyle(accentActionColor)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-        }.buttonStyle(.plain)
-    }
-
-    private func skip(_ cycle: SiteVisibleCycle) {
+    private func skip(_ cycle: SiteSeasonCycle) {
         store.run {
             try store.setSiteCycleSkipped(site.id, descriptor: cycle.descriptor, event: cycle.event, skipped: true)
             playLiveStairSaveFeedback()
@@ -526,15 +539,15 @@ struct GiriSitePeriodActions: View {
     }
 
     /// 0.28：タッグ部門のあるサイトは、参加する回ごとにシングル／タッグと相手を選ぶ。
-    private func requestJoin(_ cycle: SiteVisibleCycle) {
-        guard usesTagDivision else { open(cycle, join: true); return }
+    private func requestJoin(_ cycle: SiteSeasonCycle) {
+        guard usesTagDivision else { join(cycle); return }
         let last = giriLastTagPartner(site: site, events: store.events)
         joinDivision = site.division == "tag" ? "tag" : (cycle.event?.tagPartner.isEmpty == false ? "tag" : "")
         joinPartner = cycle.event?.tagPartner.isEmpty == false ? (cycle.event?.tagPartner ?? "") : last
         joiningCycle = cycle
     }
 
-    private func joinSheet(_ cycle: SiteVisibleCycle) -> some View {
+    private func joinSheet(_ cycle: SiteSeasonCycle) -> some View {
         Form {
             Section {
                 AppCardSectionTitle(title: "この回の参加", systemImage: "person.2", accentColor: AppSectionAccent.favorite)
@@ -551,14 +564,14 @@ struct GiriSitePeriodActions: View {
         }
         .appEditorFormStyle()
         .giriNavigationBarStyle()
-        .navigationTitle("参加する").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("投稿する").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { joiningCycle = nil } }
             ToolbarItem(placement: .confirmationAction) {
-                Button("参加する") {
+                Button("投稿する") {
                     let partner = joinDivision == "tag" ? joinPartner.trimmingCharacters(in: .whitespacesAndNewlines) : ""
                     joiningCycle = nil
-                    open(cycle, join: true, partner: partner, setsPartner: true)
+                    join(cycle, partner: partner, setsPartner: true)
                 }
                 .fontWeight(.bold)
                 .disabled(joinDivision == "tag" && joinPartner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -566,13 +579,15 @@ struct GiriSitePeriodActions: View {
         }
     }
 
-    private func open(_ cycle: SiteVisibleCycle, join: Bool, partner: String = "", setsPartner: Bool = false) {
+    /// 0.35：この回に参加する（お題/回答は開かない。開くのは「お題/回答を開く」から）。
+    private func join(_ cycle: SiteSeasonCycle, partner: String = "", setsPartner: Bool = false) {
         store.run {
             var event: GiriEvent
             if let descriptor = cycle.descriptor {
-                event = try store.createSiteCycle(site.id, descriptor: descriptor, join: join || cycle.event?.isActualParticipant == true)
+                let keys = Set(siteSeasonDescriptors(site, now: now).map(\.cycleKey))
+                event = try store.createSiteCycle(site.id, descriptor: descriptor, join: true, currentKeys: keys, now: now)
             } else if var existing = cycle.event {
-                if join && !existing.isActualParticipant {
+                if !existing.isActualParticipant {
                     existing.isParticipating = true; existing.isInterested = false; existing.siteSkipped = false; existing.status = .planned
                     try store.saveEvent(existing)
                 }
@@ -590,8 +605,7 @@ struct GiriSitePeriodActions: View {
                     try store.saveOnlineSite(updated)
                 }
             }
-            guard let round = event.effectiveRounds.first(where: { $0.id == cycle.round.id }) ?? event.effectiveRounds.first else { return }
-            navigation.openThoughts(eventID: event.id, roundID: round.id)
+            playLiveStairSaveFeedback()
         }
     }
 }
@@ -630,7 +644,7 @@ struct GiriSiteDeadlineSheet: View {
 
     private var pageTitle: String {
         switch request {
-        case .nextSeason: return "次のシーズン"
+        case .nextSeason: return "新しいシーズン"
         case .resume: return "次のお題"
         case .nextCycle: return "次の回"
         }

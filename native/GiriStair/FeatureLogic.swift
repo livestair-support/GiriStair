@@ -3726,6 +3726,28 @@ private func giriNetPointCounts(_ raw: String) -> [GiriPointCount] {
     return counts
 }
 
+/// 0.35：結果の行から、順位・得点・1人あたり・点の内訳・No.・人数を除いた残り。空なら数字だけの行（回答ではない）。
+func giriNetResultResidue(_ raw: String) -> String {
+    var text = giriHalfwidthAlphanumerics(raw)
+    let patterns = [#"\[?\s*No\.?\s*[0-9]+\s*\]?"#,
+                    #"[(（]\s*[0-9]+(?:\.[0-9]+)?\s*[)）]"#,
+                    #"(?<![0-9.])[1-9]\s*点\s*[0-9]{1,4}(?![0-9])"#,
+                    #"[0-9]+(?:\.[0-9]+)?\s*(?:点|位|名|人|票|pts?)"#,
+                    #"[0-9]+(?:\.[0-9]+)?"#,
+                    #"[\s·・,，、/／|｜:：\-－点]+"#]
+    for pattern in patterns {
+        text = text.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
+    }
+    return text
+}
+
+/// 0.35：結果の画面の下の案内（プライバシーポリシー・利用規約・お問い合わせ・コピーライト）。
+func giriIsResultPageFooter(_ raw: String) -> Bool {
+    if giriIsEventPageFooter(raw) { return true }
+    let value = raw.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+    return value.range(of: #"(プライバシーポリシー|利用規約|お問い?合わせ|©|Copyright|AllRightsReserved)"#, options: [.regularExpression, .caseInsensitive]) != nil
+}
+
 /// ネットの結果画面（回答ごとに「〇〇さんの作品」と順位・得点が並ぶ画面）を読む。
 /// サイトごとの決まった位置は使わず、作者の行を区切りにして、その前後の順位・得点・回答・内訳を集める。
 func giriNetResultPage(lines: [GiriOCRLine]) -> GiriNetResultPage {
@@ -3747,39 +3769,57 @@ func giriNetResultPage(lines: [GiriOCRLine]) -> GiriNetResultPage {
         }
         page.prompt = body.joined()
     }
+    // 0.35：ページの下の案内（プライバシーポリシー・お問い合わせ・コピーライトなど）から下は読まない。
+    // 最後の回答は、回答と回答の間の幅（中央値）までにして、下の広告などを回答に入れない。
+    let firstAnchorY = anchors.first.map { sorted[$0].midY } ?? 0
+    let footerY = sorted.first { $0.midY > firstAnchorY && giriIsResultPageFooter($0.text) }?.midY ?? .infinity
+    let gaps = zip(anchors, anchors.dropFirst()).map { sorted[$1].midY - sorted[$0].midY }.sorted()
+    let span = gaps.isEmpty ? Double.infinity : gaps[gaps.count / 2]
     for (order, index) in anchors.enumerated() {
         let anchor = sorted[index]
         guard let author = giriNetResultAuthor(anchor.text) else { continue }
         let lift = max(anchor.height * 1.5, 0.004)
         let top = anchor.midY - lift
-        let bottom = order + 1 < anchors.count ? sorted[anchors[order + 1]].midY - max(sorted[anchors[order + 1]].height * 1.5, 0.004) : .infinity
-        let region = sorted.enumerated().filter { $0.element.midY >= top && $0.element.midY < bottom }
+        let bottom = order + 1 < anchors.count ? sorted[anchors[order + 1]].midY - max(sorted[anchors[order + 1]].height * 1.5, 0.004)
+            : min(footerY, anchor.midY + span - lift)
+        let region = sorted.enumerated().filter { $0.element.midY >= top && $0.element.midY < bottom && $0.element.midY < footerY }
         var entry = GiriNetResultEntry(placement: nil, points: nil, author: author, text: "")
         entry.pointCounts = giriNetPointCounts(anchor.text)
         var numbers: [(x: Double, value: Int)] = []
+        var sameRow: [(x: Double, text: String)] = []
         var answer: [String] = []
+        let rowTolerance = max(anchor.height * 0.5, 0.002)
         for (position, line) in region {
             let value = giriHalfwidthAlphanumerics(line.text).trimmingCharacters(in: .whitespacesAndNewlines)
             let compact = value.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
             if position == index || compact.isEmpty { continue }
             if let number = Int(compact) { numbers.append((line.midX, number)); continue }
-            if entry.placement == nil, let groups = giriRegexGroups(#"^([0-9]+)位$"#, in: compact).first { entry.placement = Int(groups[1]); continue }
-            let counts = giriNetPointCounts(value)
-            let total = giriRegexGroups(#"^([0-9]+(?:\.[0-9]+)?)点(?:[(（]|$)"#, in: compact).first
-            if total != nil || counts.count >= 2 {
-                if entry.points == nil, let total { entry.points = Double(total[1]) }
-                if entry.pointCounts.isEmpty { entry.pointCounts = counts }
+            // 0.35：順位・得点・1人あたり・点の内訳・No.・人数だけの行は、回答にしない（内訳は1行に1つずつでも集める）。
+            if giriNetResultResidue(value).isEmpty {
+                if entry.placement == nil, let groups = giriRegexGroups(#"^([0-9]+)位"#, in: compact).first { entry.placement = Int(groups[1]) }
+                if entry.points == nil, let groups = giriRegexGroups(#"^([0-9]+(?:\.[0-9]+)?)点?(?:[(（][0-9.]+[)）])$"#, in: compact).first ?? giriRegexGroups(#"(?:^|[^0-9.])([0-9]+(?:\.[0-9]+)?)点(?:[(（]|$)"#, in: compact).first {
+                    entry.points = Double(groups[1])
+                }
+                for count in giriNetPointCounts(value) where !entry.pointCounts.contains(where: { $0.points == count.points }) {
+                    entry.pointCounts.append(count)
+                }
                 continue
             }
-            // 回答は作者の行より下の行（左の順位・得点の欄は除く）。
-            if line.midY > anchor.midY + anchor.height * 0.5, (line.minX ?? 1) >= (anchor.minX ?? 0) - 0.05 { answer.append(value) }
+            if abs(line.midY - anchor.midY) < rowTolerance {
+                // 表の形の結果は、作者と同じ行に回答が並ぶ。
+                sameRow.append((line.midX, value))
+            } else if line.midY > anchor.midY {
+                // 回答は作者の行より下の行。左右の位置は問わない（作者の名前だけが右にある画面もある）。
+                answer.append(value)
+            }
         }
         // 順位・得点が数字だけの欄（表の形の結果）は、左から順位・得点。
         let ordered = numbers.sorted { $0.x < $1.x }
         if entry.placement == nil, let first = ordered.first { entry.placement = first.value }
         if entry.points == nil, ordered.count >= 2 { entry.points = Double(ordered[1].value) }
         if entry.points == nil, !entry.pointCounts.isEmpty { entry.points = Double(entry.pointCounts.reduce(0) { $0 + $1.points * $1.count }) }
-        entry.text = answer.joined()
+        entry.pointCounts.sort { $0.points > $1.points }
+        entry.text = (sameRow.sorted { $0.x < $1.x }.map { $0.text } + answer).joined()
         page.entries.append(entry)
     }
     return page

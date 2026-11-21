@@ -1663,9 +1663,10 @@ struct GiriNetResultApplication {
 /// 0.34：ネットの結果画面を、回の記録とその回のお題/回答に入れる（入れていない欄だけ）。回答を入れていなくても読める。
 /// 自分の回答（出した回答の文か、作者が自分）を探し、順位・得点・投票人数・内訳を回答と回の記録に入れる。
 /// 出した回答がない時は、見つけた自分の回答を出した回答として足す。お題/回答がない回は、画面のお題でお題を作る。
-/// ほかの人の回答と得点も残す（同じ回答は足さない）。投稿数は出場人数にする。
+/// ほかの人の回答と得点は、`includeOthers` の時だけ残す（0.35：希望する時だけ。同じ回答は足さない）。投稿数は出場人数にする。
 func giriApplyingNetResult(_ page: GiriNetResultPage, stage: ResultStage, notes: [ThoughtNote], eventID: String, roundID: String,
-                           format: EventFormat, fallbackTitle: String, isSelf: (String) -> Bool, now: Date = Date()) -> GiriNetResultApplication {
+                           format: EventFormat, fallbackTitle: String, isSelf: (String) -> Bool, includeOthers: Bool = false,
+                           now: Date = Date()) -> GiriNetResultApplication {
     var value = stage
     var output = notes
     var created = false
@@ -1711,17 +1712,28 @@ func giriApplyingNetResult(_ page: GiriNetResultPage, stage: ResultStage, notes:
         if value.placement == nil { value.placement = entry.placement }
         if value.points == nil { value.points = entry.points }
     }
-    for (index, other) in page.entries.enumerated() where index != entryIndex {
-        let key = giriResultKey(other.text)
-        guard key.count >= 2, !records.contains(where: { giriResultKey($0.text) == key }) else { continue }
-        var record = AnswerRecord(text: other.text, placement: other.placement, points: other.points, voterCount: page.voterCount,
-                                  answerer: other.author.isEmpty ? "回答者不明" : other.author)
-        record.pointCounts = other.pointCounts
-        records.append(record)
+    if includeOthers {
+        records.append(contentsOf: giriOtherAnswerRecords(page, excluding: entryIndex, existing: records))
     }
     output[noteIndex].answerRecords = records
     output[noteIndex].usesAnswerRecords = true
     return GiriNetResultApplication(stage: value, notes: output, foundOwn: entryIndex != nil, createdNote: created)
+}
+
+/// 0.35：結果の画面のほかの人の回答（自分の回答と、もう入っている同じ回答は除く）。回答の文が読めなかったものは入れない。
+func giriOtherAnswerRecords(_ page: GiriNetResultPage, excluding ownIndex: Int?, existing: [AnswerRecord]) -> [AnswerRecord] {
+    var keys = Set(existing.map { giriResultKey($0.text) })
+    var output: [AnswerRecord] = []
+    for (index, other) in page.entries.enumerated() where index != ownIndex {
+        let key = giriResultKey(other.text)
+        guard key.count >= 2, !keys.contains(key) else { continue }
+        keys.insert(key)
+        var record = AnswerRecord(text: other.text, placement: other.placement, points: other.points, voterCount: page.voterCount,
+                                  answerer: other.author.isEmpty ? "回答者不明" : other.author)
+        record.pointCounts = other.pointCounts
+        output.append(record)
+    }
+    return output
 }
 
 /// 0.34：ネットの結果画面がどの回か。画面のお題と同じお題の回 → 投票が終わって結果を入れていない最後の回 → 投票が終わった最後の回 → 最後の回。
@@ -2082,4 +2094,157 @@ func giriRuleFromTemplate(_ template: GiriRule, now: Date = Date()) -> GiriRule 
     var rule = template.duplicated(now: now)
     rule.name = template.name
     return rule
+}
+
+// MARK: - 0.35 シーズンの日程と一覧のカードの状況
+
+/// 0.35：サイト詳細に出す今のシーズンの回。1シーズンの回数が分かる時は第1回から最後の回まで全部、
+/// 分からない時（シーズンがないサイトなど）は今の前後の回。特別な日程も入れる。並びは投稿開始の早い順。
+func siteSeasonDescriptors(_ site: OnlineSite, now: Date = Date(), calendar: Calendar = .current) -> [SiteCycleDescriptor] {
+    guard let settings = site.cycleSettings else { return [] }
+    var probes = [now]
+    if site.recurrence == .weekly, !settings.waitingForNext, let count = settings.regularCycleCount,
+       count >= settings.anchorCycleNumber, count <= 60 {
+        probes += (1...count).map { siteRegularCycleStart(settings, number: $0, calendar: calendar) }
+    }
+    var byKey: [String: SiteCycleDescriptor] = [:]
+    for probe in probes {
+        for descriptor in siteCycleDescriptors(site, around: probe, calendar: calendar) { byKey[descriptor.cycleKey] = descriptor }
+    }
+    let seasonal = siteUsesSeasons(site)
+    var values = byKey.values.filter { descriptor in
+        !seasonal || siteSameSeason(descriptor.seasonID, descriptor.seasonName, settings.seasonID, settings.seasonName)
+    }
+    // 前の決まりで作った同じ回（同じ番号・1時間以内に始まる回）が残っている時は、今の決まりの回だけにする。
+    let currentRevision = settings.ruleRevisionID
+    values = values.filter { descriptor in
+        guard descriptor.kind == .regular, descriptor.ruleRevisionID != currentRevision else { return true }
+        return !values.contains { other in
+            guard other.kind == .regular, other.ruleRevisionID == currentRevision, other.cycleKey != descriptor.cycleKey else { return false }
+            if let a = other.start, let b = descriptor.start, abs(a.timeIntervalSince(b)) < 3600 { return true }
+            return other.cycleNumber != nil && other.cycleNumber == descriptor.cycleNumber
+        }
+    }
+    return values.sorted {
+        let first = $0.start ?? .distantFuture, second = $1.start ?? .distantFuture
+        return first == second ? $0.cycleKey < $1.cycleKey : first < second
+    }
+}
+
+/// 0.35：今のシーズンの通常の回が全部終わったか（最後の回の投票が終わり、次の回が来ていない）。
+func siteSeasonHasEnded(_ site: OnlineSite, rounds: [EventRound], now: Date = Date()) -> Bool {
+    guard let end = siteSeasonLastCycleEnd(site), end <= now else { return false }
+    return !rounds.contains { ($0.submissionStart ?? .distantPast) > now || $0.isSubmissionOpen(now) || $0.isVotingOpen(now) }
+}
+
+/// 0.35：一覧のカードの上の行（「投稿中 投稿締切:日付」など）。
+struct GiriOnlineStatus: Equatable {
+    /// 投稿中・投票中・開始前・終了
+    var phase: String
+    /// 投稿締切・投票締切・投稿開始（空なら日付を出さない）
+    var label: String
+    var date: Date?
+    /// 投稿中・投票中
+    var isActive: Bool
+}
+
+/// 0.35：回の日程から、今の状況とその締切。投稿中（締切の早い回）→ 投票中 → 次の回の投稿開始 → 終わった最後の締切。
+func giriOnlineStatus(_ rounds: [EventRound], now: Date = Date()) -> GiriOnlineStatus? {
+    if let posting = rounds.filter({ $0.isSubmissionOpen(now) }).min(by: { ($0.submissionEnd ?? .distantFuture) < ($1.submissionEnd ?? .distantFuture) }) {
+        return GiriOnlineStatus(phase: "投稿中", label: "投稿締切", date: posting.submissionEnd, isActive: true)
+    }
+    if let voting = rounds.filter({ $0.isVotingOpen(now) }).min(by: { ($0.votingEnd ?? .distantFuture) < ($1.votingEnd ?? .distantFuture) }) {
+        return GiriOnlineStatus(phase: "投票中", label: "投票締切", date: voting.votingEnd, isActive: true)
+    }
+    if let next = rounds.compactMap({ round -> Date? in
+        let opens: Date? = round.submissionEnabled ? round.submissionStart : (round.votingStart ?? round.submissionStart)
+        guard let start = opens, start > now else { return nil }
+        return start
+    }).min() {
+        return GiriOnlineStatus(phase: "開始前", label: "投稿開始", date: next, isActive: false)
+    }
+    let ends = rounds.compactMap { round -> (Date, Bool)? in
+        if round.votingRequired, let end = round.votingEnd { return (end, true) }
+        if round.submissionEnabled, let end = round.submissionEnd { return (end, false) }
+        return nil
+    }
+    guard let last = ends.max(by: { $0.0 < $1.0 }) else { return nil }
+    return GiriOnlineStatus(phase: "終了", label: last.1 ? "投票締切" : "投稿締切", date: last.0, isActive: false)
+}
+
+/// 0.35：サイトの回（日程の回と、その回の記録）。記録がない回は、まだ決めていない回。
+struct SiteSeasonCycle: Identifiable {
+    var descriptor: SiteCycleDescriptor?
+    var event: GiriEvent?
+    var round: EventRound
+    var title: String
+    var id: String { (event?.id ?? descriptor?.cycleKey ?? "site") + ":" + round.id }
+    var isJoined: Bool { event?.isActualParticipant == true }
+    var isSkipped: Bool { event?.siteSkipped == true && !isJoined }
+    var start: Date? { round.submissionStart ?? round.votingStart }
+    var end: Date? { (round.votingRequired ? round.votingEnd : nil) ?? round.submissionEnd ?? round.votingEnd }
+}
+
+/// 「第3回（全8回）」・特別週は名前。
+func siteCycleTitle(_ site: OnlineSite, descriptor: SiteCycleDescriptor) -> String {
+    guard descriptor.kind == .regular, let number = descriptor.cycleNumber else { return descriptor.title }
+    if let last = site.cycleSettings?.regularCycleCount, site.recurrence == .weekly { return "第\(number)回（全\(last)回）" }
+    return "第\(number)回"
+}
+
+/// 0.35：サイト詳細と一覧のカードに出す回。今のシーズンの日程の回に、参加した回の記録を足す
+/// （シーズンがあるサイトは同じシーズンの回だけ、ないサイトは出している回より後か、今の回だけ）。
+/// 同じ回（1時間以内に始まる回）は2つ出さない。並びは投稿開始の早い順。
+func siteSeasonCycles(_ site: OnlineSite, events: [GiriEvent], now: Date = Date(), calendar: Calendar = .current) -> [SiteSeasonCycle] {
+    let siteEvents = events.filter { $0.onlineSiteId == site.id }
+    let descriptors = siteSeasonDescriptors(site, now: now, calendar: calendar)
+    var values = descriptors.map { descriptor -> SiteSeasonCycle in
+        let event = siteEvents.first { $0.cycleKey == descriptor.cycleKey }
+        let round = event?.isActualParticipant == true ? event?.effectiveRounds.first ?? descriptor.round : descriptor.round
+        return SiteSeasonCycle(descriptor: descriptor, event: event, round: round, title: siteCycleTitle(site, descriptor: descriptor))
+    }
+    let seasonal = siteUsesSeasons(site)
+    let settings = site.cycleSettings
+    let earliest = descriptors.compactMap(\.start).min()
+    for event in siteEvents where event.isActualParticipant {
+        if seasonal, let settings, !siteSameSeason(event.siteSeasonID, event.siteSeason, settings.seasonID, settings.seasonName) { continue }
+        for round in event.effectiveRounds where !values.contains(where: { $0.event?.id == event.id && $0.round.id == round.id }) {
+            let start = round.submissionStart ?? round.votingStart
+            let active = round.isSubmissionOpen(now) || round.isVotingOpen(now)
+            if !seasonal, !active, let earliest, let start, start < earliest { continue }
+            if let start, values.contains(where: { value in value.start.map { abs($0.timeIntervalSince(start)) < 3600 } ?? false }) { continue }
+            let title = [event.siteCycleNumber.map { "第\($0)回" } ?? "", event.sitePeriodKind == .regular ? "" : event.sitePeriodKind.title]
+                .filter { !$0.isEmpty }.joined(separator: "・")
+            values.append(SiteSeasonCycle(descriptor: nil, event: event, round: round, title: title.isEmpty ? event.title : title))
+        }
+    }
+    return values.sorted { first, second in
+        let a = first.start ?? .distantFuture, b = second.start ?? .distantFuture
+        return a == b ? first.id < second.id : a < b
+    }
+}
+
+/// 0.35：一覧のカードに出す回。投稿中（締切の早い回）→ 参加した投票中の回 → 次の回 → 終わった最後の回。
+func siteFeaturedCycle(_ cycles: [SiteSeasonCycle], now: Date = Date()) -> SiteSeasonCycle? {
+    if let posting = cycles.filter({ $0.round.isSubmissionOpen(now) }).min(by: { ($0.round.submissionEnd ?? .distantFuture) < ($1.round.submissionEnd ?? .distantFuture) }) {
+        return posting
+    }
+    if let voting = cycles.filter({ $0.isJoined && $0.round.isVotingOpen(now) }).min(by: { ($0.round.votingEnd ?? .distantFuture) < ($1.round.votingEnd ?? .distantFuture) }) {
+        return voting
+    }
+    if let next = cycles.filter({ ($0.start ?? .distantPast) > now }).min(by: { ($0.start ?? .distantFuture) < ($1.start ?? .distantFuture) }) {
+        return next
+    }
+    return cycles.filter { ($0.end ?? .distantFuture) <= now }.max { ($0.end ?? .distantPast) < ($1.end ?? .distantPast) }
+}
+
+/// 0.35：一覧のサイトのカードの上の行。投票中は参加した回だけ（見送った回・決めていない回の投票は出さない）。
+/// シーズンの最後の回が終わったら「シーズン終了」、次のお題を待っている間は「次のお題待ち」。
+func siteListStatus(_ site: OnlineSite, cycles: [SiteSeasonCycle], now: Date = Date()) -> GiriOnlineStatus {
+    guard let settings = site.cycleSettings else { return GiriOnlineStatus(phase: "日程未設定", label: "", date: nil, isActive: false) }
+    let rounds = cycles.filter { $0.isJoined || !$0.round.isVotingOpen(now) || $0.round.isSubmissionOpen(now) }.map(\.round)
+    if let status = giriOnlineStatus(rounds, now: now), status.isActive || status.phase == "開始前" { return status }
+    if siteSeasonHasEnded(site, rounds: cycles.map(\.round), now: now) { return GiriOnlineStatus(phase: "シーズン終了", label: "", date: nil, isActive: false) }
+    if let date = settings.notBefore, date > now { return GiriOnlineStatus(phase: "開始前", label: "投稿開始", date: date, isActive: false) }
+    return GiriOnlineStatus(phase: "次のお題待ち", label: "", date: nil, isActive: false)
 }

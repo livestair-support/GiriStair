@@ -237,7 +237,8 @@ struct GiriListView: View {
         // replace the collection view while UIKit is handling that selection.
         List {
             ForEach(visibleSites) { record in
-                GiriSiteStatusCard(site: record, now: now, onRoute: { siteRoute = $0 })
+                // 0.35：大会のカードと同じ形のサイトのカード。押すとサイト詳細（回ごとの日程と「投稿する」）を開く。
+                Button { siteRoute = .detail(record.id) } label: { GiriSiteListCard(site: record, now: now) }
                     .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets(top: record.id == visibleSites.first?.id ? 2 : 6, leading: 18, bottom: 6, trailing: 18))
                     .listRowSeparator(.hidden).listRowBackground(Color.clear)
@@ -258,7 +259,7 @@ struct GiriListView: View {
                 .listRowSeparator(.hidden).listRowBackground(Color.clear)
             }
             ForEach(eventCards) { event in
-                Button { destinationID = event.id } label: { GiriEventCard(event: event) }
+                Button { destinationID = event.id } label: { GiriEventCard(event: event, now: now) }
                     .buttonStyle(.plain)
                     .contextMenu {
                         Button { destinationID = event.id } label: { Label("詳細", systemImage: "info.circle") }
@@ -739,7 +740,13 @@ struct GiriEventCard: View {
     let event: GiriEvent
     var showsResult = false
     var resultActionTitle: String? = nil
+    /// 0.35：ネットの会の上の行（今の状況と締切）を出す時刻。一覧はページの時計を渡す。
+    var now: Date = Date()
     private var accent: Color { GiriEventPresentation.cardAccent(event) }
+    /// 0.35：日付の代わりに「投稿中 投稿締切:日付」を出す（ネットの回だけの会）。
+    private var showsOnlineStatus: Bool {
+        event.eventFormat.hasOnlineRounds && !event.eventFormat.hasLiveTiming && !event.effectiveRounds.isEmpty
+    }
     private var date: Date? { GiriEventPresentation.date(event) }
     private var venueRecord: GiriVenue? {
         store.venues.first { $0.id == event.venueId || $0.name == event.venue }
@@ -769,10 +776,16 @@ struct GiriEventCard: View {
     private var topArea: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 4) {
-                ViewThatFits(in: .horizontal) {
-                    dateLabel(compact: false).fixedSize(horizontal: true, vertical: false)
-                    dateLabel(compact: true).fixedSize(horizontal: true, vertical: false)
-                    dateLabel(compact: true).minimumScaleFactor(0.78)
+                Group {
+                    if showsOnlineStatus {
+                        GiriOnlineStatusLine(status: giriOnlineStatus(event.effectiveRounds, now: now))
+                    } else {
+                        ViewThatFits(in: .horizontal) {
+                            dateLabel(compact: false).fixedSize(horizontal: true, vertical: false)
+                            dateLabel(compact: true).fixedSize(horizontal: true, vertical: false)
+                            dateLabel(compact: true).minimumScaleFactor(0.78)
+                        }
+                    }
                 }
                 .frame(minWidth: 92, maxWidth: .infinity, alignment: .leading).layoutPriority(3)
                 if event.eventFormat.hasLiveTiming {
@@ -897,6 +910,31 @@ struct GiriEventCard: View {
             }
         }
         .padding(.trailing, 18)
+    }
+}
+
+/// 0.35：一覧のカードの上の行。ネットの会は日付の代わりに「投稿中 投稿締切:2026年11月25日(水)」と出す。
+/// 入りきらない時は日付を短くし（2026/11/25(水)）、それでも入らない時は少し小さくする。
+struct GiriOnlineStatusLine: View {
+    let status: GiriOnlineStatus?
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            line(compact: false).fixedSize(horizontal: true, vertical: false)
+            line(compact: true).fixedSize(horizontal: true, vertical: false)
+            line(compact: true).minimumScaleFactor(0.72)
+        }
+    }
+    private func line(compact: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(status?.phase ?? "日程未設定")
+                .foregroundStyle(status?.isActive == true ? AppSectionAccent.artist : Color.secondary)
+            if let status, !status.label.isEmpty, let date = status.date {
+                Text(status.label + ":" + GiriDateText.day(date, compact: compact))
+                    .foregroundStyle(GiriCalendarRules.dayColor(date, ordinary: .secondary))
+            }
+        }
+        .font(.system(size: appFontSize(14), weight: .bold, design: .rounded))
+        .lineLimit(1).allowsTightening(true)
     }
 }
 

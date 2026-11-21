@@ -92,6 +92,9 @@ struct GiriSiteDetail: View {
     /// 0.30：シーズンごとに日程・ルールを確認して次のシーズンを始める。
     @State private var nextSeasonRequest: GiriSiteDeadlineRequest?
     @State private var setupAfterNextSeason = false
+    /// 0.35：シーズンが終わった時に、新しいシーズンを作るかを聞く（同じシーズンでは一度だけ）。
+    @State private var askingNextSeason = false
+    @AppStorage("giriAskedNextSeasonKeys") private var askedNextSeasonKeys = ""
 
     private var site: OnlineSite? { store.onlineSites.first { $0.id == siteID } }
     // 参加した回と、見送りにした回（見送りは参加回数・成績に数えない）。
@@ -155,7 +158,7 @@ struct GiriSiteDetail: View {
                 if let site {
                     Menu {
                         if siteUsesSeasons(site) {
-                            Button("次のシーズンを始める", systemImage: "arrow.right.circle") { nextSeasonRequest = .nextSeason }
+                            Button("新しいシーズンを作成", systemImage: "plus.circle") { nextSeasonRequest = .nextSeason }
                         }
                         Button(site.isPaused ? "参加を再開する" : "しばらく休む", systemImage: site.isPaused ? "play.circle" : "pause.circle") {
                             let resuming = site.isPaused
@@ -180,6 +183,14 @@ struct GiriSiteDetail: View {
             store.run { try store.deleteOnlineSite(siteID); playLiveStairDeleteFeedback(); dismiss() }
         }
         .navigationDestination(item: $route) { GiriSiteRouteView(route: $0) }
+        // 0.35：シーズンの最後の回が終わったら、一度だけ新しいシーズンを作るかを聞く（あとでも日程の欄から作れる）。
+        .onAppear(perform: askNextSeasonIfNeeded)
+        .alert("新しいシーズンを作成しますか？", isPresented: $askingNextSeason) {
+            Button("作成する") { nextSeasonRequest = .nextSeason }
+            Button("あとで", role: .cancel) {}
+        } message: {
+            Text(seasonEndMessage)
+        }
         .sheet(item: $nextSeasonRequest, onDismiss: {
             guard setupAfterNextSeason else { return }
             setupAfterNextSeason = false
@@ -189,6 +200,23 @@ struct GiriSiteDetail: View {
                 NavigationStack { GiriSiteDeadlineSheet(site: site, request: request) { setupAfterNextSeason = true } }
             }
         }
+    }
+
+    private var seasonEndMessage: String {
+        let name = site?.cycleSettings?.seasonName ?? ""
+        return (name.isEmpty ? "シーズン" : name) + "が終わりました。前のシーズンの締切・回数・ルールを元に作り、違う所だけ直せます。"
+    }
+
+    private func askNextSeasonIfNeeded() {
+        guard let site, !site.isPaused, siteUsesSeasons(site), let settings = site.cycleSettings else { return }
+        let rounds = siteSeasonCycles(site, events: store.events).map(\.round)
+        guard siteSeasonHasEnded(site, rounds: rounds) else { return }
+        let key = site.id + ":" + (settings.seasonID ?? settings.seasonName)
+        var keys = askedNextSeasonKeys.split(separator: "\n").map(String.init)
+        guard !keys.contains(key) else { return }
+        keys.append(key)
+        askedNextSeasonKeys = keys.suffix(40).joined(separator: "\n")
+        askingNextSeason = true
     }
 
     private func statusPage(_ site: OnlineSite) -> some View {
@@ -208,7 +236,8 @@ struct GiriSiteDetail: View {
                     }
                 }
                 // 0.23：お題の出る週がずれた時などは「編集」から今の状態と締切を直す。
-                GiriDetailCard(title: "現在の状況", systemImage: "clock", accentColor: AppSectionAccent.artist, kind: .venue, trailing: {
+                // 0.35：今のシーズンの回を全部並べ、回ごとに「投稿する」のオン／オフで参加・見送りを決める。
+                GiriDetailCard(title: siteUsesSeasons(site) ? "このシーズンの日程" : "日程", systemImage: "calendar", accentColor: AppSectionAccent.artist, kind: .venue, trailing: {
                     Button("編集") { route = .status(site.id) }
                         .font(.subheadline)
                         .foregroundStyle(accentActionColor)
@@ -545,8 +574,7 @@ struct GiriSiteDetail: View {
     }
 
     private func openPrompts(_ event: GiriEvent) {
-        if let round = event.effectiveRounds.first { navigation.openThoughts(eventID: event.id, roundID: round.id) }
-        else { navigation.openThoughts(eventID: event.id) }
+        navigation.openPrompt(eventID: event.id, roundID: event.effectiveRounds.first?.id)
     }
 }
 

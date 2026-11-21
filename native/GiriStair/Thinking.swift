@@ -11,6 +11,8 @@ struct GiriThoughtCreation: Identifiable {
     var roundID: String? = nil
     var resultStageID: String? = nil
     var format: EventFormat? = nil
+    /// 0.35：保存したら、そのお題/回答の画面（回答を入れる画面）を開く。
+    var opensNote = false
 }
 
 // 回答モードは一覧・戦績と同じ形式タブ。長考は投稿中のお題で回答案を作り、
@@ -30,6 +32,8 @@ struct GiriThinkingView: View {
     @State private var editing: ThoughtNote?
     @State private var creating: GiriThoughtCreation?
     @State private var deleteCandidate: ThoughtNote?
+    /// 0.35：お題を入れる画面で保存したお題。シートを閉じたら、そのお題/回答の画面を開く。
+    @State private var createdNoteID: String?
     /// 0.23：履歴の並び（端末に残す）。
     @AppStorage("giriThoughtHistoryOrder") private var historyOrder = GiriThoughtHistoryOrder.newest.rawValue
 
@@ -43,10 +47,15 @@ struct GiriThinkingView: View {
             .sheet(item: $editing) { note in
                 NavigationStack { GiriThoughtEditor(note: note) }
             }
-            .sheet(item: $creating) { request in
+            .sheet(item: $creating, onDismiss: {
+                guard let id = createdNoteID else { return }
+                createdNoteID = nil
+                path = [.note(id)]
+            }) { request in
                 NavigationStack {
                     GiriThoughtEditor(kind: request.kind, eventID: request.eventID, roundID: request.roundID,
-                                      resultStageID: request.resultStageID, preferredFormat: request.format)
+                                      resultStageID: request.resultStageID, preferredFormat: request.format,
+                                      onCreated: request.opensNote ? { createdNoteID = $0 } : nil)
                 }
             }
             .navigationDestination(for: GiriThoughtDestination.self) { destination in
@@ -57,6 +66,7 @@ struct GiriThinkingView: View {
                 case .note(let id): GiriThoughtNotePage(noteID: id)
                 case .answerer(let name): GiriThoughtsForPerson(name: name, role: .answerer)
                 case .author(let name): GiriThoughtsForPerson(name: name, role: .author)
+                case .prompt(let eventID, _): GiriThoughtsForEvent(eventID: eventID)
                 }
             }
             .giriDeleteAlert(deleteCandidate.map(thoughtDeleteTitle) ?? "削除しますか？",
@@ -87,14 +97,41 @@ struct GiriThinkingView: View {
         switch destination {
         case .event(let id): eventID = id
         case .round(let id, _): eventID = id
+        case .prompt(let id, _): eventID = id
         default: eventID = nil
         }
         if let format = eventID.flatMap({ id in store.events.first { $0.id == id }?.eventFormat }),
            store.preferences.isFormatVisible(format) {
             selectedFormat = format
         }
-        path = [destination]
         navigation.thoughtDestination = nil
+        if case .prompt(let id, let roundID) = destination {
+            openPrompt(eventID: id, roundID: roundID)
+        } else {
+            path = [destination]
+        }
+    }
+
+    /// 0.35：会・回のお題/回答を開く。お題が1つ（参加したお題が1つ）ならお題/回答の画面（回答を入れる画面）、
+    /// お題がなければお題を入れる画面（保存したらお題/回答の画面へ）。お題が2つ以上ならその回・会のお題の一覧。
+    /// ネットの会で回を選んでいない時は、今の回（投稿中・投票中、なければいちばん新しい回）にする。
+    private func openPrompt(eventID: String, roundID: String?) {
+        guard let event = store.events.first(where: { $0.id == eventID }) else { path = []; return }
+        let round = roundID ?? (event.eventFormat.hasOnlineRounds ? thoughtNewestRound(event)?.id : nil)
+        let notes = store.notes.filter { note in
+            note.kind == .answers && note.eventId == eventID && (round.map { thoughtMatches(note, eventID: eventID, roundID: $0) } ?? true)
+        }.sorted { $0.createdAt > $1.createdAt }
+        let participating = notes.filter(\.isParticipatingPrompt)
+        if notes.count == 1 || participating.count == 1 {
+            path = [.note((participating.count == 1 ? participating[0] : notes[0]).id)]
+        } else if notes.isEmpty {
+            path = []
+            creating = GiriThoughtCreation(kind: .answers, eventID: eventID, roundID: round, format: event.eventFormat, opensNote: true)
+        } else if let round {
+            path = [.round(eventID: eventID, roundID: round)]
+        } else {
+            path = [.event(eventID)]
+        }
     }
 
     private var pageHeader: some View {
@@ -298,10 +335,17 @@ struct GiriThinkingView: View {
 
     @ViewBuilder private func postingGroup(_ posting: ThoughtPostingGroup, now: Date) -> some View {
         if posting.notes.isEmpty {
-            Button { path.append(.round(eventID: posting.event.id, roundID: posting.round.id)) } label: {
-                GiriListCard(accentColor: AppSectionAccent.artist) {
+            // 0.35：お題がまだない回は、お題を入れる画面を開く（保存したらお題/回答の画面へ）。
+            Button {
+                creating = GiriThoughtCreation(kind: .answers, eventID: posting.event.id, roundID: posting.round.id,
+                                               format: posting.event.eventFormat, opensNote: true)
+            } label: {
+                GiriListCard(accentColor: GiriEventPresentation.cardAccent(posting.event)) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(posting.event.title).font(.headline).foregroundStyle(.primary)
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            GiriListBadge(text: posting.event.meetingTitle, color: GiriBadgeColors.meeting(posting.event))
+                            Text(posting.event.title).font(.headline).foregroundStyle(.primary)
+                        }
                         Text(thoughtRoundLabel(event: posting.event, round: posting.round)).font(.subheadline).foregroundStyle(.secondary)
                         HStack {
                             Text("投稿中").font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
@@ -309,7 +353,7 @@ struct GiriThinkingView: View {
                                 Text("投稿締切 " + GiriDateText.compactDateTime(end)).font(.caption).foregroundStyle(.secondary)
                             }
                         }
-                        Label("お題・回答案を追加", systemImage: "plus.circle").font(.subheadline).foregroundStyle(accentActionColor)
+                        Label("お題を入れる", systemImage: "plus.circle").font(.subheadline).foregroundStyle(accentActionColor)
                     }.padding(.trailing, 18)
                 }
             }.buttonStyle(.plain).thoughtCardRow()
@@ -504,9 +548,17 @@ struct GiriThoughtsForEvent: View {
             search.isEmpty || round.name.localizedStandardContains(search) || notes.contains { thoughtMatches($0, eventID: eventID, roundID: round.id) }
         }
         ForEach(matching) { round in
-            NavigationLink(value: GiriThoughtDestination.round(eventID: eventID, roundID: round.id)) {
-                GiriThoughtRoundCard(event: event, round: round)
-            }.buttonStyle(.plain).thoughtCardRow()
+            // 0.35：お題が1つの回はお題/回答の画面、ない回はお題を入れる画面、2つ以上はその回のお題の一覧。
+            let roundNotes = store.notes.filter { $0.kind == .answers && thoughtMatches($0, eventID: eventID, roundID: round.id) }
+            if roundNotes.isEmpty {
+                Button { creating = GiriThoughtCreation(kind: .answers, eventID: eventID, roundID: round.id, format: event.eventFormat) } label: {
+                    GiriThoughtRoundCard(event: event, round: round)
+                }.buttonStyle(.plain).thoughtCardRow()
+            } else {
+                NavigationLink(value: roundNotes.count == 1 ? GiriThoughtDestination.note(roundNotes[0].id) : GiriThoughtDestination.round(eventID: eventID, roundID: round.id)) {
+                    GiriThoughtRoundCard(event: event, round: round)
+                }.buttonStyle(.plain).thoughtCardRow()
+            }
         }
         let loose = notes.filter { note in note.roundId == nil || !rounds.contains { $0.id == note.roundId } }
         ForEach(loose) { note in
@@ -637,7 +689,7 @@ private struct GiriThoughtRoundCard: View {
     let event: GiriEvent
     let round: EventRound
     var body: some View {
-        GiriListCard(accentColor: AppSectionAccent.artist) {
+        GiriListCard(accentColor: GiriEventPresentation.cardAccent(event)) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(thoughtRoundLabel(event: event, round: round)).font(.headline).foregroundStyle(.primary)
                 Text(thoughtPhase(event: event, round: round)).font(.subheadline.weight(.semibold)).foregroundStyle(AppSectionAccent.artist)
@@ -854,8 +906,13 @@ private struct GiriThoughtCard: View {
     let note: ThoughtNote
     let event: GiriEvent?
     var number: Int? = nil
+    /// 0.35：会のお題は、一覧のカードと同じく会の種類（大会・通常・企画など）の色にする。会のないお題・メモはメモの色。
+    private var accent: Color {
+        guard note.kind == .answers, let event else { return AppSectionAccent.memo }
+        return GiriEventPresentation.cardAccent(event)
+    }
     var body: some View {
-        GiriListCard(accentColor: AppSectionAccent.memo) {
+        GiriListCard(accentColor: accent) {
             // 0.23：画像のお題は、画像の横にお題だけを置き、会・状況・回答は画像の下から左詰めで出す。
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .top, spacing: 12) {
@@ -888,7 +945,10 @@ private struct GiriThoughtCard: View {
 
     @ViewBuilder private var answerSummary: some View {
         if let event, number == nil {
-            Text(event.title + thoughtPlaceLabel(note, event: event)).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                GiriListBadge(text: event.meetingTitle, color: GiriBadgeColors.meeting(event))
+                Text(event.title + thoughtPlaceLabel(note, event: event)).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+            }
             if event.eventFormat == .onlineLong, let round = thoughtRound(note, event: event) {
                 // 0.23：状況の横に、その状況の締切（年と、投稿・投票のどちらの締切か）を1行で出す。
                 let phase = thoughtPhase(event: event, round: round)
@@ -1428,10 +1488,13 @@ struct GiriThoughtEditor: View {
 
     /// 0.15：新しく作る時だけ true。登録済みのお題の編集には回答の欄を出さない（回答はお題の画面で足す・直す）。
     private let isNewNote: Bool
+    /// 0.35：新しいお題を保存した時に呼ぶ（お題/回答の画面を開く）。ある時は「回答を入れますか？」を聞かずに閉じる。
+    private let onCreated: ((String) -> Void)?
 
     init(note: ThoughtNote? = nil, kind: NoteKind = .answers, eventID: String? = nil, roundID: String? = nil,
-         resultStageID: String? = nil, preferredFormat: EventFormat? = nil) {
+         resultStageID: String? = nil, preferredFormat: EventFormat? = nil, onCreated: ((String) -> Void)? = nil) {
         isNewNote = note == nil
+        self.onCreated = onCreated
         var value = note ?? ThoughtNote()
         if note == nil {
             value.kind = kind
@@ -1652,6 +1715,15 @@ struct GiriThoughtEditor: View {
                     Label(recognizing ? "読み取り中" : "画像の文字を読み取る", systemImage: "text.viewfinder")
                 }
                 .disabled(recognizing || readingImage)
+            }
+            // 0.35：ネット大喜利は、お題ごとにお題のページのURLを入れられる。
+            if draft.kind == .answers && selectedFormat.hasOnlineRounds {
+                HStack(spacing: 8) {
+                    GiriEditorLabel("URL")
+                    TextField("お題のページ（任意）", text: $draft.url)
+                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .multilineTextAlignment(.trailing)
+                }
             }
             if draft.kind == .answers {
                 GiriPlayerSuggestionField(title: "作題者", text: $draft.promptAuthor, showsLabel: true, textAlignment: .trailing)
@@ -1931,6 +2003,7 @@ struct GiriThoughtEditor: View {
         saved.prompt = draft.kind == .free ? "" : primary
         saved.promptAuthor = draft.promptAuthor.trimmingCharacters(in: .whitespacesAndNewlines)
         if saved.promptAuthor.isEmpty { saved.promptRevised = false }
+        saved.url = draft.url.trimmingCharacters(in: .whitespacesAndNewlines)
         if draft.kind == .answers {
             // 0.8以降は1つのお題に自分の回答とツボをまとめ、回答者は各回答に持たせる。
             saved.answerRecords = own + others
@@ -1955,7 +2028,12 @@ struct GiriThoughtEditor: View {
         do {
             try store.saveNote(saved)
             playLiveStairSaveFeedback()
-            if isNewNote && draft.kind == .answers {
+            if isNewNote && draft.kind == .answers, let onCreated {
+                initial = saved
+                draft = saved
+                onCreated(saved.id)
+                dismiss()
+            } else if isNewNote && draft.kind == .answers {
                 savedNoteID = saved.id
                 initial = saved
                 draft = saved
@@ -2045,6 +2123,8 @@ struct GiriAnswerResultFields: View {
     /// 0.15：結果のページのスクリーンショットから、出した回答の順位・得点・投票人数を読む。
     @State private var resultPhoto: PhotosPickerItem?
     @State private var readingResult = false
+    /// 0.35：結果の画面のほかの人の回答は、希望する時だけ他人の回答に入れる。
+    @State private var readsOtherAnswers = false
     var body: some View {
         let submitted = records.filter { $0.isOwn && $0.isSubmitted }
         if submitted.isEmpty {
@@ -2057,23 +2137,14 @@ struct GiriAnswerResultFields: View {
             .disabled(readingResult)
             .tint(accentActionColor)
             .onChange(of: resultPhoto) { _, item in readResult(item) }
+            Toggle(isOn: $readsOtherAnswers) { GiriEditorLabel("ほかの人の回答も入れる") }
+                .tint(AppSectionAccent.ticket)
         }
         ForEach(submitted) { record in
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text(record.text).font(.subheadline.weight(.semibold)).lineLimit(4)
-                GiriIntegerField(title: "この回答の順位（任意）", value: recordBinding(record.id).placement, suffix: "位")
-                HStack {
-                    TextField("得点（任意）", value: recordBinding(record.id).points, format: .number).keyboardType(.decimalPad)
-                    Text("点").foregroundStyle(.secondary)
-                }
-                GiriIntegerField(title: "投票人数（任意）", value: recordBinding(record.id).voterCount, suffix: "人")
-                if let value = record.pointsPerVoter {
-                    LabeledContent("1人あたり", value: giriScoreText(value))
-                }
-                // 0.31：結果画面の点の内訳（何点に何人）。
-                if !record.pointCounts.isEmpty {
-                    LabeledContent("内訳", value: giriPointCountsText(record.pointCounts))
-                }
+                // 0.35：名前は左、値と単位は右にそろえる（ライブ登録の入力の行と同じ形）。
+                resultNumbers(record)
                 if !teammates.isEmpty {
                     // 0.28：チームで出した回答の原案（成績は原案の人に数える）。
                     // 空は「チーム」（チームで生んだ回答。誰の成績にも数えない）。
@@ -2091,16 +2162,44 @@ struct GiriAnswerResultFields: View {
         }
         // 0.28：チームメンバーの回答（他の人の回答で「チームメンバー」にしたもの）の結果。
         ForEach(records.filter { !$0.isOwn && $0.isTeammate }) { record in
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text(record.answerer).font(.caption.weight(.semibold)).foregroundStyle(AppSectionAccent.favorite)
                 Text(record.text).font(.subheadline.weight(.semibold)).lineLimit(4)
-                GiriIntegerField(title: "この回答の順位（任意）", value: recordBinding(record.id).placement, suffix: "位")
-                HStack {
-                    TextField("得点（任意）", value: recordBinding(record.id).points, format: .number).keyboardType(.decimalPad)
-                    Text("点").foregroundStyle(.secondary)
-                }
-                GiriIntegerField(title: "投票人数（任意）", value: recordBinding(record.id).voterCount, suffix: "人")
+                resultNumbers(record)
             }.padding(.vertical, 4)
+        }
+    }
+
+    /// 0.35：順位・得点・投票人数・1人あたり・内訳。名前は左に小さく灰色、値と単位は右にそろえる。
+    @ViewBuilder private func resultNumbers(_ record: AnswerRecord) -> some View {
+        resultRow("順位", unit: "位") {
+            TextField("未入力", value: recordBinding(record.id).placement, format: .number).keyboardType(.numberPad)
+        }
+        resultRow("得点", unit: "点") {
+            TextField("未入力", value: recordBinding(record.id).points, format: .number).keyboardType(.decimalPad)
+        }
+        resultRow("投票人数", unit: "人") {
+            TextField("未入力", value: recordBinding(record.id).voterCount, format: .number).keyboardType(.numberPad)
+        }
+        if let value = record.pointsPerVoter {
+            resultRow("1人あたり", unit: "点") { Text(giriScoreText(value)).monospacedDigit() }
+        }
+        // 0.31：結果画面の点の内訳（何点に何人）。
+        if !record.pointCounts.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                GiriEditorLabel("内訳")
+                Spacer(minLength: 8)
+                Text(giriPointCountsText(record.pointCounts)).font(.subheadline).multilineTextAlignment(.trailing)
+            }
+        }
+    }
+
+    private func resultRow<Field: View>(_ title: String, unit: String, @ViewBuilder field: () -> Field) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            GiriEditorLabel(title)
+            Spacer(minLength: 8)
+            field().multilineTextAlignment(.trailing).frame(maxWidth: 140, alignment: .trailing)
+            Text(unit).font(.subheadline).foregroundStyle(.secondary).frame(width: 18, alignment: .leading)
         }
     }
     /// 回答の文が載っている行の近くの「◯位」「◯点」と、ページの投票人数を、まだ入れていない欄にだけ入れる。
@@ -2113,7 +2212,7 @@ struct GiriAnswerResultFields: View {
                 guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
                 let lines = try await GiriParticipantOCR.recognizeLines(data)
                 // 0.31：回答ごとに「〇〇さんの作品」と順位・得点が並ぶ結果画面は、全部の回答を読み、
-                // 自分の回答の結果と内訳を入れて、ほかの人の回答と得点も残す。
+                // 自分の回答の結果と内訳を入れる（0.35：ほかの人の回答と得点は、希望した時だけ残す）。
                 if readFullPage(lines) { return }
                 let voters = giriVoterCountReading(lines: lines)
                 var found = 0
@@ -2147,14 +2246,9 @@ struct GiriAnswerResultFields: View {
         if records[target].voterCount == nil { records[target].voterCount = page.voterCount }
         if records[target].pointCounts.isEmpty { records[target].pointCounts = entry.pointCounts }
         onOwnResult?(records[target], page.submissionCount)
-        // ほかの人の回答（同じ回答はもう一度足さない）。
-        for (index, other) in page.entries.enumerated() where index != entryIndex {
-            let key = giriResultKey(other.text)
-            guard key.count >= 2, !records.contains(where: { giriResultKey($0.text) == key }) else { continue }
-            var record = AnswerRecord(text: other.text, placement: other.placement, points: other.points, voterCount: page.voterCount,
-                                      answerer: other.author.isEmpty ? "回答者不明" : other.author)
-            record.pointCounts = other.pointCounts
-            records.append(record)
+        // 0.35：ほかの人の回答は、希望した時だけ入れる（同じ回答はもう一度足さない）。
+        if readsOtherAnswers {
+            records.append(contentsOf: giriOtherAnswerRecords(page, excluding: entryIndex, existing: records))
         }
         return true
     }
@@ -2713,6 +2807,17 @@ struct GiriNoteSections: View {
                 }
                 .listRowSeparator(.hidden)
                 GiriThoughtNoteRows(note: note, event: event, onEdit: {}, part: .prompt)
+                // 0.35：お題のページ（入れてある時だけ）。
+                if let url = giriWebURL(note.url) {
+                    Link(destination: url) {
+                        HStack(spacing: 8) {
+                            Label("お題のページを開く", systemImage: "safari")
+                            Spacer(minLength: 8)
+                            Image(systemName: "arrow.up.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                    }
+                    .tint(accentActionColor)
+                }
             }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
         }
         Section {
