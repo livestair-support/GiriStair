@@ -9,6 +9,9 @@ enum GiriThoughtDestination: Hashable, Identifiable {
     case answerer(String)
     /// プレイヤー詳細から開く、その人が作ったお題。
     case author(String)
+    /// 0.35：会・回の「お題/回答を開く」。お題があればお題/回答の画面、なければお題を入れる画面を開く。
+    /// お題/回答のタブで行き先を決めてから積む（この値は積まない）。
+    case prompt(eventID: String, roundID: String?)
 
     var id: String {
         switch self {
@@ -18,6 +21,7 @@ enum GiriThoughtDestination: Hashable, Identifiable {
         case .round(let eventID, let roundID): return "round:\(eventID):\(roundID)"
         case .answerer(let name): return "answerer:\(name)"
         case .author(let name): return "author:\(name)"
+        case .prompt(let eventID, let roundID): return "prompt:\(eventID):\(roundID ?? "")"
         }
     }
 }
@@ -86,6 +90,8 @@ final class GiriNavigation: ObservableObject {
     func openThoughts(siteID: String) { open(.site(siteID)) }
     func openThoughts(eventID: String, roundID: String) { open(.round(eventID: eventID, roundID: roundID)) }
     func openThought(noteID: String) { open(.note(noteID)) }
+    /// 0.35：会・回のお題/回答。お題が入っていれば回答を入れる画面、入っていなければお題を入れる画面。
+    func openPrompt(eventID: String, roundID: String? = nil) { open(.prompt(eventID: eventID, roundID: roundID)) }
     func openThoughts(answerer: String) { open(.answerer(answerer)) }
     func openThoughts(author: String) { open(.author(author)) }
 

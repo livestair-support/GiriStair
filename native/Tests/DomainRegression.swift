@@ -679,6 +679,26 @@ struct DomainRegression {
             try check(newPrompt.count == 1 && newPrompt[0].cycleNumber == 1 && newPrompt[0].seasonName == "第2シーズン" && newPrompt[0].round.submissionEnd == day(35), "the new season's first prompt uses the entered deadline")
             try check(siteCycleDescriptors(nextSeason, around: day(22)).first { $0.cycleNumber == 3 }?.seasonName == "第1シーズン", "the previous season's last prompt keeps its season")
 
+            // 0.35: the site detail lists every prompt of the season; the list card shows the state and deadline.
+            let seasonDescriptors = siteSeasonDescriptors(firstSeason, now: day(2))
+            try check(seasonDescriptors.compactMap(\.cycleNumber) == [1, 2, 3] && seasonDescriptors.first?.round.submissionStart == day(0),
+                      "the detail lists every regular prompt of the season")
+            let undecidedCycles = siteSeasonCycles(firstSeason, events: [], now: day(2))
+            try check(undecidedCycles.count == 3 && !undecidedCycles.contains(where: \.isJoined) && siteFeaturedCycle(undecidedCycles, now: day(2))?.descriptor?.cycleNumber == 1,
+                      "undecided prompts are listed and the posting one is featured")
+            let postingStatus = siteListStatus(firstSeason, cycles: undecidedCycles, now: day(2))
+            try check(postingStatus.phase == "投稿中" && postingStatus.label == "投稿締切" && postingStatus.date == day(7), "the card shows the posting deadline")
+            let endedCycles = siteSeasonCycles(firstSeason, events: [], now: day(30))
+            try check(siteSeasonHasEnded(firstSeason, rounds: endedCycles.map(\.round), now: day(30)) && siteListStatus(firstSeason, cycles: endedCycles, now: day(30)).phase == "シーズン終了",
+                      "after the last vote the card says the season ended")
+            try check(siteSeasonDescriptors(nextSeason, now: day(29)).allSatisfy { $0.seasonName == "第2シーズン" }, "the new season lists only its own prompts")
+            var statusRound = EventRound(id: "status"); statusRound.submissionStart = day(0)
+            statusRound = completeRoundSchedule(statusRound, submissionDays: 7, votingDays: 7)
+            try check(giriOnlineStatus([statusRound], now: day(3)) == GiriOnlineStatus(phase: "投稿中", label: "投稿締切", date: day(7), isActive: true)
+                      && giriOnlineStatus([statusRound], now: day(9)) == GiriOnlineStatus(phase: "投票中", label: "投票締切", date: day(14), isActive: true)
+                      && giriOnlineStatus([statusRound], now: day(-1))?.label == "投稿開始" && giriOnlineStatus([statusRound], now: day(20))?.phase == "終了",
+                      "tournament cards show the state with its deadline")
+
             var irregularSite = OnlineSite(id: "simple-irregular", name: "不定期のサイト", recurrence: .irregular)
             irregularSite.votingDays = 3
             irregularSite.cycleSettings = SiteCycleSettings()
@@ -2450,6 +2470,24 @@ struct DomainRegression {
             try check(table.entries.map(\.placement) == [1, 2] && table.entries.map(\.points) == [39, 36] && table.entries.map(\.author) == ["はるか", "たろう"]
                       && table.entries[0].text == "最初の回答" && table.entries[0].pointCounts == [GiriPointCount(points: 4, count: 1), GiriPointCount(points: 3, count: 3), GiriPointCount(points: 2, count: 8)],
                       "table-shaped results read rank and points from the left columns")
+            // 0.35: the author alone on the right, breakdowns split into pieces, a ratio line and a page footer (fictional site).
+            let splitPage = [at("1", x: 0.05, y: 0.30, left: 0.04), at("168", x: 0.12, y: 0.30, left: 0.10), at("(1.06)", x: 0.12, y: 0.315, left: 0.10),
+                             at("[No.12]", x: 0.25, y: 0.30, left: 0.2), at("4点5", x: 0.35, y: 0.30, left: 0.32), at("3点16", x: 0.43, y: 0.30, left: 0.40),
+                             at("2点50", x: 0.51, y: 0.30, left: 0.48), at("はるかさんの作品", x: 0.75, y: 0.30, left: 0.6),
+                             at("架空の長い回答の一行目", x: 0.45, y: 0.32, left: 0.2), at("二行目です", x: 0.3, y: 0.335, left: 0.2),
+                             at("2", x: 0.05, y: 0.40, left: 0.04), at("120", x: 0.12, y: 0.40, left: 0.10),
+                             at("4点3", x: 0.35, y: 0.40, left: 0.32), at("たろうさんの作品", x: 0.75, y: 0.40, left: 0.6),
+                             at("別の回答", x: 0.3, y: 0.42, left: 0.2), at("129名", x: 0.5, y: 0.47, left: 0.45),
+                             at("架空の広告キャンペーン中！", x: 0.5, y: 0.55, left: 0.2),
+                             at("プライバシーポリシー", x: 0.5, y: 0.60, left: 0.3), at("© 2026 架空サイト", x: 0.5, y: 0.62, left: 0.3)]
+            let split = giriNetResultPage(lines: splitPage)
+            try check(split.entries.map(\.text) == ["架空の長い回答の一行目二行目です", "別の回答"] && split.entries.map(\.author) == ["はるか", "たろう"],
+                      "answers are read even when the author is on the right, and the footer and ads are left out")
+            try check(split.entries.map(\.placement) == [1, 2] && split.entries.map(\.points) == [168, 120]
+                      && split.entries[0].pointCounts == [GiriPointCount(points: 4, count: 5), GiriPointCount(points: 3, count: 16), GiriPointCount(points: 2, count: 50)],
+                      "split breakdowns and ratios are numbers, not answer text")
+            try check(giriNetResultResidue("(0.33) 4点0 3点2 2点9").isEmpty && giriNetResultResidue("129名").isEmpty && !giriNetResultResidue("3点セット").isEmpty
+                      && giriIsResultPageFooter("© 2026 架空サイト") && !giriIsResultPageFooter("架空の回答"), "only number lines and footers are dropped")
 
             var record = AnswerRecord(text: "回答")
             let plainRecord = try JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any] ?? [:]
@@ -2807,7 +2845,17 @@ struct DomainRegression {
                       "a result screen fills the round without registered answers")
             try check(fresh.notes.count == 1 && fresh.notes[0].prompt == "架空のお題です" && fresh.notes[0].roundId == "q4"
                       && fresh.notes[0].answerRecords.filter(\.isOwn).map(\.text) == ["自分の架空の回答"] && fresh.notes[0].answerRecords.filter(\.isOwn).first?.isSubmitted == true
-                      && fresh.notes[0].answerRecords.contains { $0.answerer == "はるか" && $0.placement == 1 }, "the prompt, my answer and other answers are added")
+                      && !fresh.notes[0].answerRecords.contains { !$0.isOwn }, "the prompt and my answer are added; other answers only when chosen")
+            let withOthers = giriApplyingNetResult(page, stage: roundRecord, notes: [], eventID: messy.id, roundID: "q4", format: .onlineLong,
+                                                   fallbackTitle: "予選4回戦", isSelf: { $0 == "わたし" }, includeOthers: true)
+            try check(withOthers.notes[0].answerRecords.contains { $0.answerer == "はるか" && $0.placement == 1 }, "other answers are added when chosen")
+
+            // 0.35: a prompt's page URL is written only when set.
+            var linked = ThoughtNote(); linked.title = "架空のお題"; linked.prompt = "架空のお題"
+            let plainNote = try JSONSerialization.jsonObject(with: JSONEncoder().encode(linked)) as? [String: Any] ?? [:]
+            try check(plainNote["url"] == nil, "prompts without a page keep the older JSON shape")
+            linked.url = "https://example.com/odai/1"
+            try check(try JSONDecoder().decode(ThoughtNote.self, from: JSONEncoder().encode(linked)).url == linked.url, "a prompt's page roundtrips")
             var existingNote = fresh.notes[0]; existingNote.answerRecords = [AnswerRecord(text: "自分の架空の回答", isSubmitted: true)]
             let again = giriApplyingNetResult(page, stage: roundRecord, notes: [existingNote], eventID: messy.id, roundID: "q4", format: .onlineLong,
                                               fallbackTitle: "予選4回戦", isSelf: { _ in false })

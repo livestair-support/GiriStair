@@ -205,6 +205,8 @@ struct GiriResultEntry: View {
     /// 0.34：ネット長考の結果の画面の読み取り（お題から回を探す）。
     @State private var netResultPhoto: PhotosPickerItem?
     @State private var readingNetResult = false
+    /// 0.35：結果の画面のほかの人の回答は、希望する時だけ他人の回答に入れる。
+    @State private var readsOtherAnswers = false
     /// 0.34：同じ回・まだ進んでいない回の整理。
     @State private var cleanupRequest: GiriRoundCleanupRequest?
     @State private var leave = false
@@ -411,7 +413,7 @@ struct GiriResultEntry: View {
         return Section {
             AppCardSectionTitle(title: "結果を読み取る", systemImage: "text.viewfinder", accentColor: AppSectionAccent.scan,
                                 infoTitle: "読み取りについて",
-                                infoMessage: long ? "サイトの結果の画面のスクショから、その回の順位・得点・投票人数・投稿数と回答を読みます。回はお題から探します。"
+                                infoMessage: long ? "サイトの結果の画面のスクショから、その回の順位・得点・投票人数・投稿数と自分の回答を読みます。回はお題から探します。"
                                                   : "noteなどの結果の記事から、ルール（段階・形式・勝ち抜け）と結果をまとめて読みます。段階は同じ名前でそろえます。")
                 .listRowSeparator(.hidden)
             if long {
@@ -424,6 +426,8 @@ struct GiriResultEntry: View {
                 .disabled(readingNetResult)
                 .tint(accentActionColor)
                 .onChange(of: netResultPhoto) { _, item in readNetResult(item, event: event) }
+                Toggle(isOn: $readsOtherAnswers) { GiriEditorLabel("ほかの人の回答も入れる") }
+                    .tint(AppSectionAccent.scan)
             } else {
                 articleReadRows(event)
             }
@@ -477,11 +481,15 @@ struct GiriResultEntry: View {
                 }
                 let noteIndices = answerNotes.indices.filter { answerNotes[$0].eventId == event.id && answerNotes[$0].roundId == round.id }
                 let applied = giriApplyingNetResult(page, stage: result.stages[index], notes: noteIndices.map { answerNotes[$0] }, eventID: event.id,
-                                                    roundID: round.id, format: event.eventFormat, fallbackTitle: round.name, isSelf: store.preferences.isSelf)
+                                                    roundID: round.id, format: event.eventFormat, fallbackTitle: round.name, isSelf: store.preferences.isSelf,
+                                                    includeOthers: readsOtherAnswers)
                 result.stages[index] = applied.stage
                 for (offset, noteIndex) in noteIndices.enumerated() { answerNotes[noteIndex] = applied.notes[offset] }
                 if applied.notes.count > noteIndices.count { answerNotes.append(contentsOf: applied.notes[noteIndices.count...]) }
-                if !applied.foundOwn { store.errorMessage = "自分の回答が見つからなかったので、投稿数・投票人数とほかの人の回答だけ入れました。" }
+                if !applied.foundOwn {
+                    store.errorMessage = readsOtherAnswers ? "自分の回答が見つからなかったので、投稿数・投票人数とほかの人の回答だけ入れました。"
+                        : "自分の回答が見つからなかったので、投稿数・投票人数だけ入れました。"
+                }
                 playLiveStairSaveFeedback()
                 closeAfterSave = false
                 editingStageID = result.stages[index].id
@@ -1565,6 +1573,8 @@ struct GiriStageEditor: View {
     @State private var resultPhoto: PhotosPickerItem?
     @State private var readingResult = false
     @State private var readMessage: String?
+    /// 0.35：結果の画面のほかの人の回答は、希望する時だけ他人の回答に入れる。
+    @State private var readsOtherAnswers = false
 
     private var isStageWide: Bool { stage.roundId == nil }
     /// 0.28：この段階のチームのメンバー（自分を除く。入力中の段階のメンバーを使う）。
@@ -1699,7 +1709,7 @@ struct GiriStageEditor: View {
         Section {
             AppCardSectionTitle(title: "結果の画面", systemImage: "text.viewfinder", accentColor: AppSectionAccent.scan,
                                 infoTitle: "結果の画面の読み取り",
-                                infoMessage: "サイトの結果の画面のスクショから、この回の順位・得点・投票人数・投稿数と、自分とほかの人の回答を読みます。回答を入れていなくても読めます。")
+                                infoMessage: "サイトの結果の画面のスクショから、この回の順位・得点・投票人数・投稿数と自分の回答を読みます。回答を入れていなくても読めます。")
                 .listRowSeparator(.hidden)
             PhotosPicker(selection: $resultPhoto, matching: .images, photoLibrary: .shared()) {
                 Label(readingResult ? "読み取り中" : "結果のスクショから読み取る", systemImage: "text.viewfinder")
@@ -1707,6 +1717,8 @@ struct GiriStageEditor: View {
             .disabled(readingResult)
             .tint(accentActionColor)
             .onChange(of: resultPhoto) { _, item in readNetResult(item) }
+            Toggle(isOn: $readsOtherAnswers) { GiriEditorLabel("ほかの人の回答も入れる") }
+                .tint(AppSectionAccent.scan)
             if let readMessage { Text(readMessage).font(.caption).foregroundStyle(.secondary) }
         }.appSectionCardStyle(accentColor: AppSectionAccent.scan)
     }
@@ -1725,13 +1737,15 @@ struct GiriStageEditor: View {
                 }
                 let indices = noteIndices
                 let applied = giriApplyingNetResult(page, stage: stage, notes: indices.map { answerNotes[$0] }, eventID: event.id, roundID: roundID,
-                                                    format: event.eventFormat, fallbackTitle: stage.name, isSelf: store.preferences.isSelf)
+                                                    format: event.eventFormat, fallbackTitle: stage.name, isSelf: store.preferences.isSelf,
+                                                    includeOthers: readsOtherAnswers)
                 stage = applied.stage
                 for (offset, index) in indices.enumerated() { answerNotes[index] = applied.notes[offset] }
                 if applied.notes.count > indices.count { answerNotes.append(contentsOf: applied.notes[indices.count...]) }
                 readMessage = applied.foundOwn
                     ? "自分の回答と結果を入れました。" + (applied.createdNote ? "お題も足しました（保存するとお題/回答に入ります）。" : "")
-                    : "自分の回答が見つからなかったので、投稿数・投票人数とほかの人の回答だけ入れました。"
+                    : readsOtherAnswers ? "自分の回答が見つからなかったので、投稿数・投票人数とほかの人の回答だけ入れました。"
+                    : "自分の回答が見つからなかったので、投稿数・投票人数だけ入れました。"
                 playLiveStairSaveFeedback()
             } catch { store.errorMessage = error.localizedDescription }
         }
@@ -2688,7 +2702,7 @@ struct GiriLiveStageSections: View {
                 }
                 .buttonStyle(.plain)
             }
-            Button { navigation.openThoughts(eventID: event.id) } label: { Label("お題/回答を開く", systemImage: "text.bubble") }
+            Button { navigation.openPrompt(eventID: event.id, roundID: stage.roundId) } label: { Label("お題/回答を開く", systemImage: "text.bubble") }
                 .tint(accentActionColor)
         }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
     }

@@ -444,7 +444,7 @@ private struct GiriCalendarPeriodLink<Content: View>: View {
     var body: some View {
         if let round = period.round, period.event.isActualParticipant {
             Button {
-                navigation.openThoughts(eventID: period.event.id, roundID: round.id)
+                navigation.openPrompt(eventID: period.event.id, roundID: round.id)
             } label: { content() }
             .accessibilityLabel("\(period.event.eventFormat.title)、\(period.event.title)、\(period.title)")
         } else {
