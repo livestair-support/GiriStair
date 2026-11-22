@@ -251,8 +251,8 @@ struct GiriSharingView: View {
     @State private var loadedPhotoItem: PhotosPickerItem?
     @State private var page = 0
     @State private var exporting = false
-    @State private var shareURLs: [URL] = []
-    @State private var sharing = false
+    /// 0.35.1：共有する画像。値を入れると共有画面を開く（`.sheet(item:)`。空のまま開かないように）。
+    @State private var shareFiles: GiriShareFiles?
     @State private var savedAlert = false
     @State private var previewImage: UIImage?
     @State private var renderingPreview = false
@@ -332,7 +332,7 @@ struct GiriSharingView: View {
         .task(id: photoItem) { await loadBackground(photoItem) }
         .task(id: background) { loadSavedBackground() }
         .onChange(of: pageCount) { _, count in if page >= count { page = count - 1 } }
-        .sheet(isPresented: $sharing) { GiriShareSheet(items: shareURLs) }
+        .sheet(item: $shareFiles) { files in GiriShareSheet(items: files.urls) }
         .alert("写真に保存しました", isPresented: $savedAlert) { Button("閉じる", role: .cancel) {} }
     }
 
@@ -681,7 +681,7 @@ struct GiriSharingView: View {
                 urls.append(url)
                 await Task.yield()
             }
-            if saveToPhotos { savedAlert = true } else { shareURLs = urls; sharing = true }
+            if saveToPhotos { savedAlert = true } else { shareFiles = GiriShareFiles(urls: urls) }
         } catch { store.errorMessage = error.localizedDescription }
     }
     private var backgroundPhotoURL: URL {

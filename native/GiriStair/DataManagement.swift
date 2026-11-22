@@ -312,8 +312,10 @@ struct GiriDataManagementView: View {
     @State private var importData: Data?
     @State private var restorePrevious = false
     @State private var deletingDeviceBackups = false
-    @State private var shareURL: URL?
-    @State private var sharing = false
+    /// 0.35.1：書き出したJSON。値を入れると共有画面を開く（LiveStair と同じく `.sheet(item:)`）。
+    @State private var shareFiles: GiriShareFiles?
+    /// 共有画面を閉じた時に消す一時ファイル。
+    @State private var sharedFileURLs: [URL] = []
     @State private var message: String?
 
     private var destination: GiriBackupDestination { GiriBackupDestination(rawValue: destinationRaw) ?? .device }
@@ -336,12 +338,9 @@ struct GiriDataManagementView: View {
                       allowsMultipleSelection: false, onCompletion: picked)
         .modifier(GiriDataManagementAlerts(importData: $importData, restorePrevious: $restorePrevious, deletingDeviceBackups: $deletingDeviceBackups,
                                            message: $message, previous: backups.count > 1 ? backups[1] : nil, onRestored: refresh))
-        .sheet(isPresented: $sharing) {
-            if let shareURL {
-                GiriShareSheet(items: [shareURL]) { completed in
-                    if completed { store.run { try store.recordBackupExported() } }
-                    try? FileManager.default.removeItem(at: shareURL)
-                }
+        .sheet(item: $shareFiles, onDismiss: removeSharedFiles) { files in
+            GiriShareSheet(items: files.urls) { completed in
+                if completed { store.run { try store.recordBackupExported() } }
             }
         }
     }
@@ -509,9 +508,15 @@ struct GiriDataManagementView: View {
             let name = "GiriStair-\(Date().formatted(.iso8601.year().month().day().dateSeparator(.dash))).json"
             let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
             try data.write(to: url, options: .atomic)
-            shareURL = url
-            sharing = true
+            sharedFileURLs = [url]
+            shareFiles = GiriShareFiles(urls: [url])
         }
+    }
+
+    /// 共有画面を閉じたら、書き出した一時ファイルを消す（LiveStair removeSharedExportFile と同じ）。
+    private func removeSharedFiles() {
+        for url in sharedFileURLs { try? FileManager.default.removeItem(at: url) }
+        sharedFileURLs = []
     }
 
     private func importJSON(_ result: Result<[URL], Error>) {

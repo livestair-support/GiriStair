@@ -348,6 +348,8 @@ GiriStairのiPhone版は **Swift / SwiftUI**、Android版は既存のFlutter実�
 - ネット大喜利のお題は、お題ごとにお題のページのURLを入れられる（`ThoughtNote.url`。空の時はJSONに書かない）。お題/回答の画面の「お題のページを開く」から開く。
 - お題/回答の一覧のカードは、会のお題は一覧のカードと同じ会の種類の色（大会・通常・企画など）にして、会の種類の札も出す。採用した回答の結果は、名前を左に、値と単位を右にそろえる。
 
+- 0.35.1：JSONの書き出しと共有画像の共有画面は、LiveStair SettingsView と同じく `.sheet(item:)`（`GiriShareFiles`）で開く。`.sheet(isPresented:)` と別の値（ファイルのURL）を同時に入れると、前の空の値のまま開いて何も出ないことがあったため。書き出したJSONの一時ファイルは共有画面を閉じた時に消す。
+
 ## CI（0.34から）
 
 - `native-ios.yml`（PRが待つ確認、約3分）：データ・日程の回帰テスト（`data-checks`）とアプリのビルド（`native-iphone`、arm64のシミュレーター向けだけ）を2台で同時に回す。
