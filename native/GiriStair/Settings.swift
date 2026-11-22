@@ -236,6 +236,13 @@ struct GiriSelfProfileEditor: View {
     }
 }
 
+/// 0.35.1：共有する一時ファイル。LiveStair SettingsView の ExportFile と同じく `.sheet(item:)` で開き、
+/// 作ったファイルを確実に共有画面へ渡す（`.sheet(isPresented:)` と別の値だと、前の空の値のまま開いて何も出ないことがある）。
+struct GiriShareFiles: Identifiable {
+    let id = UUID()
+    let urls: [URL]
+}
+
 struct GiriShareSheet: UIViewControllerRepresentable {
     var items: [Any]
     var completion: ((Bool) -> Void)?
