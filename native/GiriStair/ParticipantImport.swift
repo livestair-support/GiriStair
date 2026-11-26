@@ -117,23 +117,39 @@ struct GiriParticipantImport: View {
     private let lines: [GiriOCRLine]?
     /// 今の参加者。同じ人は「追加済み」にして、重ならないようにする。
     private let existing: [String]
+    /// 0.36：今のリザーバー（キャンセル待ち・補欠の欄で同じ人は「追加済み」にする）。
+    private let existingReserves: [String]
     let onAdd: ([String]) -> Void
+    /// 0.36：キャンセル待ち・補欠の欄をリザーバーに入れる（生大喜利）。nil の会では、その欄を選ばない。
+    let onAddReserves: (([String]) -> Void)?
 
-    init(source: String = "", lines: [GiriOCRLine]? = nil, existing: [String] = [], onAdd: @escaping ([String]) -> Void) {
+    init(source: String = "", lines: [GiriOCRLine]? = nil, existing: [String] = [], existingReserves: [String] = [],
+         onAddReserves: (([String]) -> Void)? = nil, onAdd: @escaping ([String]) -> Void) {
         _source = State(initialValue: source)
         self.lines = lines
         self.existing = existing
+        self.existingReserves = existingReserves
+        self.onAddReserves = onAddReserves
         self.onAdd = onAdd
     }
 
     /// 照合に使う名前：プレイヤー一覧（自分・別名義を含む）。
     private var knownNames: [String] { giriParticipantKnownNames(store) }
     private var selectedNames: [String] { giriSelectedParticipantNames(candidates) }
+    private var selectedReserves: [String] { onAddReserves == nil ? [] : giriSelectedReserveNames(candidates) }
 
     private func read(_ text: String) -> [GiriParticipantCandidate] {
         listedCount = giriListedParticipantCount(text.components(separatedBy: .newlines))
-        return giriMarkingAlreadyAdded(giriResolvingAliases(giriParticipantCandidates(text: text, known: knownNames), store: store),
-                                existing: giriResolvedNames(existing, store: store))
+        return prepared(giriParticipantCandidates(text: text, known: knownNames))
+    }
+
+    /// 別名義を本名義にし、今の参加者・リザーバーと同じ人を「追加済み」にする。
+    /// 0.36：リザーバーを入れない会では、キャンセル待ち・補欠の欄を選ばない。
+    private func prepared(_ read: [GiriParticipantCandidate]) -> [GiriParticipantCandidate] {
+        var values = giriResolvingAliases(read, store: store)
+        if onAddReserves == nil { values = giriDemotingReserves(values) }
+        return giriMarkingAlreadyAdded(values, participants: giriResolvedNames(existing, store: store),
+                                       reserves: giriResolvedNames(existingReserves, store: store))
     }
 
     var body: some View {
@@ -166,15 +182,17 @@ struct GiriParticipantImport: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button(previewing ? "\(selectedNames.count)人を追加" : "追加") {
+                Button(previewing ? "\(selectedNames.count + selectedReserves.count)人を追加" : "追加") {
                     if !previewing { candidates = read(source) }
                     let names = selectedNames
-                    guard !names.isEmpty else { return }
-                    onAdd(names)
+                    let reserves = selectedReserves
+                    guard !names.isEmpty || !reserves.isEmpty else { return }
+                    if !names.isEmpty { onAdd(names) }
+                    if !reserves.isEmpty { onAddReserves?(reserves) }
                     dismiss()
                 }
                 .fontWeight(.bold)
-                .disabled(previewing ? selectedNames.isEmpty : source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(previewing ? selectedNames.isEmpty && selectedReserves.isEmpty : source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .onAppear {
@@ -184,8 +202,7 @@ struct GiriParticipantImport: View {
                 // 画面の読み取りは、文字の位置から欄を分けてから確認に進む。
                 source = giriReadingOrder(lines).map(\.text).joined(separator: "\n")
                 listedCount = giriListedParticipantCount(source.components(separatedBy: .newlines))
-                candidates = giriMarkingAlreadyAdded(giriResolvingAliases(giriParticipantCandidates(lines: lines, known: knownNames), store: store),
-                                                     existing: giriResolvedNames(existing, store: store))
+                candidates = prepared(giriParticipantCandidates(lines: lines, known: knownNames))
                 previewing = true
             }
         }
@@ -251,7 +268,7 @@ struct GiriParticipantCandidateSections: View {
     var participantsTitle: String? = nil
 
     var body: some View {
-        ForEach([GiriParticipantSection.participants, .interested, .other], id: \.self) { section in
+        ForEach([GiriParticipantSection.participants, .reserve, .interested, .other], id: \.self) { section in
             let all = candidates.indices.filter { candidates[$0].section == section }
             let indices = section == .participants && !assignedKeys.isEmpty ? all.filter { !assignedKeys.contains(giriOCRNameKey(candidates[$0].name)) } : all
             if !indices.isEmpty || (section == .participants && assignedKeys.isEmpty) { candidateSection(section, indices: indices, all: all) }
@@ -262,7 +279,7 @@ struct GiriParticipantCandidateSections: View {
         Section {
             HStack {
                 AppCardSectionTitle(title: section == .participants ? (participantsTitle ?? section.title) : section.title,
-                                    systemImage: section == .participants ? "person.2" : "person.crop.circle.badge.questionmark",
+                                    systemImage: section == .participants ? "person.2" : (section == .reserve ? "person.badge.clock" : "person.crop.circle.badge.questionmark"),
                                     accentColor: AppSectionAccent.artist,
                                     infoTitle: section == .participants ? "読み取りについて" : nil,
                                     infoMessage: section == .participants ? "登録済みのプレイヤーと照合しています。アイコンや「…」の読み違いは直してから追加してください。" : nil)
@@ -492,6 +509,20 @@ struct GiriEventPageReview: View {
                     Button("このルールは使わない", role: .destructive) { draft.rule = nil }.buttonStyle(.borderless).font(.subheadline)
                 }.appSectionCardStyle(accentColor: AppSectionAccent.ticket)
             }
+            // 0.36：URLから読んだ時は、会が終わるまで、会を開いた時にページの参加者の増減を確かめる。
+            if !draft.sourceURL.isEmpty {
+                Section {
+                    AppCardSectionTitle(title: "ページの参加者", systemImage: "arrow.triangle.2.circlepath", accentColor: AppSectionAccent.scan,
+                                        infoTitle: "ページの参加者について",
+                                        infoMessage: "会を開いた時にページを読み直し、増えた人・減った人を出します。反映するかはその時に選べます。会が終わったあとの最初の起動で、参加者を確定します。")
+                        .listRowSeparator(.hidden)
+                    Toggle(isOn: $draft.watchesParticipants) {
+                        Text("会が終わるまで増減を確かめる").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                    }
+                    .tint(AppSectionAccent.scan)
+                    Text(draft.sourceURL).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }.appSectionCardStyle(accentColor: AppSectionAccent.scan)
+            }
             Section {
                 Toggle("入力済みの内容も置き換える", isOn: $replaceExisting).tint(AppSectionAccent.scan)
                 Text(replaceExisting ? "読み取った内容を優先して反映します。読み取れなかった項目は、今の入力が残ります。"
@@ -512,7 +543,7 @@ struct GiriEventPageReview: View {
             }.appSectionCardStyle(accentColor: AppSectionAccent.memo)
         }
         .appEditorFormStyle()
-        .navigationTitle("イベントページOCR")
+        .navigationTitle(draft.sourceURL.isEmpty ? "イベントページOCR" : "イベントページの読み取り")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }

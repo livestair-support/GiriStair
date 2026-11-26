@@ -327,12 +327,70 @@ final class GiriStore: ObservableObject {
         let event = Self.normalizedEvent(candidate)
         try event.validate()
         let names = referencedNames(event)
+        // 0.36：ページ（ツイプラなど）で読んだ新しい人は、XのIDも入れる（次から表示名が変わっても同じ人にする）。
+        var handles: [String: String] = [:]
+        for entry in (event.participantSync?.pageParticipants ?? []) + (event.participantSync?.pageReserves ?? []) where !entry.handle.isEmpty {
+            let key = playerSearchKey(entry.name)
+            if !key.isEmpty && handles[key] == nil { handles[key] = entry.handle }
+        }
         try mutate { next in
             Self.upsert(event, into: &next.events)
             var known = Set(next.players.map { playerSearchKey($0.name) })
             for name in names {
                 let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty && known.insert(playerSearchKey(trimmed)).inserted { next.players.append(GiriPlayer(name: trimmed)) }
+                if !trimmed.isEmpty && known.insert(playerSearchKey(trimmed)).inserted {
+                    var player = GiriPlayer(name: trimmed)
+                    if let handle = handles[playerSearchKey(trimmed)] { player.xAccounts = [GiriXAccount(handle: handle, displayName: trimmed)] }
+                    next.players.append(player)
+                }
+            }
+        }
+    }
+
+    // MARK: 0.36 ページの参加者の確認
+
+    /// 読み直したページの参加者・キャンセル待ちを残す（参加者・リザーバーは変えず、プレイヤー一覧にも足さない）。
+    /// page が nil（読めなかった）の時は、前に読んだ内容のまま state だけ変える。
+    func recordParticipantPage(eventID: String, page: GiriParticipantPage?, at date: Date = Date(), state: GiriParticipantSyncState? = nil) throws {
+        guard events.contains(where: { $0.id == eventID && $0.participantSync != nil }) else { return }
+        try mutate { next in
+            guard let index = next.events.firstIndex(where: { $0.id == eventID }), var sync = next.events[index].participantSync else { return }
+            if let page { sync.record(page, at: date) }
+            if let state { sync.state = state }
+            next.events[index].participantSync = sync
+        }
+    }
+
+    /// 今のページの増減を反映しない（次からは今のページと比べるので、同じ増減は聞かない）。
+    func markParticipantChangesDecided(eventID: String, state: GiriParticipantSyncState? = nil) throws {
+        guard events.contains(where: { $0.id == eventID && $0.participantSync != nil }) else { return }
+        try mutate { next in
+            guard let index = next.events.firstIndex(where: { $0.id == eventID }), var sync = next.events[index].participantSync else { return }
+            sync.markDecided()
+            if let state { sync.state = state }
+            next.events[index].participantSync = sync
+        }
+    }
+
+    /// 増減を反映した会を保存する（自分の立場は欄から決め直し、今のページを反映するかを決めた内容にする）。
+    func saveParticipantDecision(_ candidate: GiriEvent, state: GiriParticipantSyncState? = nil) throws {
+        var event = candidate
+        event.applyRosterSelfRole(isSelf: preferences.isSelf)
+        if var sync = event.participantSync {
+            sync.markDecided()
+            if let state { sync.state = state }
+            event.participantSync = sync
+        }
+        try saveEvent(event)
+    }
+
+    /// ページの参加者を確かめるのをやめる・状態を変える（会の内容は変えない）。
+    func setParticipantWatchState(_ state: GiriParticipantSyncState, eventIDs: [String]) throws {
+        let ids = Set(eventIDs)
+        guard events.contains(where: { ids.contains($0.id) && $0.participantSync != nil }) else { return }
+        try mutate { next in
+            for index in next.events.indices where ids.contains(next.events[index].id) {
+                next.events[index].participantSync?.state = state
             }
         }
     }

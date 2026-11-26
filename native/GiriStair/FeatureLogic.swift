@@ -1057,12 +1057,14 @@ func giriSeriesSuggestions(for title: String, in events: [GiriEvent]) -> [String
 
 /// 読み取った行がどの欄か。参加者だけを最初から選び、興味あり・不参加は選ばない。
 enum GiriParticipantSection: String {
-    case participants, interested, other
+    /// 0.36：reserve はキャンセル待ち・補欠（リザーバーと同じ。生大喜利ではリザーバーに入れる）。
+    case participants, interested, other, reserve
     var title: String {
         switch self {
         case .participants: return "参加者"
         case .interested: return "興味あり"
         case .other: return "不参加・キャンセル待ちなど"
+        case .reserve: return "キャンセル待ち・補欠（リザーバー）"
         }
     }
 }
@@ -1083,13 +1085,30 @@ struct GiriParticipantCandidate: Identifiable, Equatable {
     var included: Bool
     /// もう参加者に入っている（追加しても重ならないように、最初は選ばない）
     var alreadyAdded: Bool = false
+    /// 0.36：ページ（ツイプラなど）のリンクから分かったXのID。分からない時は空。
+    var handle: String = ""
 }
 
 /// 選んだ名前（同じ人は1回だけ）。
 func giriSelectedParticipantNames(_ candidates: [GiriParticipantCandidate]) -> [String] {
     var seen = Set<String>()
-    return candidates.filter(\.included).map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    // 0.36：キャンセル待ち・補欠の欄はリザーバーに入れる（giriSelectedReserveNames）。
+    return candidates.filter { $0.included && $0.section != .reserve }.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty && seen.insert(giriOCRNameKey($0)).inserted }
+}
+
+/// 0.36：キャンセル待ち・補欠の欄で選んだ人（ページの順＝繰り上がる順）。
+func giriSelectedReserveNames(_ candidates: [GiriParticipantCandidate]) -> [String] {
+    var seen = Set<String>()
+    return candidates.filter { $0.included && $0.section == .reserve }.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && seen.insert(giriOCRNameKey($0)).inserted }
+}
+
+/// 0.36：参加者の欄は今の参加者と、キャンセル待ち・補欠の欄は今の参加者・リザーバーと比べて「追加済み」にする。
+func giriMarkingAlreadyAdded(_ candidates: [GiriParticipantCandidate], participants: [String], reserves: [String]) -> [GiriParticipantCandidate] {
+    let inParticipants = giriMarkingAlreadyAdded(candidates, existing: participants)
+    let inRoster = giriMarkingAlreadyAdded(candidates, existing: participants + reserves)
+    return candidates.indices.map { candidates[$0].section == .reserve ? inRoster[$0] : inParticipants[$0] }
 }
 
 /// 今の参加者と同じ人（読み違いの吸収込み）を「追加済み」にして、最初は選ばない。
@@ -1204,7 +1223,9 @@ func giriParticipantHeader(_ text: String) -> GiriParticipantSection? {
     let tail = #"([（(［\[]|[0-9０-９]|一覧|リスト|[:：]|$)"#
     if value.range(of: #"^(参加者|参加予定者?|参加メンバー|エントリー者?|出場者)"# + tail, options: .regularExpression) != nil { return .participants }
     if value.range(of: #"^(興味あり|気になる)"# + tail, options: .regularExpression) != nil { return .interested }
-    if value.range(of: #"^(不参加|キャンセル待ち|補欠)"# + tail, options: .regularExpression) != nil { return .other }
+    // 0.36：キャンセル待ち・補欠はリザーバーと同じ（生大喜利ではリザーバーに入れる）。
+    if value.range(of: #"^(キャンセル待ち|補欠|リザーバー)"# + tail, options: .regularExpression) != nil { return .reserve }
+    if value.range(of: #"^(不参加)"# + tail, options: .regularExpression) != nil { return .other }
     return nil
 }
 
@@ -1250,7 +1271,9 @@ func giriIsParticipantNoise(_ text: String) -> Bool {
                     #"^[《【\[［〈<].*[》】\]］〉>]$"#, #"^(日時|日程|場所|会場|定員|参加費|料金|持ち物|開場|開演|内容|概要|注意事項|ルール)\s*[:：]"#,
                     // 交通案内・案内文・広告・ページのボタン
                     #"徒歩\s*[0-9０-９]|駅\s*(から|より)?\s*徒歩|「[^」]+」駅"#, #"(します|しません|ください|ません|ました|でした|します。)$|。$"#,
-                    #"(?i)インストール|キャンペーン|今すぐ|詳しくはこちら|カレンダー登録|で送る|でシェア|\bviews?\b"#]
+                    #"(?i)インストール|キャンペーン|今すぐ|詳しくはこちら|カレンダー登録|で送る|でシェア|\bviews?\b"#,
+                    // 0.36：一覧の下のリンク（「名簿印刷用ページを開く」など）。
+                    #"(ページ|一覧|名簿)を(開く|見る)$"#]
     return patterns.contains { value.range(of: $0, options: .regularExpression) != nil }
 }
 
@@ -1308,7 +1331,7 @@ func giriParticipantCandidates(entries: [(text: String, section: GiriParticipant
         let name = registered ?? text
         let candidate = GiriParticipantCandidate(id: output.count, source: source, name: name, registered: registered,
                                                  truncated: cleaned.truncated && registered == nil, suspiciousPrefix: nil,
-                                                 section: entry.section, included: entry.section == .participants)
+                                                 section: entry.section, included: entry.section == .participants || entry.section == .reserve)
         guard seen.insert(giriOCRNameKey(name)).inserted else {
             // 0.25.1：同じ人が「参加者」と「興味あり」などの両方にいる時（運営が参加者に入れた人が
             // 興味ありも押している時など）は、参加者として残す（画面の上にある欄を優先しない）。
@@ -1442,6 +1465,10 @@ struct GiriEventPageDraft: Equatable, Identifiable {
     /// 0.29：説明に書いてある大会のルール（段階など）。読めなければ nil。
     var rule: GiriRule? = nil
     var recognizedText = ""
+    /// 0.36：URLから読んだ時のページのURL（画面の読み取りでは空）。
+    var sourceURL = ""
+    /// 0.36：会が終わるまで、会を開いた時にページの参加者の増減を確かめる（URLから読んだ時だけ）。
+    var watchesParticipants = true
 
     var hasBasicInfo: Bool {
         !title.isEmpty || date != nil || opens != nil || start != nil || end != nil || !venue.isEmpty || !organizer.isEmpty || fee != nil || !coOrganizers.isEmpty
@@ -1594,7 +1621,8 @@ func giriIsEventPageSectionStart(_ raw: String) -> Bool {
 /// 項目名（「場所：」「《場所》」「【参加費】」）。値が同じ行にあれば返す。
 private func giriEventPageLabel(_ raw: String, names: String) -> (matched: Bool, value: String) {
     let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-    let pattern = #"^[《【\[［〈<(（]?\s*"# + names + #"\s*[》】\]］〉>)）]?\s*(?:[:：]\s*(.*)|\s+(.*)|$)"#
+    // 0.36：「◎場所」「■参加費」「・会場：」のように、項目名の前の記号も見出しの印として読む。
+    let pattern = #"^[《【\[［〈<(（◎●○■□◆◇★☆▼▽▶►・]?\s*"# + names + #"\s*[》】\]］〉>)）]?\s*(?:[:：]\s*(.*)|\s+(.*)|$)"#
     guard let groups = giriRegexGroups(pattern, in: text).first else { return (false, "") }
     let value = (groups[2].isEmpty ? groups[3] : groups[2]).trimmingCharacters(in: .whitespacesAndNewlines)
     return (true, value)

@@ -74,6 +74,9 @@ private struct GiriRootView: View {
     @EnvironmentObject private var navigation: GiriNavigation
     @Environment(\.scenePhase) private var scenePhase
     @State private var pendingResult: GiriEvent?
+    /// 0.36：ページの参加者を確かめていた会が終わった後の、参加者の確定。
+    @State private var participantReview: GiriParticipantReviewItem?
+    @State private var checkingParticipants = false
 
     var body: some View {
         Group {
@@ -111,6 +114,17 @@ private struct GiriRootView: View {
                 pendingResult = nil
             }
         } message: { Text(pendingResult?.title ?? "") }
+        .sheet(item: $participantReview, onDismiss: {
+            // 確定（または「後で」）の後に、ほかの終わった会と結果の入力の案内を続ける。
+            Task {
+                await promptForParticipantConfirmation()
+                promptForResult()
+            }
+        }) { item in
+            NavigationStack {
+                GiriParticipantChangesView(eventID: item.eventID, confirming: true, readFailed: item.readFailed)
+            }
+        }
         .task {
             accountSync.setActive(scenePhase == .active)
             synchronizeTheme()
@@ -120,6 +134,7 @@ private struct GiriRootView: View {
             // 0.34.1：同じ回（「2回戦」と「予選2回戦」）をまとめる（バックアップの後）。
             if store.loaded { store.run { try store.mergeDuplicateTournamentRounds() } }
             await NotificationsCoordinator.sync(store: store)
+            await promptForParticipantConfirmation()
             promptForResult()
         }
         .onChange(of: store.document) { _, _ in
@@ -134,7 +149,10 @@ private struct GiriRootView: View {
                 GiriAutoBackup.runIfNeeded(store: store)
                 if store.loaded { store.run { try store.mergeDuplicateTournamentRounds() } }
                 Task { await NotificationsCoordinator.sync(store: store) }
-                promptForResult()
+                Task {
+                    await promptForParticipantConfirmation()
+                    promptForResult()
+                }
             }
         }
     }
@@ -169,10 +187,30 @@ private struct GiriRootView: View {
         giriSynchronizeAppearanceMode(store.preferences.theme)
     }
 
+    /// 0.36：ページの参加者を確かめていた会が終わったら、次の起動で1度だけ最後にページを読み、参加者を確定してもらう。
+    /// 自分が行かなかった会（興味あり・キャンセルなど）は、聞かずに確かめるのをやめる。
+    private func promptForParticipantConfirmation() async {
+        guard store.loaded, store.preferences.onboardingCompleted, participantReview == nil, pendingResult == nil, !checkingParticipants else { return }
+        let now = Date()
+        let ended = store.events.filter { $0.participantSync?.state == .watching && $0.hasEnded(now: now) }
+        guard !ended.isEmpty else { return }
+        let skipped = ended.filter { !$0.asksParticipantConfirmation }.map(\.id)
+        if !skipped.isEmpty { store.run { try store.setParticipantWatchState(.stopped, eventIDs: skipped) } }
+        guard let event = ended.filter(\.asksParticipantConfirmation).sorted(by: {
+            ($0.participationEndDate ?? $0.eventDate ?? $0.createdAt) < ($1.participationEndDate ?? $1.eventDate ?? $1.createdAt)
+        }).first else { return }
+        checkingParticipants = true
+        let page = try? await giriFetchParticipantPage(for: event, store: store)
+        store.run { try store.recordParticipantPage(eventID: event.id, page: page, at: Date(), state: .confirming) }
+        checkingParticipants = false
+        guard store.events.first(where: { $0.id == event.id })?.participantSync?.state == .confirming else { return }
+        participantReview = GiriParticipantReviewItem(eventID: event.id, confirming: true, readFailed: page == nil)
+    }
+
     private func promptForResult() {
         guard store.loaded, store.preferences.onboardingCompleted,
               !store.preferences.hasShownInitialResultPrompt,
-              pendingResult == nil else { return }
+              pendingResult == nil, participantReview == nil, !checkingParticipants else { return }
         let now = Date()
         let candidate = store.events.filter { event in
             event.eventFormat == .live && event.meetingType == .tournament &&
