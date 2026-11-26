@@ -6,7 +6,8 @@ import UIKit
 @MainActor
 struct GiriStairApp: App {
     @StateObject private var store: GiriStore
-    @StateObject private var navigation = GiriNavigation()
+    @StateObject private var accountSync: AccountSyncCoordinator
+    @StateObject private var navigation: GiriNavigation
 
     init() {
         #if DEBUG
@@ -15,7 +16,33 @@ struct GiriStairApp: App {
         #else
         let store = GiriStore()
         #endif
+        let accountSync = AccountSyncCoordinator(app: "giristair")
+        let navigation = GiriNavigation()
+        let deviceName: @MainActor () -> String = { [weak store] in
+            let model = UIDevice.current.model
+            let name = store?.preferences.selfName.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return name.isEmpty ? model : "\(name)の\(model)"
+        }
+        store.onAccountDataChanged = { [weak accountSync] in accountSync?.localDidChange() }
+        accountSync.connect(snapshot: { [weak store] in
+            guard let store else { throw GiriDataError.notLoaded }
+            let snapshot = try store.accountSnapshot()
+            return AccountSyncLocalSnapshot(
+                data: snapshot.data, lastModified: snapshot.lastModified, isPristine: snapshot.isPristine,
+                deviceName: deviceName()
+            )
+        }, apply: { [weak store, weak navigation, weak accountSync] data in
+            guard let store else { throw GiriDataError.notLoaded }
+            if let data {
+                try store.applyAccountSnapshot(data)
+            } else {
+                try store.deleteAllData(notifyAccount: false, removing: GiriAutoBackup.deviceFiles().map(\.url))
+                navigation?.resetAfterDataDeletion(includingSettings: accountSync?.isBusy == false)
+            }
+        }, deviceName: deviceName)
         _store = StateObject(wrappedValue: store)
+        _accountSync = StateObject(wrappedValue: accountSync)
+        _navigation = StateObject(wrappedValue: navigation)
         // 時刻の入力（SwiftUI の DatePicker）は5分刻み。
         UIDatePicker.appearance().minuteInterval = 5
     }
@@ -24,6 +51,7 @@ struct GiriStairApp: App {
         WindowGroup {
             GiriRootView()
                 .environmentObject(store)
+                .environmentObject(accountSync)
                 .environmentObject(navigation)
                 .environment(\.locale, Locale(identifier: "ja_JP"))
                 .preferredColorScheme(preferredAppearance)
@@ -42,6 +70,7 @@ struct GiriStairApp: App {
 @MainActor
 private struct GiriRootView: View {
     @EnvironmentObject private var store: GiriStore
+    @EnvironmentObject private var accountSync: AccountSyncCoordinator
     @EnvironmentObject private var navigation: GiriNavigation
     @Environment(\.scenePhase) private var scenePhase
     @State private var pendingResult: GiriEvent?
@@ -83,6 +112,7 @@ private struct GiriRootView: View {
             }
         } message: { Text(pendingResult?.title ?? "") }
         .task {
+            accountSync.setActive(scenePhase == .active)
             synchronizeTheme()
             if store.loaded { store.run { try store.ensureCurrentSiteCycles() } }
             // 0.19：1日1回、最初に開いた時に自動バックアップを作る（LiveStair と同じ）。
@@ -96,7 +126,9 @@ private struct GiriRootView: View {
             synchronizeTheme()
             Task { await NotificationsCoordinator.sync(store: store) }
         }
+        .onChange(of: navigation.dataDeletionToken) { _, _ in pendingResult = nil }
         .onChange(of: scenePhase) { _, phase in
+            accountSync.setActive(phase == .active)
             if phase == .active {
                 if store.loaded { store.run { try store.ensureCurrentSiteCycles() } }
                 GiriAutoBackup.runIfNeeded(store: store)
@@ -110,14 +142,19 @@ private struct GiriRootView: View {
     private var tabs: some View {
         TabView(selection: $navigation.selectedTab) {
             NavigationStack { GiriEventEditor(onSaved: { navigation.selectedTab = 1 }) }
+                .id(navigation.dataDeletionToken)
                 .tabItem { Label("登録", systemImage: "plus.circle.fill") }.tag(0)
             NavigationStack { GiriListView() }
+                .id(navigation.dataDeletionToken)
                 .tabItem { Label("一覧", systemImage: "clock.fill") }.tag(1)
             NavigationStack { GiriResultsView() }
+                .id(navigation.dataDeletionToken)
                 .tabItem { Label("戦績", systemImage: "trophy.fill") }.tag(2)
             GiriThinkingView()
+                .id(navigation.dataDeletionToken)
                 .tabItem { Label("お題/回答", systemImage: "checklist") }.tag(3)
             NavigationStack { GiriSettingsView() }
+                .id(navigation.settingsDeletionToken)
                 .tabItem { Label("設定", systemImage: "gearshape.fill") }.tag(4)
         }
         .background {
@@ -162,6 +199,7 @@ private struct GiriFirstProfileView: View {
                 Section {
                     AppCardSectionTitle(title: "自分のプロフィール", systemImage: "person.crop.circle", accentColor: AppSectionAccent.artist)
                     TextField("自分の名前", text: $name).textContentType(.nickname)
+                    GiriAccountSyncRow()
                     Button("はじめる") {
                         var preferences = store.preferences
                         preferences.selfName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -173,6 +211,7 @@ private struct GiriFirstProfileView: View {
             .appEditorFormStyle()
             .navigationTitle("GiriStair")
             .onAppear { name = store.preferences.selfName }
+            .onChange(of: store.preferences.selfName) { _, newName in name = newName }
         }
     }
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import plistlib
 import shutil
@@ -13,7 +14,7 @@ VERSION = "0.35.1"
 MINIMUM_IOS = "18.1"
 
 
-def generate(root: Path = ROOT, build_number: str = "1") -> Path:
+def generate(root: Path = ROOT, build_number: str = "1", account_sync_cloudkit: bool = False) -> Path:
     if not build_number.isdecimal() or int(build_number) < 1:
         raise ValueError("Build number must be a positive integer.")
     config = json.loads((root / ".ci/app_config.json").read_text())
@@ -48,6 +49,17 @@ def generate(root: Path = ROOT, build_number: str = "1") -> Path:
         "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
         "UISupportedInterfaceOrientations~ipad": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationPortraitUpsideDown", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
     }
+    entitlements_path = generated / "AccountSync.entitlements"
+    if account_sync_cloudkit:
+        container = f"iCloud.{config['bundle_id']}"
+        info["AccountSyncCloudContainer"] = container
+        with entitlements_path.open("wb") as output:
+            plistlib.dump({
+                "com.apple.developer.icloud-container-identifiers": [container],
+                "com.apple.developer.icloud-services": ["CloudKit"],
+            }, output)
+    else:
+        entitlements_path.unlink(missing_ok=True)
     with (generated / "Info.plist").open("wb") as output:
         plistlib.dump(info, output)
     project = {
@@ -86,6 +98,8 @@ def generate(root: Path = ROOT, build_number: str = "1") -> Path:
             "test": {"config": "Debug", "targets": [{"name": "GiriStairUITests", "parallelizable": False}]},
         }},
     }
+    if account_sync_cloudkit:
+        project["targets"]["GiriStair"]["settings"]["base"]["CODE_SIGN_ENTITLEMENTS"] = "../build/native/AccountSync.entitlements"
     path = root / "native/project.json"
     path.write_text(json.dumps(project, indent=2) + "\n")
     return path
@@ -95,4 +109,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-number", default="1")
     args = parser.parse_args()
-    print(generate(build_number=args.build_number))
+    print(generate(
+        build_number=args.build_number,
+        account_sync_cloudkit=os.getenv("ACCOUNT_SYNC_CLOUDKIT") in {"1", "true"},
+    ))

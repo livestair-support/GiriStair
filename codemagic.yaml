@@ -54,6 +54,11 @@ workflows:
     name: 3. iPhone確認用（TestFlightへアップロード）
     instance_type: mac_mini_m2
     max_build_duration: 90
+    inputs:
+      accountSyncCloudKit:
+        description: iCloud同期を有効にする（Apple側の初回設定が必要）
+        type: boolean
+        default: false
     integrations:
       app_store_connect: LiveStair ASC
     environment:
@@ -70,7 +75,8 @@ workflows:
           set -euo pipefail
           command -v xcodegen >/dev/null || brew install xcodegen
           : "${PROJECT_BUILD_NUMBER:?CodemagicのPROJECT_BUILD_NUMBERが必要です}"
-          python3 .ci/native_project.py --build-number "$PROJECT_BUILD_NUMBER"
+          ACCOUNT_SYNC_CLOUDKIT="${{ inputs.accountSyncCloudKit }}" \
+            python3 .ci/native_project.py --build-number "$PROJECT_BUILD_NUMBER"
           xcodegen generate --spec native/project.json
       - name: 保存互換性と日程のSwiftテスト
         script: |
