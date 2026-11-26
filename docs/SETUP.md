@@ -29,7 +29,7 @@ GiriStairが候補に出ない場合は「Integrations」→GitHub連携の「Ma
 1. 「Applications」→「GiriStair」→「Start new build」。
 2. ブランチは`main`。
 3. ワークフローは **「1. 確認（Swiftテスト・iOSビルド）」**。
-4. 「Start new build」を押します。
+4. iCloud同期を使う場合は、ビルドの入力欄で **「iCloud同期を有効にする」** をオンにします。「Start new build」を押します。
 
 このワークフローはSwiftの保存互換性テストと、署名しないSwiftUI iOSビルドを行います。成功しても、まだiPhoneにはインストールできません。失敗した場合は、赤くなった工程名とエラー付近のログをAIに送ってください。
 
@@ -74,6 +74,8 @@ GiriStairが候補に出ない場合は「Integrations」→GitHub連携の「Ma
 3. CloudKit Consoleで対象ContainerのDevelopmentスキーマにレコードタイプ **`AccountSnapshot`** を追加します。フィールドは `payload`（Asset）、`revision`・`deletionGeneration`・`deviceName`・`digest`（String）、`updatedAt`（Timestamp）、`deleted`（Int64）です。アプリはユーザーのPrivate Databaseにレコードを作成します。
 4. CloudKit Consoleで「Deploy Schema Changes」を実行し、Productionに反映します。TestFlightはProductionを使います。
 5. CodemagicのTestFlightワークフローを開始するときに「iCloud同期を有効にする」をオンにします。同じApple AccountでiCloudを利用しているiPhone・iPadに、このビルドを入れて確認します。
+
+「Fetch profiles」で取り込むプロファイルはiCloudを使うための署名に使います。「iCloud同期を有効にする」は各ビルドに同期の設定を入れる入力欄で、既定値はオフです。
 
 [iCloud Containerの作成](https://developer.apple.com/help/account/identifiers/create-an-icloud-container)・[CloudKitスキーマの配布](https://developer.apple.com/documentation/cloudkit/deploying-an-icloud-container-s-schema)
 

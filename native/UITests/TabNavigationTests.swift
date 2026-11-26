@@ -34,6 +34,10 @@ final class TabNavigationTests: XCTestCase {
         XCTAssertTrue(tabBar.waitForExistence(timeout: 15))
         for mode in [("Giri Summary", "sharing.summary.preview"), ("Giri List", "sharing.list.preview")] {
             tabBar.buttons["設定"].tap()
+            XCTAssertTrue(app.staticTexts["プロフィールと同期"].waitForExistence(timeout: 5))
+            let syncNotice = app.staticTexts["account-sync.unavailable"]
+            XCTAssertTrue(syncNotice.waitForExistence(timeout: 5))
+            XCTAssertTrue(syncNotice.label.contains("iCloud同期が無効"))
             let link = app.buttons[mode.0]
             XCTAssertTrue(link.waitForExistence(timeout: 5))
             link.tap()

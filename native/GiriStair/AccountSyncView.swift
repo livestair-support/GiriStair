@@ -6,25 +6,24 @@ struct GiriAccountSyncRow: View {
     @State private var showingSignIn = false
 
     var body: some View {
-        if accountSync.isAvailable && store.loaded {
-            AccountSyncControls(onSignIn: { showingSignIn = true })
-                .sheet(isPresented: $showingSignIn, onDismiss: accountSync.cancelSignIn) {
-                    NavigationStack {
-                        AccountSyncSignInView(onDismiss: { showingSignIn = false })
-                            .giriNavigationBarStyle()
-                    }
+        AccountSyncControls(isLocalDataLoaded: store.loaded, onSignIn: { showingSignIn = true })
+            .sheet(isPresented: $showingSignIn, onDismiss: accountSync.cancelSignIn) {
+                NavigationStack {
+                    AccountSyncSignInView(onDismiss: { showingSignIn = false })
+                        .giriNavigationBarStyle()
                 }
-        }
+            }
     }
 }
 
-struct AccountSyncControls: View {
+private struct AccountSyncControls: View {
     @EnvironmentObject private var accountSync: AccountSyncCoordinator
+    let isLocalDataLoaded: Bool
     let onSignIn: () -> Void
 
     var body: some View {
-        if accountSync.isAvailable {
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 6) {
+            if accountSync.isAvailable && isLocalDataLoaded {
                 Button {
                     if accountSync.isLoggedIn {
                         accountSync.signOut()
@@ -47,6 +46,14 @@ struct AccountSyncControls: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+            } else {
+                Label("iCloud同期", systemImage: "icloud.slash")
+                Text(accountSync.isAvailable
+                     ? "保存データを読み込めないため、iCloud同期を利用できません。"
+                     : "このビルドではiCloud同期が無効です。同期に対応したバージョンに更新すると、ここからログインできます。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("account-sync.unavailable")
             }
         }
     }
