@@ -79,10 +79,9 @@ struct AccountSyncSignInView: View {
                     Task { await accountSync.beginSignIn() }
                 } label: {
                     if accountSync.isBusy {
-                        ProgressView()
-                            .accessibilityLabel("iCloudを確認中")
+                        ProgressView(accountSync.isCheckingConnection ? "iCloudに接続中…" : "同期データを確認中…")
                     } else {
-                        Label("iCloudでログイン", systemImage: "icloud")
+                        Label(accountSync.status == nil ? "iCloudでログイン" : "再試行", systemImage: "icloud")
                     }
                 }
                 .disabled(accountSync.isBusy || !accountSync.isAvailable)
@@ -94,11 +93,12 @@ struct AccountSyncSignInView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("閉じる") {
+                Button(accountSync.isCheckingConnection ? "中止" : "閉じる") {
+                    let isChecking = accountSync.isCheckingConnection
                     accountSync.cancelSignIn()
-                    onDismiss()
+                    if !isChecking { onDismiss() }
                 }
-                .disabled(accountSync.isBusy)
+                .disabled(accountSync.isBusy && !accountSync.isCheckingConnection)
             }
         }
         .interactiveDismissDisabled(accountSync.isBusy)

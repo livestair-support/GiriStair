@@ -33,6 +33,7 @@ struct AccountSyncConflict: Identifiable {
 final class AccountSyncCoordinator: ObservableObject {
     @Published private(set) var isLoggedIn: Bool
     @Published private(set) var isBusy = false
+    @Published private(set) var isCheckingConnection = false
     @Published private(set) var isApplying = false
     @Published private(set) var pendingConflict: AccountSyncConflict?
     @Published private(set) var status: String?
@@ -56,6 +57,7 @@ final class AccountSyncCoordinator: ObservableObject {
     private var applySnapshot: (@MainActor (Data?) async throws -> Void)?
     private var deviceName: @MainActor () -> String = { UIDevice.current.model }
     private var pendingLogin: (account: String, cloudRevision: String?, localVersion: String)?
+    private var cancelConnectionCheck: (() -> Void)?
     private var isActive = false
     private var isWorking = false
     private var session = UUID()
@@ -118,18 +120,21 @@ final class AccountSyncCoordinator: ObservableObject {
         defer { isWorking = false; isBusy = false }
         status = nil
         do {
-            let account = try await cloud.accountIdentifier()
+            let account = try await checkSignInConnection { try await cloud.accountIdentifier() }
             do {
                 try await prepareLogin(account: account, cloud: cloud)
             } catch AccountSyncError.cloudChanged {
                 try await prepareLogin(account: account, cloud: cloud)
             }
+        } catch is CancellationError {
+            return
         } catch {
-            status = error.localizedDescription
+            status = AccountSyncError.message(for: error)
         }
     }
 
     func cancelSignIn() {
+        cancelConnectionCheck?()
         pendingConflict = nil
         pendingLogin = nil
         status = nil
@@ -144,8 +149,10 @@ final class AccountSyncCoordinator: ObservableObject {
         isBusy = true
         defer { isWorking = false; isBusy = false }
         do {
-            try await cloud.checkAccount(candidate.account)
-            let remote = try await cloud.latest()
+            let remote = try await checkSignInConnection {
+                try await cloud.checkAccount(candidate.account)
+                return try await cloud.latest()
+            }
             let version = localVersion
             guard let makeSnapshot else { throw AccountSyncError.notReady }
             let local = try await makeSnapshot()
@@ -164,11 +171,39 @@ final class AccountSyncCoordinator: ObservableObject {
         } catch AccountSyncError.cloudChanged {
             do {
                 try await prepareLogin(account: candidate.account, cloud: cloud)
+            } catch is CancellationError {
+                return
             } catch {
-                status = error.localizedDescription
+                status = AccountSyncError.message(for: error)
             }
+        } catch is CancellationError {
+            return
         } catch {
-            status = error.localizedDescription
+            status = AccountSyncError.message(for: error)
+        }
+    }
+
+    // Only account and metadata reads use this deadline. Uploads and downloads can be large.
+    private func checkSignInConnection<Value>(
+        _ check: @escaping @MainActor () async throws -> Value
+    ) async throws -> Value {
+        isCheckingConnection = true
+        defer {
+            cancelConnectionCheck = nil
+            isCheckingConnection = false
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            let connection = AccountSyncConnectionCheck(continuation)
+            cancelConnectionCheck = { connection.finish(.failure(CancellationError())) }
+            connection.request = Task {
+                do { connection.finish(.success(try await check())) }
+                catch { connection.finish(.failure(error)) }
+            }
+            connection.deadline = Task {
+                do { try await Task.sleep(for: .seconds(15)) }
+                catch { return }
+                connection.finish(.failure(AccountSyncError.connectionTimedOut))
+            }
         }
     }
 
@@ -206,11 +241,11 @@ final class AccountSyncCoordinator: ObservableObject {
 
     private func prepareLogin(account: String, cloud: AccountSyncCloud) async throws {
         guard let makeSnapshot else { throw AccountSyncError.notReady }
-        let remote = try await cloud.latest()
+        let remote = try await checkSignInConnection { try await cloud.latest() }
         let version = localVersion
         let local = try await makeSnapshot()
         guard version == localVersion else { throw AccountSyncError.localChanged }
-        try await cloud.checkAccount(account)
+        try await checkSignInConnection { try await cloud.checkAccount(account) }
         guard version == localVersion else { throw AccountSyncError.localChanged }
 
         guard let remote else {
@@ -368,7 +403,7 @@ final class AccountSyncCoordinator: ObservableObject {
         } catch is CancellationError {
             return
         } catch {
-            if currentSession == session { status = error.localizedDescription }
+            if currentSession == session { status = AccountSyncError.message(for: error) }
         }
     }
 
@@ -423,19 +458,59 @@ final class AccountSyncCoordinator: ObservableObject {
     }
 }
 
+@MainActor
+private final class AccountSyncConnectionCheck<Value> {
+    private var continuation: CheckedContinuation<Value, Error>?
+    var request: Task<Void, Never>?
+    var deadline: Task<Void, Never>?
+
+    init(_ continuation: CheckedContinuation<Value, Error>) {
+        self.continuation = continuation
+    }
+
+    func finish(_ result: Result<Value, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        request?.cancel()
+        deadline?.cancel()
+        request = nil
+        deadline = nil
+        continuation.resume(with: result)
+    }
+}
+
 private enum AccountSyncError: LocalizedError {
-    case noAccount, accountUnavailable, accountChanged, notReady, localChanged, cloudChanged, invalidData, cloudRecordRemoved
+    case noAccount, accountRestricted, accountUnavailable, accountChanged, connectionTimedOut
+    case notReady, localChanged, cloudChanged, invalidData, cloudRecordRemoved
 
     var errorDescription: String? {
         switch self {
         case .noAccount: "端末の「設定」でApple Accountにサインインしてからお試しください。"
+        case .accountRestricted: "この端末ではiCloudの利用が制限されています。端末の「設定」を確認してください。"
         case .accountUnavailable: "iCloudに接続できません。通信やiCloudの設定を確認してからお試しください。"
         case .accountChanged: "端末のApple Accountが変更されました。同期するにはもう一度ログインしてください。"
+        case .connectionTimedOut: "iCloudへの接続が時間内に完了しませんでした。通信と端末のiCloud設定を確認してから、再試行してください。"
         case .notReady: "同期の準備ができていません。少し待ってからお試しください。"
         case .localChanged: "比較中にこの端末のデータが更新されました。もう一度お試しください。"
         case .cloudChanged: "処理中に別の端末でデータが更新されました。もう一度お試しください。"
         case .invalidData: "iCloudのデータを確認できませんでした。少し待ってからお試しください。"
         case .cloudRecordRemoved: "iCloudの同期データが見つかりません。同期するにはもう一度ログインしてください。"
+        }
+    }
+
+    static func message(for error: Error) -> String {
+        guard let cloudError = error as? CKError else { return error.localizedDescription }
+        switch cloudError.code {
+        case .missingEntitlement, .badContainer, .badDatabase:
+            return "このビルドでiCloudの同期領域に接続できません。アプリの署名とiCloudコンテナの設定を確認してください。"
+        case .notAuthenticated, .permissionFailure:
+            return "iCloudにアクセスできません。端末の「設定」でApple Accountと、このアプリのiCloud利用設定を確認してください。"
+        case .networkUnavailable, .networkFailure, .serviceUnavailable, .requestRateLimited:
+            return "iCloudと通信できませんでした。通信環境を確認し、時間をおいて再試行してください。"
+        case .quotaExceeded:
+            return "iCloudの空き容量が不足しています。空き容量を確認してから再試行してください。"
+        default:
+            return error.localizedDescription
         }
     }
 }
@@ -489,8 +564,10 @@ private struct AccountSyncCloud {
         case .available:
             let id = try await container.userRecordID()
             return Self.hash(Data(id.recordName.utf8))
-        case .noAccount, .restricted:
+        case .noAccount:
             throw AccountSyncError.noAccount
+        case .restricted:
+            throw AccountSyncError.accountRestricted
         default:
             throw AccountSyncError.accountUnavailable
         }
@@ -500,7 +577,7 @@ private struct AccountSyncCloud {
         do {
             let identifier = try await accountIdentifier()
             guard identifier == expected else { throw AccountSyncError.accountChanged }
-        } catch AccountSyncError.noAccount {
+        } catch AccountSyncError.noAccount, AccountSyncError.accountRestricted {
             throw AccountSyncError.accountChanged
         }
     }
