@@ -167,6 +167,39 @@ struct DomainRegression {
         try check(failed.loaded && !failed.events.isEmpty, "explicit valid restore recovers failed load")
         let restoreCopies = try FileManager.default.contentsOfDirectory(atPath: broken.path).filter { $0.hasPrefix("giristair.unreadable-") }
         try check(restoreCopies.count == 1, "restore retains corrupt original separately")
+
+        do {
+            let receiver = GiriStore(directory: temp.appendingPathComponent("account-sync"))
+            let initial = try receiver.accountSnapshot()
+            var localNotifications = 0
+            receiver.onAccountDataChanged = { localNotifications += 1 }
+            var receiverPreferences = receiver.preferences
+            receiverPreferences.notificationsEnabled = true
+            receiverPreferences.onboardingCompleted = true
+            try receiver.savePreferences(receiverPreferences)
+            try receiver.recordBackupExported()
+            let deviceBackupAt = receiver.lastBackupAt
+            let deviceSnapshot = try receiver.accountSnapshot()
+            try check(initial.isPristine && deviceSnapshot.data == initial.data && localNotifications == 0,
+                      "device-only values do not affect account snapshots or trigger sync")
+
+            let incoming = try failed.accountSnapshot()
+            try receiver.applyAccountSnapshot(incoming.data)
+            try check(receiver.events == failed.events && receiver.notes == failed.notes && receiver.preferences.selfName == failed.preferences.selfName,
+                      "account snapshot applies archived records and account profile")
+            try check(receiver.preferences.notificationsEnabled && receiver.preferences.onboardingCompleted && receiver.lastBackupAt == deviceBackupAt && localNotifications == 0,
+                      "account pulls preserve device state and do not trigger another upload")
+            try receiver.saveNote(ThoughtNote(title: "同期するメモ"))
+            try check(localNotifications == 1, "a durable local record mutation triggers sync")
+
+            try receiver.deleteAllData(notifyAccount: false)
+            let reloaded = GiriStore(directory: receiver.directory)
+            try check(reloaded.events.isEmpty && reloaded.notes.isEmpty && reloaded.players.isEmpty && reloaded.onlineSites.isEmpty && localNotifications == 1,
+                      "an account deletion durably clears local records without uploading them")
+            try check(!FileManager.default.fileExists(atPath: receiver.migrationBackupURL.path) &&
+                      !FileManager.default.fileExists(atPath: receiver.directory.appendingPathComponent("giristair.json.bak").path),
+                      "an account deletion clears local recovery copies")
+        }
         // Feature additions remain optional in schema 1 and retain old values.
         try check(restored.events[0].eventFormat == .onlineLong && !restored.events[0].isInterested && restored.events[0].promptedResultKeys.isEmpty, "old online records default to long think without losing participation")
         try check(!restored.preferences.hasShownInitialResultPrompt && !restored.notes[0].isOthersAnswer && !restored.notes[0].usesAnswerRecords, "old preferences and thoughts decode feature defaults")

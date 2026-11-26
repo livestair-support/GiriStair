@@ -13,6 +13,7 @@ final class GiriStore: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var loaded = false
     let directory: URL
+    var onAccountDataChanged: (() -> Void)?
     private var originalData: Data?
     private var isWriting = false
 
@@ -32,11 +33,12 @@ final class GiriStore: ObservableObject {
     var showPlayerIcons: Bool { preferences.playerIconMode == "show" || (preferences.playerIconMode == "auto" && players.contains { !$0.iconDataBase64.isEmpty }) }
     var fileURL: URL { directory.appendingPathComponent("giristair.json") }
     var migrationBackupURL: URL { directory.appendingPathComponent("giristair.flutter-v1.json") }
+    private var rollingBackupURL: URL { directory.appendingPathComponent("giristair.json.bak") }
 
     func reload() {
         do {
             let primary = fileURL
-            let backup = directory.appendingPathComponent("giristair.json.bak")
+            let backup = rollingBackupURL
             let source: URL? = FileManager.default.fileExists(atPath: primary.path) ? primary : (FileManager.default.fileExists(atPath: backup.path) ? backup : nil)
             let data = try source.map { try Data(contentsOf: $0) }
             let restored = try data.map(GiriJSON.decode) ?? GiriDocument()
@@ -61,9 +63,11 @@ final class GiriStore: ObservableObject {
         defer { isWriting = false }
         var next = document
         try change(&next)
+        let accountDataChanged = accountDocument(next) != accountDocument(document)
         let data = try GiriJSON.encode(next)
         try persist(data)
         document = next
+        if accountDataChanged { onAccountDataChanged?() }
     }
 
     private func persist(_ data: Data) throws {
@@ -75,9 +79,59 @@ final class GiriStore: ObservableObject {
         }
         if FileManager.default.fileExists(atPath: fileURL.path) {
             let previous = try Data(contentsOf: fileURL)
-            try previous.write(to: directory.appendingPathComponent("giristair.json.bak"), options: .atomic)
+            try previous.write(to: rollingBackupURL, options: .atomic)
         }
         try data.write(to: fileURL, options: .atomic)
+    }
+
+    /// These values describe this installation, so they do not participate in account comparisons.
+    private func accountDocument(_ source: GiriDocument) -> GiriDocument {
+        var result = source
+        result.lastBackupAt = nil
+        result.preferences.onboardingCompleted = false
+        result.preferences.hasShownInitialResultPrompt = false
+        result.preferences.notificationsEnabled = false
+        return result
+    }
+
+    func accountSnapshot() throws -> (data: Data, lastModified: Date?, isPristine: Bool) {
+        guard loaded else { throw GiriDataError.notLoaded }
+        let snapshot = accountDocument(document)
+        let source = FileManager.default.fileExists(atPath: fileURL.path) ? fileURL : rollingBackupURL
+        let lastModified = try? source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        return (try GiriJSON.encode(snapshot), lastModified, snapshot == GiriDocument())
+    }
+
+    func applyAccountSnapshot(_ data: Data) throws {
+        guard loaded else { throw GiriDataError.notLoaded }
+        var incoming = try GiriJSON.decode(data)
+        incoming.lastBackupAt = document.lastBackupAt
+        incoming.preferences.onboardingCompleted = preferences.onboardingCompleted
+        incoming.preferences.hasShownInitialResultPrompt = preferences.hasShownInitialResultPrompt
+        incoming.preferences.notificationsEnabled = preferences.notificationsEnabled
+        guard incoming != document else { return }
+        try persist(try GiriJSON.encode(incoming))
+        document = incoming
+    }
+
+    func deleteAllData(notifyAccount: Bool = true, removing additionalRecoveryFiles: [URL] = []) throws {
+        var empty = GiriDocument()
+        empty.preferences = preferences
+        let data = try GiriJSON.encode(empty)
+        let files = FileManager.default
+        try files.createDirectory(at: directory, withIntermediateDirectories: true)
+        let recoveryFiles = try files.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("giristair.unreadable-") && $0.pathExtension == "json" }
+        // If deleting a recovery file fails, leave the active document in place.
+        for url in [rollingBackupURL, migrationBackupURL] + recoveryFiles + additionalRecoveryFiles where files.fileExists(atPath: url.path) {
+            try files.removeItem(at: url)
+        }
+        try data.write(to: fileURL, options: .atomic)
+        originalData = nil
+        document = empty
+        loaded = true
+        errorMessage = nil
+        if notifyAccount { onAccountDataChanged?() }
     }
 
     private func referencedNames(_ event: GiriEvent) -> [String] {
@@ -1257,6 +1311,7 @@ final class GiriStore: ObservableObject {
     func recordBackupExported() throws { try mutate { $0.lastBackupAt = Date() } }
     func restoreBackup(_ data: Data) throws {
         let restored = try GiriJSON.decode(data)
+        let accountDataChanged = !loaded || accountDocument(restored) != accountDocument(document)
         // An explicitly confirmed restore is allowed to recover a failed load;
         // preserve corrupt bytes as a separate recovery copy before replacement.
         if !loaded && FileManager.default.fileExists(atPath: fileURL.path) {
@@ -1265,6 +1320,7 @@ final class GiriStore: ObservableObject {
         }
         try persist(try GiriJSON.encode(restored))
         document = restored; loaded = true; errorMessage = nil
+        if accountDataChanged { onAccountDataChanged?() }
     }
     private static func upsert<T: Identifiable>(_ value: T, into values: inout [T]) where T.ID: Equatable {
         if let index = values.firstIndex(where: { $0.id == value.id }) { values[index] = value } else { values.append(value) }

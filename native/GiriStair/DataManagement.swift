@@ -326,6 +326,10 @@ struct GiriDataManagementView: View {
             backupRestoreSection
             fileCleanupSection
             backupCleanupSection
+            Section {
+                GiriAllDataDeletionRow(onDeleted: refresh)
+            }
+            .appSectionCardStyle(accentColor: AppSectionAccent.memo)
         }
         .environment(\.defaultMinListRowHeight, settingsMinimumListRowHeight)
         .appIndexListStyle()
@@ -531,6 +535,70 @@ struct GiriDataManagementView: View {
             importData = data
         } catch {
             store.errorMessage = GiriBackupFileError.invalid.localizedDescription
+        }
+    }
+}
+
+private struct GiriAllDataDeletionRow: View {
+    @EnvironmentObject private var store: GiriStore
+    @EnvironmentObject private var accountSync: AccountSyncCoordinator
+    @EnvironmentObject private var navigation: GiriNavigation
+    @State private var confirmingDeletion = false
+    @State private var confirmingAccountDeletion = false
+    @State private var showingCompletion = false
+    let onDeleted: () -> Void
+
+    var body: some View {
+        Button(role: .destructive) { confirmingDeletion = true } label: {
+            Label("全データを削除", systemImage: "trash")
+                .foregroundStyle(accentActionColor)
+        }
+        .disabled(accountSync.isBusy || accountSync.isApplying)
+        .alert("全データの削除", isPresented: $confirmingDeletion) {
+            Button("キャンセル", role: .cancel) {}
+            Button("削除する", role: .destructive) {
+                if accountSync.isLoggedIn {
+                    Task { @MainActor in
+                        await Task.yield()
+                        confirmingAccountDeletion = true
+                    }
+                } else {
+                    store.run {
+                        try store.deleteAllData(removing: GiriAutoBackup.deviceFiles().map(\.url))
+                        navigation.resetAfterDataDeletion(includingSettings: false)
+                        finishDeletion()
+                    }
+                }
+            }
+        } message: {
+            Text("これまでに登録したすべての記録、お題・回答、プレイヤー、会場、サイト、ルールと、端末内の自動バックアップを削除します。この操作は取り消せません。")
+        }
+        .alert("同期中の全データの削除", isPresented: $confirmingAccountDeletion) {
+            Button("キャンセル", role: .cancel) {}
+            Button("すべて削除する", role: .destructive) {
+                Task { @MainActor in
+                    do {
+                        try await accountSync.deleteAllData()
+                        finishDeletion()
+                    } catch {
+                        store.errorMessage = error.localizedDescription
+                    }
+                }
+            }
+        } message: {
+            Text("同じアカウントでログインしている端末のデータもすべて削除されます。この端末のデータだけを削除する場合は、先にログアウトしてください。それでも削除しますか？")
+        }
+        .alert("全データを削除しました。", isPresented: $showingCompletion) {
+            Button("OK", role: .cancel) {}
+        }
+    }
+
+    private func finishDeletion() {
+        onDeleted()
+        playLiveStairDeleteFeedback()
+        Task { @MainActor in
+            await Task.yield()
+            showingCompletion = true
         }
     }
 }

@@ -67,6 +67,16 @@ GiriStairが候補に出ない場合は「Integrations」→GitHub連携の「Ma
 
 この設定はApp Storeへの審査提出も、外部テスト用のベータ審査への自動提出も行いません。Apple側で処理が終わったビルドを、App Store Connectの内部テストで利用します。
 
+## iCloud同期の初回設定
+
+1. Apple Developerの「Certificates, Identifiers & Profiles」で、Account HolderまたはAdminが **`iCloud.com.livestair.giristair`** というiCloud Containerを作成します。App ID `com.livestair.giristair` でiCloudの「Include CloudKit support」を有効にし、このContainerを関連付けます。
+2. GiriStairのApp Store Connect用プロファイルを再生成し、Codemagicの「Fetch profiles」で取り込みます。既存の配布用証明書を引き続き使えます。 Certificate 欄の緑のチェックを確認し、同じ App ID の旧プロファイルが残っている場合は、新しく取り込んだプロファイルへ切り替えます。
+3. CloudKit Consoleで対象ContainerのDevelopmentスキーマにレコードタイプ **`AccountSnapshot`** を追加します。フィールドは `payload`（Asset）、`revision`・`deletionGeneration`・`deviceName`・`digest`（String）、`updatedAt`（Timestamp）、`deleted`（Int64）です。アプリはユーザーのPrivate Databaseにレコードを作成します。
+4. CloudKit Consoleで「Deploy Schema Changes」を実行し、Productionに反映します。TestFlightはProductionを使います。
+5. CodemagicのTestFlightワークフローを開始するときに「iCloud同期を有効にする」をオンにします。同じApple AccountでiCloudを利用しているiPhone・iPadに、このビルドを入れて確認します。
+
+[iCloud Containerの作成](https://developer.apple.com/help/account/identifiers/create-an-icloud-container)・[CloudKitスキーマの配布](https://developer.apple.com/documentation/cloudkit/deploying-an-icloud-container-s-schema)
+
 ## 7. iPhoneに入れて確認する
 
 1. App Store ConnectのGiriStair→「TestFlight」を開きます。

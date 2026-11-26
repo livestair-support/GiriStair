@@ -13,6 +13,7 @@ struct GiriSettingsView: View {
         List {
             settingSection("profile", "自分のプロフィール", "person.crop.circle", AppSectionAccent.artist) {
                 NavigationLink("自分の名前・別名義") { GiriSelfProfileEditor() }
+                GiriAccountSyncRow()
             }
             settingSection("share", "共有ページ", "square.and.arrow.up", AppSectionAccent.live) {
                 NavigationLink("Giri Summary") { GiriSharingView(initialList: false) }

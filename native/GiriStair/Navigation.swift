@@ -61,6 +61,19 @@ final class GiriNavigation: ObservableObject {
     /// 保存していない入力がある結果入力・編集画面の記録。別の記録へ切り替えて入力を黙って消さない。
     @Published var unsavedResultEventID: String?
     @Published var unsavedEditorEventID: String?
+    @Published private(set) var dataDeletionToken = 0
+    @Published private(set) var settingsDeletionToken = 0
+
+    func resetAfterDataDeletion(includingSettings: Bool) {
+        thoughtDestination = nil
+        listRequest = nil
+        detailRequest = nil
+        resultRequest = nil
+        unsavedResultEventID = nil
+        unsavedEditorEventID = nil
+        dataDeletionToken += 1
+        if includingSettings { settingsDeletionToken += 1 }
+    }
 
     /// 一覧タブで大会・会の詳細を開く。
     func openEventDetail(_ eventID: String) {

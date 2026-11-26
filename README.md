@@ -12,7 +12,7 @@
 | お題/回答 | ネット大喜利の日程に紐づくお題と回答案、自作のお題と使用状態、自由メモ |
 | 設定 | 共有・集計・プレイヤー・テーマ・通知・バックアップ・サポート |
 
-データは端末内に保存します。ログイン、クラウド同期、ストアへの自動公開はありません。設定から通知・JSONバックアップ・共有画像の作成ができます。参加者は登録画面の「文字貼り付け」「OCR読み取り」から追加できます（日本語の文字認識は端末内）。SwiftUI版はLiveStairと同じiOS 18.1以降に対応します。0.6の周期・リーグ管理は [docs/SITE_CYCLES.md](docs/SITE_CYCLES.md)、0.5の変更内容は [docs/FEATURE_REVISION_05.md](docs/FEATURE_REVISION_05.md)、画面と保存データの仕様は [docs/SPEC.md](docs/SPEC.md) を参照してください。
+データは端末内に保存します。iCloud同期を有効にしたiPhone・iPad版では、同じApple Accountの端末間でデータを同期できます。設定から通知・JSONバックアップ・共有画像の作成ができます。参加者は登録画面の「文字貼り付け」「OCR読み取り」から追加できます（日本語の文字認識は端末内）。SwiftUI版はLiveStairと同じiOS 18.1以降に対応します。iCloud同期の配布設定は [docs/SETUP.md](docs/SETUP.md#icloud同期の初回設定)、0.6の周期・リーグ管理は [docs/SITE_CYCLES.md](docs/SITE_CYCLES.md)、0.5の変更内容は [docs/FEATURE_REVISION_05.md](docs/FEATURE_REVISION_05.md)、画面と保存データの仕様は [docs/SPEC.md](docs/SPEC.md) を参照してください。
 
 ## AI・GitHub・Codemagicで進める
 
