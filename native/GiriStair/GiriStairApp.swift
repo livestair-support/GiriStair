@@ -235,7 +235,7 @@ private struct GiriFirstProfileView: View {
         NavigationStack {
             Form {
                 Section {
-                    AppCardSectionTitle(title: "自分のプロフィール", systemImage: "person.crop.circle", accentColor: AppSectionAccent.artist)
+                    AppCardSectionTitle(title: "プロフィールと同期", systemImage: "person.crop.circle", accentColor: AppSectionAccent.artist)
                     TextField("自分の名前", text: $name).textContentType(.nickname)
                     GiriAccountSyncRow()
                     Button("はじめる") {

@@ -11,7 +11,7 @@ struct GiriSettingsView: View {
 
     var body: some View {
         List {
-            settingSection("profile", "自分のプロフィール", "person.crop.circle", AppSectionAccent.artist) {
+            settingSection("profile", "プロフィールと同期", "person.crop.circle", AppSectionAccent.artist) {
                 NavigationLink("自分の名前・別名義") { GiriSelfProfileEditor() }
                 GiriAccountSyncRow()
             }
