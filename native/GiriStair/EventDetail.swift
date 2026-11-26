@@ -34,6 +34,8 @@ struct GiriEventDetail: View {
             if let event {
                 Form {
                     basic(event)
+                    // 0.36：URLから読んだ会は、開いた時にページを読み直して参加者の増減を出す（会が終わったら確定する）。
+                    if event.participantSync != nil { GiriParticipantWatchSection(eventID: event.id) }
                     if event.eventFormat == .live && (event.parentEventId != nil || store.events.contains { $0.parentEventId == event.id }) {
                         innerTournaments(event)
                     }

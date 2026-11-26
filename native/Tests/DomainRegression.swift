@@ -2897,6 +2897,147 @@ struct DomainRegression {
             try check(giriNetResultRound(page, event: messy, notes: [existingNote], results: [])?.id == "q4", "the round is found from the prompt")
         }
 
+        // 0.36: an event page read from its URL (TwiPla-like HTML with fictional names) uses the same reading as screenshots.
+        // The title comes from the page title, X IDs from the links, and the waiting list becomes reserves.
+        do {
+            let html = """
+            <!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8" /><title>架空ローテ会vol.3 - TwiPla</title>
+            <meta property='og:title' content='架空ローテ会vol.3 - TwiPla' /><script>var x = "<div>参加者 (9人)</div>";</script><style>.a{}</style></head>
+            <body><div id="header"><a href="/"><div class="header_logo"></div></a></div>
+            <table id="container"><tr><td class="left_col">
+            <div class='arrow_box'><span class='largetext'>2027<span class='size24'>年</span>2<span class='size24'>月</span>14<span class='size24'>日</span><span class='size24'>[日]</span> 昼</span><br/><h1 class='largetext2'><a href='/events/search/x'><span class='tag_red'>大喜利会</span></a><a href='/events/search/y'><span class='tag_red'>会議室の大喜利</span></a><br class='clear_both' />架空ローテ会vol.3</h1></div>
+            <p><a href="/users/kakuu_host" title="kakuu_host"><img src="/img/a.png" alt="" />かくうの主</a></p><p class='clear_both' /><div class="shares">[12 views]</div>
+            <div class="shares"><a href="https://x.com/intent/tweet?text=a" class="x-share-button">𝕏でシェアする</a></div>
+            <br/><div class='bluetext'>詳細</div><div class='desc content_width' id='desc'><span>はじめての会です！</span><div><strong><span>◎日時</span></strong></div><div><span>　2027年2月14日</span></div><div><span>　開場：13:00</span></div><div><span>　開始：13:15</span></div><div><span>　終了：16:40(予定)</span></div><div><br /></div><div><strong>◎参加費</strong></div><div>　1,000円</div><div><strong>◎場所</strong></div><div>　架空市民センター 会議室A</div><div>ルールは当日説明します&amp;お楽しみに</div></div>
+            <div class="round_border join_div"><strong>このイベントに参加しますか？</strong><br />まず<a href="/accounts/login/events/1"> 𝕏アカウントでログイン</a>する</div>
+            <div class='float_left member_list round_border'>参加者 (4人／定員4人) <br/><ul>
+            <li><img src="/img/egg.png" />&nbsp;<a href="/users/neko_odai" class="card namelist" title="@neko_odai">ねこ@告知用</a></li>
+            <li><img src="/img/egg.png" />&nbsp;<a href="/users/inu_123" title="@inu_123">いぬ&amp;わん</a></li>
+            <li><img src="/img/egg.png" />&nbsp;<a href="https://x.com/tori_tori">とり</a></li>
+            <li><img src="/img/hatena_avatar.gif" />&nbsp;手書きさん</li>
+            </ul></div>
+            <div class='float_left member_list round_border'>キャンセル待ち (2人) <br/><ul><li><a href="/users/machi_1" title="@machi_1">まちびと一号</a></li><li><a href="/users/machi_2" title="@machi_2">まちびと二号</a></li></ul></div>
+            <div class='float_left member_list round_border'>興味あり (1人) <br/><ul><li><a href="/users/kyomi" title="@kyomi">きょうみさん</a></li></ul></div>
+            <div class='float_left member_list round_border'>不参加 (1人) <br/><ul><li><a href="/users/fusanka" title="@fusanka">ふさんか</a></li></ul></div>
+            <div class='clear_both'></div><a href="/x">参加者プロフィール</a> <a href="/y">名前をID表示に</a>
+            <div class='bluetext' id='commentHeader'>コメント</div><ol id='comment_list'><li><div>遅れます</div><div>ねこ@告知用　3日前</div></li></ol>
+            <div>みんなのイベント</div><div>近日開催のイベント</div><div>2027/03/01 01:00</div><div>別の架空の会</div>
+            </td></tr></table></body></html>
+            """
+            let web = giriWebDocument(html: html)
+            try check(web.title == "架空ローテ会vol.3 - TwiPla" && !web.text.contains("参加者 (9人)") && !web.text.contains(".a{}"),
+                      "the page title is read and scripts and styles are not page text")
+            try check(web.lines.contains { $0.text == "いぬ&わん" && $0.handle == "inu_123" } && web.lines.contains { $0.text == "とり" && $0.handle == "tori_tori" }
+                      && web.lines.contains { $0.text == "大喜利会 会議室の大喜利" && $0.level == 1 } && web.lines.contains { $0.text == "架空ローテ会vol.3" && $0.level == 1 && $0.continuesBlock },
+                      "entities, X links, headings and line breaks are kept")
+            try check(!giriWebDocumentNeedsRendering(web) && giriWebHandles(web)[playerSearchKey("ねこ@告知用")] == "neko_odai", "a page with a participant list is read without rendering")
+            let spa = giriWebDocument(html: "<html><head><title>App</title></head><body><div id=\"root\"></div><script src=\"/app.js\"></script></body></html>")
+            try check(giriWebDocumentNeedsRendering(spa), "a page that builds itself with scripts is rendered before reading")
+            let read = giriEventPageDraft(web: web, url: "https://twipla.jp/events/1", known: [], venues: [],
+                                          now: Date(timeIntervalSince1970: 1_790_000_000))
+            let calendar = Calendar.current
+            try check(read.title == "架空ローテ会vol.3" && read.organizer == "かくうの主" && read.sourceURL == "https://twipla.jp/events/1",
+                      "the title is the page title without the site name and the creator is the organizer")
+            try check(read.date.map { calendar.component(.year, from: $0) == 2027 && calendar.component(.month, from: $0) == 2 && calendar.component(.day, from: $0) == 14 } == true
+                      && read.opens == GiriClock(hour: 13, minute: 0) && read.start == GiriClock(hour: 13, minute: 15) && read.end == GiriClock(hour: 16, minute: 40),
+                      "the date and times are read from the description")
+            try check(read.fee == 1000 && read.venue.hasPrefix("架空市民センター"), "labels after a symbol (◎参加費・◎場所) are read")
+            let entrants = read.participants.filter { $0.section == .participants }
+            try check(entrants.map(\.name) == ["ねこ", "いぬ&わん", "とり", "手書きさん"] && entrants.map(\.handle) == ["neko_odai", "inu_123", "tori_tori", ""]
+                      && entrants.allSatisfy(\.included) && read.listedParticipantCount == 4,
+                      "participants come from the list with their X IDs, including a name added by the organizer")
+            try check(read.participants.filter { $0.section == .reserve }.map(\.name) == ["まちびと一号", "まちびと二号"]
+                      && giriSelectedReserveNames(read.participants) == ["まちびと一号", "まちびと二号"]
+                      && !giriSelectedParticipantNames(read.participants).contains("まちびと一号"),
+                      "the waiting list is selected as reserves, not participants")
+            try check(read.participants.first { $0.name == "きょうみさん" }.map { $0.section == .interested && !$0.included } == true
+                      && read.participants.first { $0.name == "ふさんか" }.map { $0.section == .other && !$0.included } == true
+                      && !read.participants.contains { $0.name == "遅れます" || $0.name == "別の架空の会" },
+                      "interested and declined people are not selected, and comments and other events are not read")
+            try check(giriDemotingReserves(read.participants).filter { $0.section == .reserve }.isEmpty
+                      && giriSelectedReserveNames(giriDemotingReserves(read.participants)).isEmpty, "formats without reserves leave the waiting list unselected")
+            try check(giriParticipantHeader("キャンセル待ち (2人)") == .reserve && giriParticipantHeader("補欠") == .reserve && giriParticipantHeader("不参加 (1人)") == .other,
+                      "waiting lists are reserves and declines stay apart")
+            let owned = giriResolvingHandles(entrants, owners: [playerSearchKey("inu_123"): "いぬ"])
+            try check(owned.first { $0.handle == "inu_123" }.map { $0.name == "いぬ" && $0.registered == "いぬ" } == true, "an X ID registered to a player becomes that player")
+            let page = giriParticipantPage(read, includesReserves: true)
+            try check(page.participants.map(\.name) == ["ねこ", "いぬ&わん", "とり", "手書きさん"] && page.reserves.map(\.handle) == ["machi_1", "machi_2"]
+                      && giriParticipantPage(read, includesReserves: false).reserves.isEmpty && page.listedCount == 4, "the page roster keeps names and X IDs")
+
+            try check(giriDecodeHTMLEntities("A&amp;B&#12354;&#x3044;&nbsp;&unknown;") == "A&Bあい &unknown;", "character references are decoded")
+            try check(giriEventPageURL(from: "参加はこちら https://twipla.jp/events/123456 です")?.absoluteString == "https://twipla.jp/events/123456"
+                      && giriEventPageURL(from: "twipla.jp/events/1")?.absoluteString == "https://twipla.jp/events/1"
+                      && giriEventPageURL(from: "https://twipla.jp/events/2。")?.absoluteString == "https://twipla.jp/events/2"
+                      && giriEventPageURL(from: "javascript:alert(1)") == nil && giriEventPageURL(from: "") == nil, "page URLs are taken from pasted text")
+            try check(giriWebXHandle(href: "https://x.com/intent/tweet?text=a", title: "") == "" && giriWebXHandle(href: "https://twitter.com/someone", title: "") == "someone"
+                      && giriWebXHandle(href: "/users/a", title: "@abc_1") == "abc_1", "X IDs come from profile links only")
+
+            // Changes are compared with the page when the user last decided, so names added or removed by hand stay.
+            func entry(_ name: String, _ handle: String) -> GiriPageEntry { GiriPageEntry(name: name, handle: handle) }
+            let firstRead = Date(timeIntervalSince1970: 1_800_000_000)
+            var sync = GiriParticipantSync(url: "https://twipla.jp/events/1")
+            sync.record(GiriParticipantPage(participants: [entry("はる", "h1"), entry("なつ", "n1"), entry("あき", "a1")], reserves: [entry("ふゆ", "f1")]), at: firstRead)
+            sync.markDecided()
+            var event = GiriEvent(title: "架空の会"); event.eventFormat = .live
+            event.participants = ["はる", "なつ", "あき", "手で足した人"]; event.hasReserves = true; event.reserves = ["ふゆ"]
+            try check(giriRosterChanges(sync, participants: event.participants, reserves: event.reserveNames).isEmpty, "no changes right after reading")
+            sync.record(GiriParticipantPage(participants: [entry("はる", "h1"), entry("あきの別名", "a1"), entry("ふゆ", "f1"), entry("ゆき", "y1")],
+                                            reserves: [entry("みぞれ", "m1")], listedCount: 4), at: firstRead.addingTimeInterval(3600))
+            let changes = giriRosterChanges(sync, participants: event.participants, reserves: event.reserveNames)
+            try check(changes.joined.map(\.name) == ["ふゆ", "ゆき"] && changes.left == ["なつ"] && changes.reservesJoined.map(\.name) == ["みぞれ"] && changes.reservesLeft == ["ふゆ"],
+                      "joined, left, promoted and waiting people are found; a changed display name with the same X ID is the same person")
+            let applied = giriApplyingRosterChanges(event, changes, isSelf: { $0 == "わたし" })
+            try check(applied.participants == ["はる", "あき", "手で足した人", "ふゆ", "ゆき"] && applied.reserves == ["みぞれ"] && applied.hasReserves,
+                      "chosen changes are applied and a name added by hand stays")
+            var decided = sync; decided.markDecided()
+            try check(giriRosterChanges(decided, participants: event.participants, reserves: event.reserveNames).isEmpty, "changes that were not applied are not asked again")
+            var withSelf = GiriEvent(title: "架空の会"); withSelf.eventFormat = .live; withSelf.participants = ["わたし", "はる"]
+            var selfLeft = GiriRosterChanges(); selfLeft.left = ["わたし"]
+            try check(giriApplyingRosterChanges(withSelf, selfLeft, isSelf: { $0 == "わたし" }).selfRole == .spectator, "leaving the list by choice makes me a spectator, as in the editor")
+
+            // JSON: written only when used; unreadable values do not stop the event from loading.
+            let plainEvent = try JSONSerialization.jsonObject(with: JSONEncoder().encode(GiriEvent(title: "架空"))) as? [String: Any] ?? [:]
+            try check(plainEvent["participantSync"] == nil, "events without a page keep the older JSON shape")
+            var watched = GiriEvent(title: "架空"); watched.participantSync = sync
+            try check(try JSONDecoder().decode(GiriEvent.self, from: JSONEncoder().encode(watched)).participantSync == sync, "the page check roundtrips")
+            var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(watched)) as? [String: Any] ?? [:]
+            object["participantSync"] = "壊れた値"
+            let broken = try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: object))
+            try check(broken.participantSync == nil && broken.title == "架空", "a broken page check is dropped without losing the event")
+            object["participantSync"] = ["url": "https://twipla.jp/events/1", "state": "future"]
+            let future = try JSONDecoder().decode(GiriEvent.self, from: JSONSerialization.data(withJSONObject: object))
+            try check(future.participantSync?.state == .stopped && future.participantSync?.url == "https://twipla.jp/events/1", "an unknown state is read as stopped")
+
+            // Store: reading the page again changes nothing until the user decides; new people keep their X IDs.
+            let syncDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("GiriPageSync-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: syncDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: syncDirectory) }
+            let syncStore = GiriStore(directory: syncDirectory)
+            var registered = GiriEvent(title: "架空の会"); registered.eventFormat = .live; registered.participants = ["はるか"]
+            var start = GiriParticipantSync(url: "https://twipla.jp/events/1")
+            start.record(GiriParticipantPage(participants: [entry("はるか", "haruka_x")]), at: firstRead)
+            start.markDecided()
+            registered.participantSync = start
+            try syncStore.saveEvent(registered)
+            try check(syncStore.players.first { $0.name == "はるか" }?.xAccounts.first?.handle == "haruka_x", "a new person from the page keeps the X ID")
+            try syncStore.recordParticipantPage(eventID: registered.id, page: GiriParticipantPage(participants: [entry("はるか", "haruka_x"), entry("あらた", "arata_x")]),
+                                                at: firstRead.addingTimeInterval(60))
+            let stored = syncStore.events.first { $0.id == registered.id }
+            try check(stored?.participants == ["はるか"] && !syncStore.players.contains { $0.name == "あらた" }
+                      && stored.map { giriRosterChanges($0.participantSync!, participants: $0.participants, reserves: $0.reserveNames).joined.map(\.name) } == ["あらた"],
+                      "reading the page again only records it")
+            if let stored, let storedSync = stored.participantSync {
+                let next = giriApplyingRosterChanges(stored, giriRosterChanges(storedSync, participants: stored.participants, reserves: stored.reserveNames), isSelf: { _ in false })
+                try syncStore.saveParticipantDecision(next)
+            }
+            let decidedEvent = syncStore.events.first { $0.id == registered.id }
+            try check(decidedEvent?.participants == ["はるか", "あらた"] && syncStore.players.first { $0.name == "あらた" }?.xAccounts.first?.handle == "arata_x"
+                      && decidedEvent.map { giriRosterChanges($0.participantSync!, participants: $0.participants, reserves: $0.reserveNames).isEmpty } == true,
+                      "applying the changes saves them and the page becomes the new base")
+            try syncStore.setParticipantWatchState(.confirmed, eventIDs: [registered.id])
+            try check(syncStore.events.first { $0.id == registered.id }?.participantSync?.state == .confirmed, "confirming stops reading the page")
+        }
+
         print("Native domain regressions passed: \(passed)")
     }
 }

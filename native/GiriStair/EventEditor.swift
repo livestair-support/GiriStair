@@ -34,6 +34,8 @@ struct GiriEventEditor: View {
     @State private var eventPagePhoto: PhotosPickerItem?
     @State private var readingEventPage = false
     @State private var eventPageDraft: GiriEventPageDraft?
+    /// 0.36：イベントページのURLから読み取る（生大喜利・スプシ系）。
+    @State private var showsURLReader = false
     /// 応募の日程は、入れる時だけ欄を出す。
     @State private var showsEntry = false
     /// 参加者を外す時に、リザーバー1を繰り上げるかを聞く。
@@ -248,7 +250,7 @@ struct GiriEventEditor: View {
 
     private var editorForm: some View {
         Form {
-            if isLive { eventReadSection }
+            if isLive || draft.eventFormat == .hybrid { eventReadSection }
             basicSection
             if isSite { siteSection }
             if !isSite {
@@ -370,7 +372,8 @@ struct GiriEventEditor: View {
         withPromoteAlert(content)
         .sheet(isPresented: $showImport) {
             NavigationStack {
-                GiriParticipantImport(source: importText, lines: importLines, existing: participants) { names in
+                GiriParticipantImport(source: importText, lines: importLines, existing: participants, existingReserves: isLive ? draft.reserves : [],
+                                      onAddReserves: isLive ? { (names: [String]) in addReserves(names) } : nil) { names in
                     let existing = Set(participants.map(giriEditorNameKey))
                     let added = names.filter { !existing.contains(giriEditorNameKey($0)) }
                     participants.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -584,8 +587,37 @@ struct GiriEventEditor: View {
     }
 
     /// LiveStair EventBasicEditor ocrReadRow：イベントページの画像から基本情報・参加者を読み取る。
+    /// 0.36：ページのURLから読む行を上に足した（生大喜利・スプシ系。画像の読み取りは生大喜利だけ）。
     private var eventReadSection: some View {
         Section {
+            Button { showsURLReader = true } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "link")
+                        .font(.system(size: appFontSize(17), weight: .semibold))
+                        .foregroundStyle(AppSectionAccent.scan)
+                        .frame(width: 30, height: 30)
+                        .background(AppSectionAccent.scan.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("URLから読み取り").font(.body.weight(.semibold)).foregroundStyle(.primary)
+                        Text("ツイプラなどのページから基本情報・参加者を入力").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .sheet(isPresented: $showsURLReader) {
+                NavigationStack {
+                    GiriEventPageURLReader(initialText: draft.siteUrl, makeDraft: makeEventPageDraft, onApply: applyEventPage)
+                }
+            }
+            if isLive { eventPhotoReadRow }
+        }.appEventEditorCardStyle(accentColor: AppSectionAccent.scan)
+    }
+
+    private var eventPhotoReadRow: some View {
             PhotosPicker(selection: $eventPagePhoto, matching: .images) {
                 HStack(spacing: 12) {
                     Image(systemName: "text.viewfinder")
@@ -614,7 +646,29 @@ struct GiriEventEditor: View {
                     GiriEventPageReview(draft: page, onApply: applyEventPage)
                 }
             }
-        }.appEventEditorCardStyle(accentColor: AppSectionAccent.scan)
+    }
+
+    /// 0.36：URLから読んだページの確認の内容。今の参加者・リザーバーと同じ人は「追加済み」にし、
+    /// スプシ系（リザーバーを入れない会）ではキャンセル待ち・補欠を選ばない。
+    private func makeEventPageDraft(url: String, document: GiriWebDocument) -> GiriEventPageDraft {
+        var page = giriReadEventPage(document, url: url, store: store)
+        if !isLive { page.participants = giriDemotingReserves(page.participants) }
+        page.participants = giriMarkingAlreadyAdded(page.participants, participants: giriResolvedNames(participants, store: store),
+                                                    reserves: giriResolvedNames(draft.reserves, store: store))
+        // 同じページを確かめるのをやめていた会は、最初はオフにする。
+        if let sync = draft.participantSync, sync.url == url { page.watchesParticipants = sync.state != .stopped }
+        return page
+    }
+
+    /// 0.36：キャンセル待ち・補欠（リザーバー）を足す。参加者・リザーバーにいる人は足さない。
+    private func addReserves(_ names: [String]) {
+        let taken = Set((participants + draft.reserves).map(giriEditorNameKey))
+        var seen = Set<String>()
+        let added = names.filter { !taken.contains(giriEditorNameKey($0)) && seen.insert(giriEditorNameKey($0)).inserted }
+        guard !added.isEmpty else { return }
+        draft.hasReserves = true
+        draft.reserves.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        draft.reserves.append(contentsOf: added)
     }
 
     private func readEventPage(_ item: PhotosPickerItem) {
@@ -627,14 +681,17 @@ struct GiriEventEditor: View {
         var organizers = store.playerDirectory.map(\.name)
         organizers.append(contentsOf: store.groupDirectory.map(\.name))
         let current = participants
+        let currentReserves = draft.reserves
         Task {
             do {
                 guard let data = try await item.loadTransferable(type: Data.self) else { throw GiriParticipantReadError.unreadable }
                 let lines = try await GiriParticipantOCR.recognizeLines(data)
                 var page = giriEventPageDraft(lines: lines, known: known, venues: venues, organizers: organizers,
                                               venueRooms: venueRooms, venueAddresses: venueAddresses)
+                // 0.36：キャンセル待ち・補欠の欄は、今のリザーバーとも比べる。
                 page.participants = giriMarkingAlreadyAdded(giriResolvingAliases(page.participants, store: store),
-                                                            existing: giriResolvedNames(current, store: store))
+                                                            participants: giriResolvedNames(current, store: store),
+                                                            reserves: giriResolvedNames(currentReserves, store: store))
                 guard page.hasBasicInfo || !page.participants.isEmpty else { throw GiriParticipantReadError.noText }
                 eventPageDraft = page
             } catch { store.errorMessage = error.localizedDescription }
@@ -706,7 +763,8 @@ struct GiriEventEditor: View {
             giriApplyRule(rule, to: &value)
         }
         let day = value.eventDate ?? calendar.startOfDay(for: Date())
-        value.opensAt = Self.merged(value.opensAt, page.opens, on: day, replace: replace)
+        // 0.36：開場は生大喜利だけ（スプシ系のURL読み取りでは入れない）。
+        if value.eventFormat == .live { value.opensAt = Self.merged(value.opensAt, page.opens, on: day, replace: replace) }
         value.startsAt = Self.merged(value.startsAt, page.start, on: day, replace: replace)
         value.endsAt = Self.merged(value.endsAt, page.end, on: day, replace: replace)
         if let start = value.startsAt, let end = value.endsAt, end < start {
@@ -723,6 +781,20 @@ struct GiriEventEditor: View {
         if !added.isEmpty {
             participants.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             participants.append(contentsOf: added)
+        }
+        // 0.36：キャンセル待ち・補欠はリザーバーに入れる（生大喜利）。
+        if isLive { addReserves(giriSelectedReserveNames(page.participants)) }
+        // 0.36：URLから読んだ時は、ページのURLと、会が終わるまで参加者の増減を確かめる設定を入れる。
+        if !page.sourceURL.isEmpty {
+            if replace || draft.siteUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { draft.siteUrl = page.sourceURL }
+            if page.watchesParticipants {
+                var sync = GiriParticipantSync(url: page.sourceURL)
+                sync.record(giriParticipantPage(page, includesReserves: isLive), at: Date())
+                sync.markDecided()
+                draft.participantSync = sync
+            } else {
+                draft.participantSync = nil
+            }
         }
     }
 
@@ -1437,14 +1509,8 @@ struct GiriEventEditor: View {
                 }
                 for i in candidate.teams.indices { candidate.teams[i].members = candidate.teams[i].members.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
                 // 自分の立場は選ばず、参加状況（観覧）・リザーバー・参加者・主催などの入力から決める。
-                // 0.28：名簿を入れた生大喜利で、どの欄にもいない参加予定は観覧にする。
-                if candidate.eventFormat == .live && candidate.hasEnteredRoster && candidate.isParticipating && !candidate.isInterested
-                    && candidate.status != .canceled && candidate.listedSelfRole(isSelf: store.preferences.isSelf) == nil {
-                    candidate.selfRole = .spectator
-                } else if candidate.selfRole == .spectator, candidate.listedSelfRole(isSelf: store.preferences.isSelf) != nil {
-                    candidate.selfRole = .player
-                }
-                candidate.selfRole = candidate.derivedSelfRole(isSelf: store.preferences.isSelf)
+                // 0.28：名簿を入れた生大喜利で、どの欄にもいない参加予定は観覧にする（0.36：ページの増減の反映と同じ関数）。
+                candidate.applyRosterSelfRole(isSelf: store.preferences.isSelf)
                 if let size = candidate.teamSize, candidate.teams.contains(where: { $0.members.count > size }) {
                     store.errorMessage = "チーム人数を超えているチームがあります。人数設定かメンバーを確認してください。"; return
                 }
