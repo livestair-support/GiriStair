@@ -95,7 +95,8 @@ class NativeProjectTest(unittest.TestCase):
                 CONTAINER_ENTITLEMENT: [container], SERVICES_ENTITLEMENT: ["CloudKit"],
             })
             settings = project["targets"]["GiriStair"]["settings"]["base"]
-            self.assertEqual((root / "native" / settings["CODE_SIGN_ENTITLEMENTS"]).resolve(), entitlements)
+            signing_path = root / "native" / settings["CODE_SIGN_ENTITLEMENTS"]
+            self.assertTrue(signing_path.samefile(entitlements))
 
             project = json.loads(generate(root, "25").read_text())
             self.assertNotIn(SYNC_INFO_KEY, plistlib.loads((generated / "Info.plist").read_bytes()))
