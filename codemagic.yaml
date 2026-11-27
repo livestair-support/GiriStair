@@ -70,13 +70,23 @@ workflows:
         HOMEBREW_NO_AUTO_UPDATE: "1"
         BUNDLE_ID: com.livestair.giristair
     scripts:
+      - name: iCloud同期用のビルド設定を選択
+        when:
+          condition: ${{ inputs.accountSyncCloudKit }}
+        script: printf '%s\n' 'GIRISTAIR_CI_ACCOUNT_SYNC=enabled' >> "$CM_ENV"
       - name: SwiftUIプロジェクトを準備
         script: |
           set -euo pipefail
           command -v xcodegen >/dev/null || brew install xcodegen
           : "${PROJECT_BUILD_NUMBER:?CodemagicのPROJECT_BUILD_NUMBERが必要です}"
-          ACCOUNT_SYNC_CLOUDKIT="${{ inputs.accountSyncCloudKit }}" \
-            python3 .ci/native_project.py --build-number "$PROJECT_BUILD_NUMBER"
+          project_args=(--build-number "$PROJECT_BUILD_NUMBER")
+          if [[ "${GIRISTAIR_CI_ACCOUNT_SYNC:-disabled}" == enabled ]]; then
+            project_args+=(--account-sync-cloudkit)
+            echo 'iCloud同期のビルド設定は有効です。'
+          else
+            echo 'iCloud同期のビルド設定は無効です。'
+          fi
+          python3 .ci/native_project.py "${project_args[@]}"
           xcodegen generate --spec native/project.json
       - name: 保存互換性と日程のSwiftテスト
         script: |
@@ -91,7 +101,18 @@ workflows:
           xcodebuild -project native/GiriStair.xcodeproj -scheme GiriStair -configuration Release \
             -destination 'generic/platform=iOS' -archivePath build/ios/archive/GiriStair.xcarchive archive
           xcodebuild -exportArchive -archivePath build/ios/archive/GiriStair.xcarchive \
-            -exportOptionsPlist "$HOME/export_options.plist" -exportPath build/ios/ipa
+            -exportOptionsPlist "$HOME/export_options.plist" -exportPath build/ios/ipa-staging
+      - name: 署名済みIPAのiCloud同期設定を確認
+        when:
+          condition: ${{ inputs.accountSyncCloudKit }}
+        script: |
+          set -euo pipefail
+          python3 .ci/native_project.py --verify-account-sync-ipa build/ios/ipa-staging --build-number "$PROJECT_BUILD_NUMBER"
+      - name: IPAをアップロード対象に移動
+        script: |
+          set -euo pipefail
+          mkdir -p build/ios/ipa
+          mv build/ios/ipa-staging/*.ipa build/ios/ipa/
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
