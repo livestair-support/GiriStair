@@ -29,7 +29,7 @@ GiriStairが候補に出ない場合は「Integrations」→GitHub連携の「Ma
 1. 「Applications」→「GiriStair」→「Start new build」。
 2. ブランチは`main`。
 3. ワークフローは **「1. 確認（Swiftテスト・iOSビルド）」**。
-4. iCloud同期を使う場合は、ビルドの入力欄で **「iCloud同期を有効にする」** をオンにします。「Start new build」を押します。
+4. 「Start new build」を押します。
 
 このワークフローはSwiftの保存互換性テストと、署名しないSwiftUI iOSビルドを行います。成功しても、まだiPhoneにはインストールできません。失敗した場合は、赤くなった工程名とエラー付近のログをAIに送ってください。
 
@@ -61,7 +61,7 @@ GiriStairが候補に出ない場合は「Integrations」→GitHub連携の「Ma
 1. Codemagicで「GiriStair」→「Start new build」。
 2. ブランチは`main`。
 3. ワークフローは **「3. iPhone確認用（TestFlightへアップロード）」**。
-4. 「Start new build」を押します。
+4. iCloud同期を使う場合は、ビルドの入力欄で **「iCloud同期を有効にする」** をオンにしてから「Start new build」を押します。
 
 この工程では、Swiftの保存互換性テスト、署名済みIPAの作成、App Store Connectへのアップロードを行います。ビルド番号はCodemagicの`PROJECT_BUILD_NUMBER`を使用します。別のCodemagicアプリや別経路からアップロードするようになった場合は、過去の番号より大きい番号になるようAIに調整を依頼してください。
 
@@ -76,6 +76,8 @@ GiriStairが候補に出ない場合は「Integrations」→GitHub連携の「Ma
 5. CodemagicのTestFlightワークフローを開始するときに「iCloud同期を有効にする」をオンにします。同じApple AccountでiCloudを利用しているiPhone・iPadに、このビルドを入れて確認します。
 
 「Fetch profiles」で取り込むプロファイルはiCloudを使うための署名に使います。「iCloud同期を有効にする」は各ビルドに同期の設定を入れる入力欄で、既定値はオフです。
+
+iCloud同期をオンにして開始すると、アップロード前にIPA内の設定と署名を検証します。「署名済みIPAのiCloud同期設定を確認」のログに表示されたバージョンとビルド番号が、TestFlightに入れたものと一致することを確認できます。
 
 [iCloud Containerの作成](https://developer.apple.com/help/account/identifiers/create-an-icloud-container)・[CloudKitスキーマの配布](https://developer.apple.com/documentation/cloudkit/deploying-an-icloud-container-s-schema)
 

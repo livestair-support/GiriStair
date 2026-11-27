@@ -2,10 +2,16 @@ import hashlib
 import json
 from pathlib import Path
 import plistlib
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
+from zipfile import ZipFile
 
-from native_project import generate
+from native_project import (
+    CONTAINER_ENTITLEMENT, ENVIRONMENT_ENTITLEMENT, SERVICES_ENTITLEMENT, SYNC_INFO_KEY,
+    generate, verify_account_sync_ipa,
+)
 
 
 class NativeProjectTest(unittest.TestCase):
@@ -75,6 +81,74 @@ class NativeProjectTest(unittest.TestCase):
             scheme = project["schemes"]["GiriStair"]
             self.assertEqual(scheme["build"]["targets"]["GiriStairUITests"], ["test"])
             self.assertFalse(scheme["test"]["targets"][0]["parallelizable"])
+
+    def test_account_sync_generation_selects_and_removes_cloudkit_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.root(directory)
+            generated = root / "build/native"
+            container = "iCloud.com.livestair.giristair"
+            project = json.loads(generate(root, "24", account_sync_cloudkit=True).read_text())
+            info = plistlib.loads((generated / "Info.plist").read_bytes())
+            self.assertEqual(info[SYNC_INFO_KEY], container)
+            entitlements = generated / "AccountSync.entitlements"
+            self.assertEqual(plistlib.loads(entitlements.read_bytes()), {
+                CONTAINER_ENTITLEMENT: [container], SERVICES_ENTITLEMENT: ["CloudKit"],
+            })
+            settings = project["targets"]["GiriStair"]["settings"]["base"]
+            signing_path = root / "native" / settings["CODE_SIGN_ENTITLEMENTS"]
+            self.assertTrue(signing_path.samefile(entitlements))
+
+            project = json.loads(generate(root, "25").read_text())
+            self.assertNotIn(SYNC_INFO_KEY, plistlib.loads((generated / "Info.plist").read_bytes()))
+            self.assertFalse(entitlements.exists())
+            self.assertNotIn("CODE_SIGN_ENTITLEMENTS", project["targets"]["GiriStair"]["settings"]["base"])
+
+    def test_enabled_ipa_requires_build_identity_marker_and_signed_cloudkit_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ipa_dir = Path(directory)
+            bundle_id = "com.livestair.giristair"
+            container = f"iCloud.{bundle_id}"
+            info = {
+                "CFBundleIdentifier": bundle_id, "CFBundleShortVersionString": "0.36",
+                "CFBundleVersion": "24", SYNC_INFO_KEY: container,
+            }
+            entitlements = {CONTAINER_ENTITLEMENT: [container], SERVICES_ENTITLEMENT: ["CloudKit"]}
+
+            def verify(info_values, entitlement_values):
+                with ZipFile(ipa_dir / "GiriStair.ipa", "w") as ipa:
+                    ipa.writestr("Payload/GiriStair.app/Info.plist", plistlib.dumps(info_values))
+
+                def run(command, *, check, stdout=None):
+                    if command[0] == "/usr/bin/ditto":
+                        with ZipFile(command[3]) as ipa:
+                            ipa.extractall(command[4])
+                        return subprocess.CompletedProcess(command, 0)
+                    self.assertEqual(command[:-1], ["/usr/bin/codesign", "--display", "--entitlements", "-", "--xml"])
+                    self.assertTrue(command[-1].endswith("/Payload/GiriStair.app"))
+                    return subprocess.CompletedProcess(command, 0, stdout=plistlib.dumps(entitlement_values))
+
+                with patch("native_project.subprocess.run", side_effect=run):
+                    verify_account_sync_ipa(ipa_dir, bundle_id, "0.36", "24")
+
+            verify(info, entitlements)
+            with self.assertRaisesRegex(ValueError, SYNC_INFO_KEY):
+                verify({key: value for key, value in info.items() if key != SYNC_INFO_KEY}, entitlements)
+            with self.assertRaisesRegex(ValueError, "CFBundleVersion"):
+                verify({**info, "CFBundleVersion": "23"}, entitlements)
+            with self.assertRaisesRegex(ValueError, "Info.plistの形式"):
+                verify([], entitlements)
+            with self.assertRaisesRegex(ValueError, "iCloudコンテナ"):
+                verify(info, {**entitlements, CONTAINER_ENTITLEMENT: []})
+            with self.assertRaisesRegex(ValueError, "iCloudコンテナ"):
+                verify(info, {**entitlements, CONTAINER_ENTITLEMENT: container})
+            with self.assertRaisesRegex(ValueError, "CloudKitの権限"):
+                verify(info, {**entitlements, SERVICES_ENTITLEMENT: ["CloudDocuments"]})
+            with self.assertRaisesRegex(ValueError, "CloudKitの権限"):
+                verify(info, {**entitlements, SERVICES_ENTITLEMENT: "CloudKit"})
+            with self.assertRaisesRegex(ValueError, "entitlementsの形式"):
+                verify(info, [])
+            with self.assertRaisesRegex(ValueError, "Production"):
+                verify(info, {**entitlements, ENVIRONMENT_ENTITLEMENT: "Development"})
 
 
 if __name__ == "__main__":
